@@ -1,0 +1,57 @@
+language: rust
+sudo: false
+matrix:
+  fast_finish: true
+  include:
+  - rust: nightly
+    env: FEATURES="--features nightly"
+  - rust: beta
+  - rust: stable
+addons:
+  apt:
+    packages:
+    - libcurl4-openssl-dev
+    - libelf-dev
+    - libdw-dev
+    - binutils-dev
+    - build-essential
+    - curl
+    - expect
+cache:
+  apt: true
+  directories:
+  - target/debug/deps
+  - target/debug/build
+notifications:
+  email:
+    on_success: never
+    on_failure: never
+branches:
+  only:
+  - master
+  - develop
+script:
+- |
+  travis-cargo build &&
+  cargo test -- --test-threads=1 &&
+  travis-cargo --only stable doc
+before_script:
+- 'gem install redis'
+- |
+  pip install 'travis-cargo<0.2' --user &&
+  export PATH=$HOME/.local/bin:$PATH
+- |
+  ./tests/scripts/install_redis_centralized.sh &&
+  redis-server --daemonize yes
+- "./tests/scripts/install_redis_clustered.sh"
+after_success:
+- redis-cli -p 6379 shutdown
+- "$TRAVIS_BUILD_DIR/tests/tmp/redis_cluster_$REDIS_VERSION/redis-$REDIS_VERSION/utils/create-cluster/create-cluster stop"
+- travis-cargo --only stable doc-upload
+env:
+  global:
+  - RUST_BACKTRACE=1
+  - REDIS_VERSION=3.2.9
+  - TRAVIS_CARGO_NIGHTLY_FEATURE=""
+  - PATH=$PATH:$TRAVIS_BUILD_DIR/tests/tmp/redis-$REDIS_VERSION/src
+  - secure: qSf1pG7CA+JIxUx/6KE122vuvceNVdPRTXZyr1aCTWPj1AonMjyE+40Z0hAK9faBAdgPz4iGMmjN1azGJsZ/4H9al0du8sycsWh1VyIyXNLN22MhkZf8EEwNj896bqN9+jZSjC8fxCkHUn/Oue9cO1GoUOV4Uc5578dSahjavZjNneFVKP4vhnXfI89JnHjmCX4/JzdvxzGMOm7tOU20qvkAod+wWd5tVE0pIRccMG/ZYnMgJAFmLiB5k7qV5I/GxJLy8Ujj2E8FAGdiA0toXfUmbA09F0kNvmDnM/DZnOMykZMcrNr0+t8FZkg78UaXxoHovDH3lgjfuV3PKlmSHYvGR9+KK34+cuiYn4wtDtLv9GzgiLFC7EX6uQohqi7oPWvfhPahCNKXlQTXmTuBWw+PLzpy8tPkRsih9KA6UYVoiFIk3nrXRjoHCXzqkpliwZPfG7lzrZX9kK1AjMQ3CPFxipT12DHLTesVcdH6RRlVKMaTBj0wo3g7QJ1F004rUvT4h4tQUVBP/mGL2VHAKV9fb4I9Zd89Ci5RIna04Siip+N9D1dtMCc5I9KQU3iQaxoByujChmBpdu4mGfrERCI256s9jSoSuCQNhjso+HUz5F2iO2RahjucewQ4yOFPZypuGhc02t2yCAm/Ab9/5njqo3qXLmc0sv4sbVm73nc=

@@ -1,0 +1,52 @@
+[package]
+authors = [
+  "Alec Embke <aembke@gmail.com>",
+  "Howard Lin <linnyflow@gmail.com",
+  "Evan Milton <evan@azuqua.com>"
+]
+name = "redis_client"
+version = "0.1.0"
+
+[dependencies]
+bytes = "0.4.4"
+pretty_env_logger = "0.1"
+futures = "0.1.15"
+parking_lot = "0.4.4"
+tokio-core = "0.1.8"
+tokio-io = "0.1"
+tokio-proto = "0.1"
+tokio-timer = "0.1"
+url = "1.5"
+crc16 = "0.3"
+log = "0.3"
+boxfnonce = "0.0.3"
+
+# comment/uncomment these to toggle fuzzing
+#[dependencies.afl]
+#version = "0.1"
+#[dependencies.afl-plugin]
+#version = "0.1"
+
+[dev-dependencies]
+rand = "0.3"
+hyper = "0.11"
+
+[lib]
+doc = true
+doctest = false
+name = "redis_client"
+test = true
+
+[features]
+default = ["sync"]
+sync = []
+fuzz = []
+
+[profile.bench]
+codegen-units = 1
+debug = false
+debug-assertions = false
+lto = false
+opt-level = 3
+panic = "unwind"
+rpath = false

@@ -1,0 +1,123 @@
+use redis_client;
+use super::utils;
+
+use tokio_core::reactor::{
+  Core,
+  Handle
+};
+
+use tokio_timer::*;
+
+use futures::future;
+use futures::{
+  IntoFuture,
+  Future,
+  Stream
+};
+use futures::sync::oneshot::{
+  Sender as OneshotSender,
+  Receiver as OneshotReceiver,
+  channel as oneshot_channel
+};
+use futures::sync::mpsc::{
+  Sender,
+  Receiver,
+  channel
+};
+
+use std::time::Duration;
+
+use redis_client::error::{
+  RedisErrorKind,
+  RedisError
+};
+use redis_client::types::*;
+use redis_client::RedisClient;
+
+use std::thread;
+use std::sync::Arc;
+
+use pretty_env_logger;
+
+use super::keys as keys_tests;
+use super::hashes as hashes_tests;
+
+#[test]
+fn it_should_connect_and_disconnect() {
+
+  let mut config = RedisConfig::default();
+  let mut core = Core::new().unwrap();
+  let handle = core.handle();
+
+  let client = RedisClient::new(config);
+  let connection_ft = client.connect(&handle);
+
+  let select_ft = client.on_connect().and_then(|client| {
+    client.select(0)
+  })
+  .and_then(|client| {
+    client.quit()
+  });
+
+  let (err, client) = core.run(connection_ft.join(select_ft)).unwrap();
+  assert!(err.is_none());
+}
+
+#[test]
+fn it_should_connect_and_disconnect_with_policy() {
+  let mut config = RedisConfig::default();
+  let policy = ReconnectPolicy::Constant {
+    delay: 2000,
+    attempts: 0,
+    max_attempts: 10
+  };
+
+  let mut core = Core::new().unwrap();
+  let handle = core.handle();
+
+  let client = RedisClient::new(config);
+  let connection_ft = client.connect_with_policy(&handle, policy);
+
+  let select_ft = client.on_connect().and_then(|client| {
+    client.select(0)
+  })
+  .and_then(|client| {
+    client.quit()
+  });
+
+  let (_, client) = core.run(connection_ft.join(select_ft)).unwrap();
+}
+
+pub mod keys {
+  use super::*;
+
+  #[test]
+  fn it_should_set_and_get_simple_key() {
+    let config = RedisConfig::default();
+    utils::setup_test_client(config, |client| {
+      keys_tests::should_set_and_get_simple_key(client)
+    });
+  }
+
+  #[test]
+  fn it_should_set_and_get_large_key() {
+    let config = RedisConfig::default();
+    utils::setup_test_client(config, |client| {
+      keys_tests::should_set_and_get_large_key(client)
+    })
+  }
+
+}
+
+pub mod hashes {
+  use super::*;
+
+  #[test]
+  fn it_should_set_and_get_simple_key() {
+    let config = RedisConfig::default();
+    utils::setup_test_client(config, |client| {
+      hashes_tests::should_set_and_get_simple_key(client)
+    });
+  }
+
+}

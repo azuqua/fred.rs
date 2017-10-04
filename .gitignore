@@ -1,0 +1,25 @@
+/target/
+**/*.rs.bk
+Cargo.lock
+
+lib/openssl_*/*
+!lib/openssl_*/.gitkeep
+
+test/tmp/*
+!test/tmp/.gitkeep
+
+.vscode
+.idea
+.iml
+#vscode project file
+.vscode
+
+#ignore generated icons
+../Icon
+Icon/*
+protocol/Icon*
+*Icon*
+
+#ignore intellij idea project file
+*.idea*
+
