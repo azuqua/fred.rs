@@ -6,6 +6,8 @@ use super::utils;
 use types::*;
 use protocol::types::*;
 
+use std::fmt;
+
 use error::{
   RedisError,
   RedisErrorKind
@@ -310,6 +312,12 @@ pub struct Multiplexer {
 
   pub streams: Streams,
   pub sinks: Sinks
+}
+
+impl fmt::Debug for Multiplexer {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    write!(f, "[Multiplexer]")
+  }
 }
 
 impl Multiplexer {

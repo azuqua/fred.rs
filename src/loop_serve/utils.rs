@@ -415,6 +415,10 @@ pub fn create_multiplexer_ft(multiplexer: Rc<Multiplexer>, state: Arc<RwLock<Cli
   Box::new(Multiplexer::listen(multiplexer.clone()).then(move |result| {
     client_utils::set_client_state(&state, ClientState::Disconnected);
 
+    if let Err(ref e) = result {
+      debug!("Multiplexer frame stream future closed with error {:?}", e);
+    }
+
     match result {
       Ok(multiplexer) => multiplexer.close_commands(),
       Err(e) => Err(e)
@@ -475,6 +479,8 @@ pub fn create_commands_ft(
 
 pub fn create_connection_ft(command_ft: Box<Future<Item=(), Error=RedisError>>, multiplexer_ft: Box<Future<Item=(), Error=RedisError>>, state: Arc<RwLock<ClientState>>) -> ConnectionFuture {
   Box::new(command_ft.join(multiplexer_ft).then(move |result| {
+    debug!("Connection closed with {:?}", result);
+
     match result {
       Ok(_) => Ok(None),
       Err(e) => Ok(match *e.kind() {
@@ -636,6 +642,8 @@ pub fn reconnect(
   connect_tx: Rc<RefCell<Vec<OneshotSender<Result<RedisClient, RedisError>>>>>,
   result: Result<Option<RedisError>, RedisError>
 ) -> Box<Future<Item=Loop<(), (Handle, Timer, ReconnectPolicy)>, Error=RedisError>> {
+  debug!("Starting reconnect logic from error {:?}...", result);
+
   match result {
     Ok(err) => {
       if let Some(err) = err {
