@@ -1,3 +1,5 @@
+#![allow(unused_mut)]
+
 //! # Redis Client
 //!
 //! A client library for Redis based on [Futures](https://github.com/alexcrichton/futures-rs) and [Tokio](https://tokio.rs/).
@@ -231,10 +233,6 @@ impl RedisClient {
           // client is already waiting to quit
           true
         }else{
-          // close anything left over from previous connections or reconnection attempts
-          loop_serve::utils::close_error_tx(&self.error_tx);
-          loop_serve::utils::close_reconnect_tx(&self.reconnect_tx);
-          loop_serve::utils::close_messages_tx(&self.message_tx);
           *closed_ref = true;
 
           true
@@ -243,6 +241,11 @@ impl RedisClient {
         false
       }
     };
+
+    // close anything left over from previous connections or reconnection attempts
+    loop_serve::utils::close_error_tx(&self.error_tx);
+    loop_serve::utils::close_reconnect_tx(&self.reconnect_tx);
+    loop_serve::utils::close_messages_tx(&self.message_tx);
 
     if exit_early {
       utils::future_ok(self)

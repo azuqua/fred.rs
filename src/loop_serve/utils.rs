@@ -71,6 +71,8 @@ pub fn close_error_tx(error_tx: &Rc<RefCell<Option<UnboundedSender<RedisError>>>
   let mut error_tx_ref = error_tx.borrow_mut();
   
   if let Some(mut error_tx) = error_tx_ref.take() {
+    debug!("Closing error tx.");
+
     let _ = error_tx.close();
   }
 }
@@ -79,6 +81,8 @@ pub fn close_reconnect_tx(reconnect_tx: &Rc<RefCell<Option<UnboundedSender<Redis
   let mut reconnect_tx_ref = reconnect_tx.borrow_mut();
   
   if let Some(mut reconnect_tx) = reconnect_tx_ref.take() {
+    debug!("Closing reconnect tx.");
+
     let _ = reconnect_tx.close();
   }
 }
@@ -87,6 +91,8 @@ pub fn close_messages_tx(messages_tx: &Rc<RefCell<Option<UnboundedSender<(String
   let mut messages_tx_ref = messages_tx.borrow_mut();
   
   if let Some(mut messages_tx) = messages_tx_ref.take() {
+    debug!("Closing messages tx.");
+
     let _ = messages_tx.close();
   }
 }
@@ -454,6 +460,7 @@ pub fn create_commands_ft(
       Ok((multiplexer, _)) => {
         // stream was closed due to exit command so close the socket
         client_utils::set_client_state(&stream_state, ClientState::Disconnected);
+
         multiplexer.sinks.close();
         multiplexer.streams.close();
 
