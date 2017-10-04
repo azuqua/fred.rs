@@ -1,3 +1,4 @@
+#![allow(unused_mut)]
 
 use parking_lot::{
   RwLock
