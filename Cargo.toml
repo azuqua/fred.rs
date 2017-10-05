@@ -6,6 +6,16 @@ authors = [
 ]
 name = "redis_client"
 version = "0.1.0"
+description = "A Redis client for Rust built on futures and tokio."
+readme = "README.md"
+repository = "https://github.com/azuqua/redis.rs"
+homepage = "https://github.com/azuqua/redis.rs"
+keywords = ["redis", "futures", "async", "cluster"]
+license = "MIT"
+
+[badges]
+travis-ci = { repository = "azuqua/redis.rs", branch = "master" }
+maintenance = { status = "actively-developed" }
 
 [dependencies]
 bytes = "0.4.4"

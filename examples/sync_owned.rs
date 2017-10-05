@@ -40,24 +40,32 @@ fn main() {
     let config = RedisConfig::default();
     let client = RedisClient::new(config);
 
+    let connect_ft = client.on_connect().and_then(|_| {
+      println!("Client connected.");
+      Ok(())
+    });
+
     // future that runs the underlying connection
     let connection = client.connect(&handle);
 
     // future that runs the remote interface
     let remote = t_sync_client.init(client);
 
-    let composed = connection.join(remote);
+    let composed = connection
+      .join(remote)
+      .join(connect_ft);
+
     let _ = core.run(composed).unwrap();
   });
 
   // block this thread until the underlying client is connected
   let _ = sync_client.on_connect().wait();
 
-  // create two threads, one to increment a value every second, and a second to read the same value every second
+  // create two threads, one to increment a value every 2 seconds, and a second to read the same value every second
   let reader_client = sync_client.clone();
   let reader_jh = thread::spawn(move || {
     let timer = Timer::default();
-    let dur = Duration::from_millis(1000);
+    let dur = Duration::from_millis(2000);
 
     // read the value every second
     let timer_ft = timer.interval(dur).from_err::<RedisError>().fold(reader_client, |reader_client, _| {
@@ -78,9 +86,9 @@ fn main() {
   let writer_client = sync_client.clone();
   let writer_jh = thread::spawn(move || {
     let timer = Timer::default();
-    let dur = Duration::from_millis(1000);
+    let dur = Duration::from_millis(2000);
 
-    // increment the value every second
+    // increment the value every 2 seconds
     let timer_ft = timer.interval(dur).from_err::<RedisError>().fold(writer_client, |writer_client, _| {
 
       writer_client.incr(KEY).and_then(|(client, value)| {
@@ -94,7 +102,7 @@ fn main() {
     let _ = timer_ft.wait();
   });
 
-  // block this thread while the three child threads run
+  // block this thread while the three child threads run, this will run forever
   let _ = event_loop_jh.join();
   let _ = reader_jh.join();
   let _ = writer_jh.join();

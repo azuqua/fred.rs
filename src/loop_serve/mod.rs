@@ -253,6 +253,8 @@ fn init_centralized(
     connection_ft
   })
   .then(move |result| {
+    debug!("Centralized connection future closed with result {:?}.", result);
+
     if let Err(ref e) = result {
       utils::emit_connect_error(&error_connect_tx, error_remote_tx, e.clone());
     }

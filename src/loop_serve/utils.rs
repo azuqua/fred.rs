@@ -1,17 +1,21 @@
 
-use super::super::protocol::utils as protocol_utils;
-use super::super::utils as client_utils;
+use ::protocol::utils as protocol_utils;
+use ::utils as client_utils;
 
 use super::super::error::{
   RedisError,
   RedisErrorKind
 };
 
+use std::io::{
+  Error as IoError,
+  ErrorKind as IoErrorKind
+};
+
 use futures::future;
 use futures::Future;
 use futures::sync::oneshot::{
   Sender as OneshotSender,
-  Receiver as OneshotReceiver,
   channel as oneshot_channel
 };
 use futures::sync::mpsc::{
@@ -136,17 +140,19 @@ pub fn emit_connect(connect_tx: &Rc<RefCell<Vec<OneshotSender<Result<RedisClient
 
   {
     let mut connect_tx_refs = connect_tx.borrow_mut();
-    let len = connect_tx_refs.len() - 1; // don't use the last one
+    if connect_tx_refs.len() > 0 {
+      let len = connect_tx_refs.len() - 1; // don't use the last one
 
-    for tx in connect_tx_refs.drain(0..len) {
-      let _ = tx.send(Ok(client.clone()));
+      for tx in connect_tx_refs.drain(0..len) {
+        let _ = tx.send(Ok(client.clone()));
+      }
+
+      let last = match connect_tx_refs.pop() {
+        Some(last) => last,
+        None => return
+      };
+      let _ = last.send(Ok(client));
     }
-
-    let last = match connect_tx_refs.pop() {
-      Some(last) => last,
-      None => return
-    };
-    let _ = last.send(Ok(client));
   }
   {
     let mut remote_tx_refs = remote_tx.borrow_mut();
@@ -167,6 +173,10 @@ pub fn emit_connect_error(connect_tx: &Rc<RefCell<Vec<OneshotSender<Result<Redis
   }
   {
     let mut connect_tx_refs = connect_tx.borrow_mut();
+    if connect_tx_refs.len() < 1 {
+      return;
+    }
+
     let len = connect_tx_refs.len() - 1; // don't use the last one
 
     for tx in connect_tx_refs.drain(0..len) {
@@ -415,6 +425,10 @@ pub fn create_multiplexer_ft(multiplexer: Rc<Multiplexer>, state: Arc<RwLock<Cli
   Box::new(Multiplexer::listen(multiplexer.clone()).then(move |result| {
     client_utils::set_client_state(&state, ClientState::Disconnected);
 
+    if let Err(ref e) = result {
+      debug!("Multiplexer frame stream future closed with error {:?}", e);
+    }
+
     match result {
       Ok(multiplexer) => multiplexer.close_commands(),
       Err(e) => Err(e)
@@ -436,6 +450,8 @@ pub fn create_commands_ft(
 
     if command.kind == RedisCommandKind::_Close {
       // socket was closed abruptly, so try to reconnect if necessary
+      debug!("Redis transport closed abruptly.");
+
       client_utils::set_client_state(&state, ClientState::Disconnecting);
 
       multiplexer.sinks.close();
@@ -445,7 +461,7 @@ pub fn create_commands_ft(
         .map(|_: ()| (multiplexer, error_tx))))
     }else{
       // create a second oneshot channel for notifying when to move on to the next command
-      let (m_tx, m_rx): (OneshotSender<RefreshCache>, OneshotReceiver<RefreshCache>) = oneshot_channel();
+      let (m_tx, m_rx) = oneshot_channel();
       command.m_tx = Some(m_tx);
 
       Box::new(Either::B(multiplexer.write_command(command).and_then(|_| {
@@ -458,6 +474,8 @@ pub fn create_commands_ft(
   .then(move |result| {
     match result {
       Ok((multiplexer, _)) => {
+        debug!("Command stream closing after quit.");
+
         // stream was closed due to exit command so close the socket
         client_utils::set_client_state(&stream_state, ClientState::Disconnected);
 
@@ -475,6 +493,8 @@ pub fn create_commands_ft(
 
 pub fn create_connection_ft(command_ft: Box<Future<Item=(), Error=RedisError>>, multiplexer_ft: Box<Future<Item=(), Error=RedisError>>, state: Arc<RwLock<ClientState>>) -> ConnectionFuture {
   Box::new(command_ft.join(multiplexer_ft).then(move |result| {
+    debug!("Connection closed with {:?}", result);
+
     match result {
       Ok(_) => Ok(None),
       Err(e) => Ok(match *e.kind() {
@@ -634,8 +654,21 @@ pub fn reconnect(
   command_tx: Rc<RefCell<Option<UnboundedSender<RedisCommand>>>>,
   reconnect_tx: Rc<RefCell<Option<UnboundedSender<RedisClient>>>>,
   connect_tx: Rc<RefCell<Vec<OneshotSender<Result<RedisClient, RedisError>>>>>,
-  result: Result<Option<RedisError>, RedisError>
+  mut result: Result<Option<RedisError>, RedisError>
 ) -> Box<Future<Item=Loop<(), (Handle, Timer, ReconnectPolicy)>, Error=RedisError>> {
+
+  // since framed sockets don't give an error when closed abruptly the client's state is
+  // used to determine whether or not the socket was closed intentionally or not
+  if client_utils::read_client_state(&state) == ClientState::Disconnecting {
+    let io_err = IoError::new(IoErrorKind::ConnectionReset, "Redis socket closed abruptly.");
+
+    result = Err(RedisError::new(
+      RedisErrorKind::IO(io_err), "Redis socket closed."
+    ));
+  }
+
+  debug!("Starting reconnect logic from error {:?}...", result);
+
   match result {
     Ok(err) => {
       if let Some(err) = err {
