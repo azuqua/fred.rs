@@ -1,6 +1,6 @@
 # Contributing
 
-* [Use 2 spaces for tabs.](http://i0.kym-cdn.com/entries/icons/original/000/000/043/disaster-girl.jpg)
+* [Use 2 spaces for tabs.](https://www.youtube.com/watch?v=kQFKtI6gn9Y)
 * Don't use [boxed](https://github.com/alexcrichton/futures-rs/issues/228).
 * Use `?` over `try!()` unless the inner expression would need to be wrapped in `()` to be legible, then just use `try!()`.
 * Wrap any acquired locks in their own scope to reduce the size of critical sections.
