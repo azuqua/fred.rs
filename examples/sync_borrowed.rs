@@ -42,20 +42,28 @@ fn main() {
     let config = RedisConfig::default();
     let client = RedisClient::new(config);
 
+    let connect_ft = client.on_connect().and_then(|_| {
+      println!("Client connected.");
+      Ok(())
+    });
+
     // future that runs the underlying connection
     let connection = client.connect(&handle);
 
     // future that runs the remote interface
     let remote = t_sync_client.init(client);
 
-    let composed = connection.join(remote);
+    let composed = connection
+      .join(remote)
+      .join(connect_ft);
+
     let _ = core.run(composed).unwrap();
   });
 
   // block this thread until the underlying client is connected
   let _ = sync_client.on_connect().wait();
 
-  // create two threads, one to increment a value every second, and a second to read the same value every second
+  // create two threads, one to increment a value every 2 seconds, and a second to read the same value every second
   let reader_client = sync_client.clone();
   let reader_jh = thread::spawn(move || {
 
@@ -73,7 +81,7 @@ fn main() {
         println!("Reader read key {:?} with value {:?}", KEY, value);
       }
 
-      thread::sleep(Duration::from_millis(1000));
+      thread::sleep(Duration::from_millis(2000));
     }
   });
 
@@ -89,7 +97,7 @@ fn main() {
       };
       println!("Writer incremented key {:?} to {:?}", KEY, value);
 
-      thread::sleep(Duration::from_millis(1000));
+      thread::sleep(Duration::from_millis(2000));
     }
   });
 

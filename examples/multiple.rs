@@ -73,14 +73,14 @@ fn main() {
     foo_client.get("foo")
   })
   .and_then(|(foo_client, value)| {
-    println!("Foo client got `foo`: {:?}", value);
+    println!("Foo client got `foo`: {:?}. Sleeping for 10 seconds...", value);
 
     let timer = Timer::default();
     timer.sleep(Duration::from_millis(10 * 1000)).from_err::<RedisError>()
       .map(move |_| foo_client)
   })
   .and_then(|foo_client| {
-    println!("Closing foo client.");
+    println!("Closing foo client...");
 
     foo_client.quit()
   });
@@ -92,7 +92,7 @@ fn main() {
     bar_client.incr("bar")
   })
   .and_then(|(bar_client, value)| {
-    println!("Bar client incremented `bar`: {:?}", value);
+    println!("Bar client incremented `bar`: {:?}. Closing bar client...", value);
 
     bar_client.quit()
   });
@@ -107,7 +107,7 @@ fn main() {
     baz_client.decr("bar")
   })
   .and_then(|(baz_client, value)| {
-    println!("Baz client decremented `bar` to {:?}", value);
+    println!("Baz client decremented `bar` to {:?}. Closing baz client...", value);
 
     baz_client.quit()
   });
@@ -116,7 +116,6 @@ fn main() {
   let composed_commands = foo_commands
     .join(bar_commands)
     .join(baz_commands);
-
 
   // compose the connection futures, error handler futures, and command futures into one future, and run that
   let composed = composed_connections
