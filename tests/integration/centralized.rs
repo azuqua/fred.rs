@@ -44,7 +44,6 @@ use super::hashes as hashes_tests;
 
 #[test]
 fn it_should_connect_and_disconnect() {
-
   let mut config = RedisConfig::default();
   let mut core = Core::new().unwrap();
   let handle = core.handle();
@@ -107,6 +106,14 @@ pub mod keys {
     })
   }
 
+  #[test]
+  fn it_should_set_and_get_random_keys() {
+    let config = RedisConfig::default();
+    utils::setup_test_client(config, |client| {
+      keys_tests::should_set_and_get_random_keys(client)
+    })
+  }
+
 }
 
 pub mod hashes {
@@ -117,6 +124,14 @@ pub mod hashes {
     let config = RedisConfig::default();
     utils::setup_test_client(config, |client| {
       hashes_tests::should_set_and_get_simple_key(client)
+    });
+  }
+
+  #[test]
+  fn it_should_check_hexists() {
+    let config = RedisConfig::default();
+    utils::setup_test_client(config, |client| {
+      hashes_tests::should_check_hexists(client)
     });
   }
 

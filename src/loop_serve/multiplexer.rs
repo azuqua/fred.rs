@@ -190,6 +190,8 @@ impl Sinks {
           };
 
           let slot = protocol_utils::redis_crc16(&key);
+
+          trace!("Mapped key to slot: {:?} -> {:?}", key, slot);
           match cluster_cache_ref.get_server(slot) {
             Some(s) => s,
             None => return client_utils::future_error(RedisError::new(

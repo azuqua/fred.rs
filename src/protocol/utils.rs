@@ -361,17 +361,17 @@ pub fn frame_to_pubsub(frame: Frame) -> Result<(String, RedisValue), RedisError>
   }
 }
 
-pub fn ends_with_crlf(bytes: &mut BytesMut) -> bool {
-  let lf = match bytes.get(bytes.len() - 1) {
-    Some(b) => *b == LF as u8,
-    None => false
+pub fn ends_with_crlf(bytes: &BytesMut) -> bool {
+  match bytes.get(bytes.len() - 1) {
+    Some(b) => if *b != LF as u8 { return false; },
+    None => return false
   };
-  let cr = match bytes.get(bytes.len() - 2) {
-    Some(b) => *b == CR as u8,
-    None => false
+  match bytes.get(bytes.len() - 2) {
+    Some(b) => if *b != CR as u8 { return false; },
+    None => return false
   };
 
-  lf && cr
+  true
 }
 
 pub fn command_args(kind: &RedisCommandKind) -> Option<Frame> {
@@ -414,8 +414,14 @@ pub fn check_expected_size(expected: usize, max: &Option<usize>) -> Result<(), R
   }
 }
 
-// this assumes the cursor starts on a new data type byte offset
-pub fn bytes_to_frames(cursor: &mut Cursor<&mut BytesMut>, max_size: &Option<usize>) -> Result<Frame, RedisError> {
+/// Takes in a working buffer of previous bytes, a new set of bytes, and a max_size option.
+/// Returns an option with the parsed frame and its size in bytes, including crlf padding and the kind/type byte.
+#[allow(deprecated)]
+pub fn bytes_to_frames(buf: &mut BytesMut, mut bytes: BytesMut, max_size: &Option<usize>) -> Result<Option<(Frame, usize)>, RedisError> {
+  let _ = buf.extend(bytes.drain());
+  let full_len = buf.len();
+  let mut cursor = Cursor::new(buf);
+
   if cursor.remaining() < 1 {
     return Err(RedisError::new(
       RedisErrorKind::ProtocolError, "Empty frame bytes."
@@ -430,56 +436,84 @@ pub fn bytes_to_frames(cursor: &mut Cursor<&mut BytesMut>, max_size: &Option<usi
     ))
   };
 
-  match data_type {
+  let frame = match data_type {
     FrameKind::BulkString | FrameKind::Null => {
-      let expected_len = readers::read_prefix_len(cursor)?;
+      let expected_len = readers::read_prefix_len(&mut cursor)?;
 
       if expected_len == -1 {
-        Ok(Frame::Null)
-      }else if expected_len >= 0 {
+        Some((Frame::Null, NULL.len()))
+      }else if expected_len >= 0 && cursor.remaining() >= expected_len as usize {
         let _ = check_expected_size(expected_len as usize, max_size)?;
 
         let mut payload = Vec::with_capacity(expected_len as usize);
-        let _ = readers::read_exact(cursor, expected_len as u64, &mut payload)?;
+        let _ = readers::read_exact(&mut cursor, expected_len as u64, &mut payload)?;
 
         // there's still trailing CRLF after bulk strings
-        pop_trailing_crlf(cursor)?;
+        pop_trailing_crlf(&mut cursor)?;
 
-        Ok(Frame::BulkString(payload))
+        Some((Frame::BulkString(payload), cursor.position() as usize))
       }else{
-        Err(RedisError::new(
-          RedisErrorKind::ProtocolError, format!("Invalid payload size: {}.", expected_len)
-        ))
+        None
       }
     },
     FrameKind::Array => {
-      let expected_len = readers::read_prefix_len(cursor)?;
+      let expected_len = readers::read_prefix_len(&mut cursor)?;
 
       if expected_len == -1 {
-        Ok(Frame::Null)
+        Some((Frame::Null, NULL.len()))
       }else if expected_len >= 0 {
         let _ = check_expected_size(expected_len as usize, max_size)?;
 
+        // cursor now points at the first value's type byte
+        let mut position = cursor.position() as usize;
+        let buf = cursor.into_inner();
+        let empty = BytesMut::new();
+
         let mut frames = Vec::with_capacity(expected_len as usize);
+        let mut unfinished = false;
+        let mut parsed = 0;
+
+        // cut the outer buffer into successively smaller byte slices as the array is parsed,
+        // and at the end check that the expected number of elements were parsed and that none
+        // failed while being parsed.
         for _ in 0..expected_len {
-          frames.push(bytes_to_frames(cursor, max_size)?);
+          // operate on a clone of buf in case the array is unfinished
+          // this just increments a few ref counts
+          let mut next_bytes = buf.clone().split_off(position);
+
+          match bytes_to_frames(&mut next_bytes, empty.clone(), max_size)? {
+            Some((f, size)) => {
+              frames.push(f);
+              position = position + size;
+              parsed = parsed + 1;
+            },
+            None => {
+              unfinished = true;
+              break;
+            }
+          }
         }
 
-        Ok(Frame::Array(frames))
+        if unfinished || parsed != expected_len {
+          None
+        }else{
+          let _ = buf.take();
+          Some((Frame::Array(frames), full_len))
+        }
       }else{
-        Err(RedisError::new(
+        return Err(RedisError::new(
           RedisErrorKind::ProtocolError, format!("Invalid payload size: {}.", expected_len)
         ))
       }
     },
     FrameKind::SimpleString => {
-      let payload = readers::read_to_crlf(cursor)?;
+      let payload = readers::read_to_crlf(&mut cursor)?;
       let parsed = String::from_utf8(payload)?;
 
-      Ok(Frame::SimpleString(parsed))
+      Some((Frame::SimpleString(parsed), cursor.position() as usize))
     },
     FrameKind::Error => {
-      let payload = readers::read_to_crlf(cursor)?;
+      let payload = readers::read_to_crlf(&mut cursor)?;
       let parsed = String::from_utf8(payload)?;
 
       let frame = if let Some(frame) = is_cluster_error(&parsed) {
@@ -488,20 +522,21 @@ pub fn bytes_to_frames(cursor: &mut Cursor<&mut BytesMut>, max_size: &Option<usi
         Frame::Error(parsed)
       };
 
-      Ok(frame)
+      Some((frame, cursor.position() as usize))
     },
     FrameKind::Integer => {
-      let payload = readers::read_to_crlf(cursor)?;
+      let payload = readers::read_to_crlf(&mut cursor)?;
       let parsed = String::from_utf8(payload)?;
-
       let int_val: i64 = parsed.parse()?;
 
-      Ok(Frame::Integer(int_val))
+      Some((Frame::Integer(int_val), cursor.position() as usize))
     },
-    _ => Err(RedisError::new(
+    _ => return Err(RedisError::new(
       RedisErrorKind::ProtocolError, "Unknown frame."
     ))
-  }
+  };
+
+  Ok(frame)
 }
 
 pub fn frames_to_bytes(frame: &mut Frame, bytes: &mut BytesMut) -> Result<(), RedisError> {
@@ -587,12 +622,12 @@ mod tests {
 
   #[test]
   fn should_decode_llen_res_example() {
-    let expected = Frame::Integer(48293);
+    let expected = Some((Frame::Integer(48293), 8));
 
-    let mut bytes: BytesMut = ":48293\r\n".into();
-    let mut cursor = Cursor::new(&mut bytes);
+    let mut empty = BytesMut::new();
+    let bytes: BytesMut = ":48293\r\n".into();
 
-    let actual = bytes_to_frames(&mut cursor, &None).unwrap();
+    let actual = bytes_to_frames(&mut empty, bytes, &None).unwrap();
 
     assert_eq!(actual, expected);
   }
@@ -620,12 +655,12 @@ mod tests {
 
   #[test]
   fn should_decode_incr_req_example() {
-    let expected = Frame::Integer(666);
+    let expected = Some((Frame::Integer(666), 6));
 
-    let mut bytes: BytesMut = ":666\r\n".into();
-    let mut cursor = Cursor::new(&mut bytes);
+    let mut empty = BytesMut::new();
+    let bytes: BytesMut = ":666\r\n".into();
 
-    let actual = bytes_to_frames(&mut cursor, &None).unwrap();
+    let actual = bytes_to_frames(&mut empty, bytes, &None).unwrap();
 
     assert_eq!(actual, expected);
   }
@@ -693,8 +728,19 @@ mod tests {
   #[test]
   fn should_correctly_crc16_with_invalid_brackets_rhs() {
     let key = "foo}123456789";
-    // 5B35 = 23349, 23349 % 16383 = 6966
-    let expected: u16 = 6966;
+    // 5B35 = 23349, 23349 % 16384 = 6965
+    let expected: u16 = 6965;
+    let actual = redis_crc16(key);
+
+    assert_eq!(actual, expected);
+  }
+
+  #[test]
+  fn should_correctly_crc16_with_random_string() {
+    let key = "8xjx7vWrfPq54mKfFD3Y1CcjjofpnAcQ";
+    // 127.0.0.1:30001> cluster keyslot 8xjx7vWrfPq54mKfFD3Y1CcjjofpnAcQ
+    // (integer) 5458
+    let expected: u16 = 5458;
     let actual = redis_crc16(key);
 
     assert_eq!(actual, expected);
@@ -745,15 +791,14 @@ e7d1eecce10fd6bb5eb35b9f99a514335d9ba9ca 127.0.0.1:30001 myself,master - 0 0 1 c
     assert_eq!(actual, expected);
   }
 
-// string tests
   #[test]
   fn should_decode_simple_string_test() {
-    let expected = Frame::SimpleString("string".to_owned());
+    let expected = Some((Frame::SimpleString("string".to_owned()), 9));
 
-    let mut bytes: BytesMut = "+string\r\n".into();
-    let mut cursor = Cursor::new(&mut bytes);
+    let mut empty = BytesMut::new();
+    let bytes: BytesMut = "+string\r\n".into();
 
-    let actual = bytes_to_frames(&mut cursor, &None).unwrap();
+    let actual = bytes_to_frames(&mut empty, bytes, &None).unwrap();
 
     assert_eq!(actual, expected);
   }
@@ -761,29 +806,28 @@ e7d1eecce10fd6bb5eb35b9f99a514335d9ba9ca 127.0.0.1:30001 myself,master - 0 0 1 c
   #[test]
   fn should_decode_bulk_string_test() {
     let string1 = vec!['f' as u8 ,'o' as u8, 'o' as u8];
-    let expected = Frame::BulkString(string1);
+    let expected = Some((Frame::BulkString(string1), 9));
 
+    let mut empty = BytesMut::new();
     let mut bytes: BytesMut = "$3\r\nfoo\r\n".into();
-    let mut cursor = Cursor::new(&mut bytes);
 
-    let actual = bytes_to_frames(&mut cursor, &None).unwrap();
+    let actual = bytes_to_frames(&mut empty, bytes, &None).unwrap();
 
     assert_eq!(actual, expected);
   }
 
-  // array tests
   #[test]
   fn should_decode_array_simple_strings_test() {
     let mut frame_vec = Vec::new();
     frame_vec.push(Frame::SimpleString("Foo".to_owned()));
     frame_vec.push(Frame::SimpleString("Bar".to_owned()));
 
-    let expected = Frame::Array(frame_vec);
+    let expected = Some((Frame::Array(frame_vec), 16));
 
+    let mut empty = BytesMut::new();
     let mut bytes: BytesMut = "*2\r\n+Foo\r\n+Bar\r\n".into();
-    let mut cursor = Cursor::new(&mut bytes);
 
-    let actual = bytes_to_frames(&mut cursor, &None).unwrap();
+    let actual = bytes_to_frames(&mut empty, bytes, &None).unwrap();
 
     assert_eq!(actual, expected);
   }
@@ -818,16 +862,15 @@ e7d1eecce10fd6bb5eb35b9f99a514335d9ba9ca 127.0.0.1:30001 myself,master - 0 0 1 c
     frame_vec.push(Frame::BulkString(string1));
     frame_vec.push(Frame::BulkString(string2));
 
-    let expected = Frame::Array(frame_vec);
+    let expected = Some((Frame::Array(frame_vec), 22));
 
+    let mut empty = BytesMut::new();
     let mut bytes: BytesMut = "*2\r\n$3\r\nfoo\r\n$3\r\nbar\r\n".into();
-    let mut cursor = Cursor::new(&mut bytes);
 
-    let actual = bytes_to_frames(&mut cursor, &None).unwrap();
+    let actual = bytes_to_frames(&mut empty, bytes, &None).unwrap();
 
     assert_eq!(actual, expected);
   }
-
 
   // test cases from afl
   pub mod fuzz {
@@ -844,9 +887,9 @@ e7d1eecce10fd6bb5eb35b9f99a514335d9ba9ca 127.0.0.1:30001 myself,master - 0 0 1 c
         255 as u8
       ];
 
-      let mut bytes = BytesMut::from(b);
-      let mut cursor = Cursor::new(&mut bytes);
-      let _ = bytes_to_frames(&mut cursor, &None);
+      let mut empty = BytesMut::new();
+      let bytes = BytesMut::from(b);
+      let _ = bytes_to_frames(&mut empty, bytes, &None);
     }
 
     #[test]
@@ -873,9 +916,10 @@ e7d1eecce10fd6bb5eb35b9f99a514335d9ba9ca 127.0.0.1:30001 myself,master - 0 0 1 c
         53 as u8
       ];
 
-      let mut bytes = BytesMut::from(b);
-      let mut cursor = Cursor::new(&mut bytes);
-      let _ = bytes_to_frames(&mut cursor, &max);
+      let mut empty = BytesMut::new();
+      let bytes = BytesMut::from(b);
+
+      let _ = bytes_to_frames(&mut empty, bytes, &max);
     }
 
     #[test]
@@ -889,9 +933,10 @@ e7d1eecce10fd6bb5eb35b9f99a514335d9ba9ca 127.0.0.1:30001 myself,master - 0 0 1 c
         32 as u8
       ];
 
-      let mut bytes = BytesMut::from(b);
-      let mut cursor = Cursor::new(&mut bytes);
-      let _ = bytes_to_frames(&mut cursor, &None);
+      let mut empty = BytesMut::new();
+      let bytes = BytesMut::from(b);
+
+      let _ = bytes_to_frames(&mut empty, bytes, &None);
     }
 
     #[test]
@@ -922,9 +967,10 @@ e7d1eecce10fd6bb5eb35b9f99a514335d9ba9ca 127.0.0.1:30001 myself,master - 0 0 1 c
         52 as u8
       ];
 
-      let mut bytes = BytesMut::from(b);
-      let mut cursor = Cursor::new(&mut bytes);
-      let _ = bytes_to_frames(&mut cursor, &max);
+      let mut empty = BytesMut::new();
+      let bytes = BytesMut::from(b);
+
+      let _ = bytes_to_frames(&mut empty, bytes, &max);
     }
 
   }

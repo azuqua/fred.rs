@@ -308,7 +308,7 @@ pub fn create_transport(
   debug!("Creating redis transport to {:?}", &addr);
   let codec = {
     let config_ref = config.borrow();
-    RedisCodec { max_size: config_ref.get_max_size() }
+    RedisCodec::new(config_ref.get_max_size())
   };
 
   Box::new(TcpStream::connect(&addr, handle)
@@ -536,7 +536,7 @@ pub fn create_initial_transport(handle: Handle, config: Rc<RefCell<RedisConfig>>
       let key = read_auth_key(&config);
       let codec = {
         let config_ref = config.borrow();
-        RedisCodec { max_size: config_ref.get_max_size() }
+        RedisCodec::new(config_ref.get_max_size())
       };
 
       debug!("Creating clustered redis transport to {:?}", &addr);
@@ -580,7 +580,7 @@ pub fn create_all_transports(config: Rc<RefCell<RedisConfig>>, handle: Handle, h
     let key = key.clone();
     let codec = {
       let config_ref = config.borrow();
-      RedisCodec { max_size: config_ref.get_max_size() }
+      RedisCodec::new(config_ref.get_max_size())
     };
 
     debug!("Creating clustered transport to {:?}", addr);
