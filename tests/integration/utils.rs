@@ -61,15 +61,16 @@ pub fn setup_test_client<F: FnOnce(RedisClient) -> TestFuture>(config: RedisConf
 
   let clone = client.clone();
   let commands = client.on_connect().and_then(|client| {
+    client.flush_all(false)
+  })
+  .and_then(|(client, _)| {
     func(client)
   })
   .and_then(|_| {
     clone.quit()
   });
 
-  let res = core.run(connection.join(commands));
-
-  assert!(res.is_ok());
+  let _ = core.run(connection.join(commands)).unwrap();
 }
 
 pub fn random_string(len: usize) -> String {

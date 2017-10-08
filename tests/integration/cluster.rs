@@ -109,6 +109,14 @@ pub mod keys {
     })
   }
 
+  #[test]
+  fn it_should_set_and_get_random_keys() {
+    let config = RedisConfig::default_clustered();
+    utils::setup_test_client(config, |client| {
+      keys_tests::should_set_and_get_random_keys(client)
+    })
+  }
+
 }
 
 
@@ -120,6 +128,14 @@ pub mod hashes {
     let config = RedisConfig::default_clustered();
     utils::setup_test_client(config, |client| {
       hashes_tests::should_set_and_get_simple_key(client)
+    });
+  }
+
+  #[test]
+  fn it_should_check_hexists() {
+    let config = RedisConfig::default_clustered();
+    utils::setup_test_client(config, |client| {
+      hashes_tests::should_check_hexists(client)
     });
   }
 

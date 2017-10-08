@@ -37,3 +37,21 @@ pub fn should_set_and_get_simple_key(client: RedisClient) -> Box<Future<Item=(),
     Ok(())
   }))
 }
+
+pub fn should_check_hexists(client: RedisClient) -> Box<Future<Item=(), Error=RedisError>> {
+  Box::new(client.hset("foo", "bar", "baz").and_then(|(client, count)| {
+    client.hexists("foo", "bar")
+  })
+  .and_then(|(client, exists)| {
+    assert!(exists);
+    client.hdel("foo", "bar")
+  })
+  .and_then(|(client, deleted)| {
+    assert_eq!(deleted, 1);
+    client.hexists("foo", "bar")
+  })
+  .and_then(|(client, exists)| {
+    assert!(!exists);
+    Ok(())
+  }))
+}

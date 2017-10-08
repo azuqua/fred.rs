@@ -105,6 +105,8 @@ cargo test -- --test-threads=1
 
 Note a local Redis server must be running on port 6379 and a clustered deployment must be running on ports 30000 - 30005 for the integration tests to pass.
 
+**Beware: the tests will periodically run `flushall`.**
+
 ## TODO
 
 * More commands.

@@ -1,9 +1,5 @@
 #![allow(dead_code)]
 
-use std::io::{
-  Cursor
-};
-
 use bytes::{
   BytesMut
 };
@@ -31,7 +27,7 @@ pub const CR: char = '\r';
 pub const LF: char = '\n';
 pub const NULL: &'static str = "$-1\r\n";
 
-pub const REDIS_CLUSTER_SLOTS: u16 = 16383;
+pub const REDIS_CLUSTER_SLOTS: u16 = 16384;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RedisCommandKind {
@@ -923,7 +919,25 @@ impl RedisCommand {
 }
 
 pub struct RedisCodec {
-  pub max_size: Option<usize>
+  pub max_size: Option<usize>,
+  // An intermediate buffer for partially received frames that can parsed individually, but
+  // do not yet make up a full response frame, such as only part of an array, etc.
+  // Since redis arrays are length prefixed based on the number of values, not the number
+  // of bytes in the array, and values can have variable lengths, it's only possible to
+  // recognize incomplete frames by parsing the values, and this buffer acts a place to
+  // hold those successfully parsed inner values to avoid having to re-parse them again.
+  buf: BytesMut
+}
+
+impl RedisCodec {
+
+  pub fn new(max_size: Option<usize>) -> RedisCodec {
+    RedisCodec {
+      max_size: max_size,
+      buf: BytesMut::new()
+    }
+  }
+
 }
 
 impl Encoder for RedisCodec {
@@ -941,21 +955,31 @@ impl Decoder for RedisCodec {
   type Error = RedisError;
 
   fn decode(&mut self, buf: &mut BytesMut) -> Result<Option<Frame>, RedisError> {
-    trace!("Recv {:?} bytes", buf.len());
+    trace!("Recv {:?} bytes.", buf.len());
 
-    if buf.len() < 1 {
+    if buf.len() < 1 || !protocol_utils::ends_with_crlf(buf) {
+      // no chance this is a full response frame, so don't even try to parse it
       return Ok(None)
     }
 
-    let mut buf = if protocol_utils::ends_with_crlf(buf) {
-      buf.take()
-    }else{
-      return Ok(None);
-    };
+    // try to parse the frame, moving `buf`'s values into `self.buf` in the event that the frame is still incomplete
+    let result = protocol_utils::bytes_to_frames(&mut self.buf, buf.take(), &self.max_size);
+    match result {
+      Ok(inner) => match inner {
+        Some((frame, size)) => {
+          trace!("Parsed {:?} bytes.", size);
 
-    let mut cursor = Cursor::new(&mut buf);
-    let frame = protocol_utils::bytes_to_frames(&mut cursor, &self.max_size)?;
-    Ok(Some(frame))
+          self.buf.clear();
+          Ok(Some(frame))
+        },
+        None => Ok(None)
+      },
+      Err(e) => {
+        // need to clear previous bytes on an error
+        self.buf.clear();
+        Err(e)
+      }
+    }
   }
 
 }

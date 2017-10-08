@@ -32,8 +32,10 @@ branches:
   - develop
 script:
 - |
-  travis-cargo build &&
+  cargo build &&
   cargo test -- --test-threads=1 &&
+  cargo build --release &&
+  cargo test --release -- --test-threads=1
   travis-cargo --only stable doc
 before_script:
 - 'gem install redis'

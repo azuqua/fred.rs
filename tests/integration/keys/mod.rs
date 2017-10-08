@@ -6,6 +6,8 @@ use futures::{
   Stream
 };
 
+use futures::stream;
+
 use redis_client::error::{
   RedisErrorKind,
   RedisError
@@ -65,4 +67,35 @@ pub fn should_set_and_get_large_key(client: RedisClient) -> Box<Future<Item=(), 
     assert!(val.is_none());
     Ok(())
   }))
+}
+
+pub fn should_set_and_get_random_keys(client: RedisClient) -> Box<Future<Item=(), Error=RedisError>> {
+  // set and get 1000 random keys
+
+  Box::new(stream::iter_ok(0..1000).fold(client, |client, _| {
+    let key = utils::random_string(32);
+    let val = utils::random_string(1000);
+
+    let get_key = key.clone();
+    let del_key = key.clone();
+    let get_val = val.clone();
+    client.set(key.as_ref(), val, None, None).and_then(move |(client, set)| {
+      assert!(set);
+      client.get(get_key)
+    })
+    .and_then(move |(client, result)| {
+      let result = result.unwrap().into_string().unwrap();
+      assert_eq!(result, get_val);
+      client.del(del_key)
+    })
+    .and_then(move |(client, deleted)| {
+      assert_eq!(deleted, 1);
+      client.get(key)
+    })
+    .and_then(|(client, result)| {
+      assert_eq!(result, None);
+      Ok(client)
+    })
+  })
+  .map(|_| ()))
 }
