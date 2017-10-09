@@ -289,9 +289,9 @@ impl RedisClientRemote {
   /// Returns the number of keys removed.
   ///
   /// https://redis.io/commands/del
-  pub fn del<K: Into<RedisKey>>(&self, mut keys: Vec<K>) -> Box<Future<Item=usize, Error=RedisError>> {
+  pub fn del<K: Into<MultipleKeys>>(&self, keys: K) -> Box<Future<Item=usize, Error=RedisError>> {
     let (tx, rx) = oneshot_channel();
-    let keys: Vec<RedisKey> = keys.drain(..).map(|k| k.into()).collect();
+    let keys = keys.into().inner();
 
     let func: CommandFn = SendBoxFnOnce::new(move |client: RedisClient| {
       commands::del(client, tx, keys)
@@ -379,10 +379,10 @@ impl RedisClientRemote {
   /// If key does not exist, it is treated as an empty hash and this command returns 0.
   ///
   /// https://redis.io/commands/hdel
-  pub fn hdel<K: Into<RedisKey>, F: Into<RedisKey>>(&self, key: K, mut fields: Vec<F>) -> Box<Future<Item=usize, Error=RedisError>> {
+  pub fn hdel<K: Into<RedisKey>, F: Into<MultipleKeys>>(&self, key: K, fields: F) -> Box<Future<Item=usize, Error=RedisError>> {
     let (tx, rx) = oneshot_channel();
     let key = key.into();
-    let fields: Vec<RedisKey> = fields.drain(..).map(|k| k.into()).collect();
+    let fields = fields.into().inner();
 
     let func: CommandFn = SendBoxFnOnce::new(move |client: RedisClient| {
       commands::hdel(client, tx, key, fields)
