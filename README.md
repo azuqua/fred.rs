@@ -35,7 +35,10 @@ use redis_client::RedisClient;
 use redis_client::types::*;
 
 use tokio_core::reactor::Core;
-use futures::Future;
+use futures::{
+  Future,
+  Stream
+};
 
 fn main() {
   let config = RedisConfig::default();
@@ -94,7 +97,7 @@ In order to simplify error handling and usage patterns this module caches the st
 ## Logging
 
 This module uses [pretty_env_logger](https://github.com/seanmonstar/pretty-env-logger) for logging. To enable logs use the environment
-variable `RUST_LOG` with a value of `debug`, `error`, or `info`. See the documentation for [env_logger](http://rust-lang-nursery.github.io/log/env_logger/) for more information. 
+variable `RUST_LOG` with a value of `trace`, `debug`, `error`, or `info`. See the documentation for [env_logger](http://rust-lang-nursery.github.io/log/env_logger/) for more information. 
 
 ## Tests
 
@@ -115,3 +118,4 @@ Note a local Redis server must be running on port 6379 and a clustered deploymen
 * Distribute reads among slaves.
 * Pipelined requests.
 * Lua.
+* Change the protocol parsing to use nom.
