@@ -416,9 +416,10 @@ pub fn check_expected_size(expected: usize, max: &Option<usize>) -> Result<(), R
 
 /// Takes in a working buffer of previous bytes, a new set of bytes, and a max_size option.
 /// Returns an option with the parsed frame and its size in bytes, including crlf padding and the kind/type byte.
-#[allow(deprecated)]
 pub fn bytes_to_frames(buf: &mut BytesMut, mut bytes: BytesMut, max_size: &Option<usize>) -> Result<Option<(Frame, usize)>, RedisError> {
-  let _ = buf.extend(bytes.drain());
+  buf.reserve(bytes.len());
+  buf.put(bytes);
+
   let full_len = buf.len();
   let mut cursor = Cursor::new(buf);
 

@@ -975,7 +975,6 @@ impl Decoder for RedisCodec {
         None => Ok(None)
       },
       Err(e) => {
-        // need to clear previous bytes on an error
         self.buf.clear();
         Err(e)
       }
