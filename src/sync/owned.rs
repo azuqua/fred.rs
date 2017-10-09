@@ -202,7 +202,7 @@ impl RedisClientRemote {
   /// Returns the number of keys removed.
   ///
   /// https://redis.io/commands/del
-  pub fn del<K: Into<RedisKey>>(self, keys: Vec<K>) -> Box<Future<Item=(Self, usize), Error=RedisError>> {
+  pub fn del<K: Into<MultipleKeys>>(self, keys: K) -> Box<Future<Item=(Self, usize), Error=RedisError>> {
     utils::run_borrowed(self, move |_self, borrowed| {
       Box::new(borrowed.del(keys).and_then(move |resp| {
         Ok((_self, resp))
@@ -263,7 +263,7 @@ impl RedisClientRemote {
   /// If key does not exist, it is treated as an empty hash and this command returns 0.
   ///
   /// https://redis.io/commands/hdel
-  pub fn hdel<K: Into<RedisKey>, F: Into<RedisKey>>(self, key: K, fields: Vec<F>) -> Box<Future<Item=(Self, usize), Error=RedisError>> {
+  pub fn hdel<K: Into<RedisKey>, F: Into<MultipleKeys>>(self, key: K, fields: F) -> Box<Future<Item=(Self, usize), Error=RedisError>> {
     utils::run_borrowed(self, move |_self, borrowed| {
       Box::new(borrowed.hdel(key, fields).and_then(move |resp| {
         Ok((_self, resp))

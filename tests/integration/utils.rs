@@ -61,7 +61,7 @@ pub fn setup_test_client<F: FnOnce(RedisClient) -> TestFuture>(config: RedisConf
 
   let clone = client.clone();
   let commands = client.on_connect().and_then(|client| {
-    client.flush_all(false)
+    client.flushall(false)
   })
   .and_then(|(client, _)| {
     func(client)

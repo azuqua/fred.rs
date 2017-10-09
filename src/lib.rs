@@ -501,7 +501,6 @@ impl RedisClient {
   pub fn subscribe<T: Into<String>>(self, channel: T) -> Box<Future<Item=(RedisClient, usize), Error=RedisError>> {
     // note: if this ever changes to take in more than one channel then some additional work must be done
     // in the multiplexer to associate multiple responses with a single request
-
     let channel = channel.into();
 
     Box::new(utils::request_response(&self.command_tx, &self.state, move || {
@@ -631,13 +630,11 @@ impl RedisClient {
   /// Request for authentication in a password-protected Redis server. Returns ok if successful.
   ///
   /// https://redis.io/commands/auth
-  pub fn auth<V: Into<RedisValue>, E: Into<RedisError>>(self, value: V) -> Box<Future<Item=(RedisClient, String), Error=RedisError>> {
+  pub fn auth<V: Into<String>>(self, value: V) -> Box<Future<Item=(RedisClient, String), Error=RedisError>> {
     let value = value.into();
 
     Box::new(utils::request_response(&self.command_tx, &self.state, move || {
-      let args = vec![value.into()];
-
-      Ok((RedisCommandKind::Auth, args))
+      Ok((RedisCommandKind::Auth, vec![value.into()]))
     }).and_then(|frame| {
       let resp = frame.into_single_result()?;
 
@@ -654,7 +651,7 @@ impl RedisClient {
   /// Instruct Redis to start an Append Only File rewrite process. Returns ok.
   ///
   /// https://redis.io/commands/bgrewriteaof
-  pub fn bg_rewrite_aof(self) -> Box<Future<Item=(RedisClient, String), Error=RedisError>> {
+  pub fn bgrewriteaof(self) -> Box<Future<Item=(RedisClient, String), Error=RedisError>> {
     Box::new(utils::request_response(&self.command_tx, &self.state, move || {
       Ok((RedisCommandKind::BgreWriteAof, vec![]))
     }).and_then(|frame| {
@@ -674,7 +671,7 @@ impl RedisClient {
   /// Save the DB in background. Returns ok.
   ///
   /// https://redis.io/commands/bgsave
-  pub fn bg_save(self) -> Box<Future<Item=(RedisClient, String), Error=RedisError>> {
+  pub fn bgsave(self) -> Box<Future<Item=(RedisClient, String), Error=RedisError>> {
     Box::new(utils::request_response(&self.command_tx, &self.state, move || {
       Ok((RedisCommandKind::BgSave, vec![]))
     }).and_then(|frame| {
@@ -730,7 +727,9 @@ impl RedisClient {
   /// Assigns a name to the current connection. Returns ok if successful, null otherwise.
   ///
   /// https://redis.io/commands/client-setname
-  pub fn client_setname<V: Into<RedisValue>>(self, name: V ) -> Box<Future<Item=(RedisClient, Option<String>), Error=RedisError>> {
+  pub fn client_setname<V: Into<String>>(self, name: V) -> Box<Future<Item=(RedisClient, Option<String>), Error=RedisError>> {
+    let name = name.into();
+
     Box::new(utils::request_response(&self.command_tx, &self.state, move || {
       Ok((RedisCommandKind::ClientSetname, vec![name.into()]))
     }).and_then(|frame| {
@@ -746,7 +745,7 @@ impl RedisClient {
   /// Return the number of keys in the currently-selected database.
   ///
   /// https://redis.io/commands/dbsize
-  pub fn db_size(self) -> Box<Future<Item=(RedisClient, usize), Error=RedisError>> {
+  pub fn dbsize(self) -> Box<Future<Item=(RedisClient, usize), Error=RedisError>> {
     Box::new(utils::request_response(&self.command_tx, &self.state, move || {
       Ok((RedisCommandKind::DBSize, vec![]))
     }).and_then(|frame| {
@@ -766,7 +765,7 @@ impl RedisClient {
   /// Returns error if the key contains a value of the wrong type.
   ///
   /// https://redis.io/commands/decr
-  pub fn decr<K: Into<RedisKey>> (self, key: K) -> Box<Future<Item=(RedisClient, i64), Error=RedisError>> {
+  pub fn decr<K: Into<RedisKey>>(self, key: K) -> Box<Future<Item=(RedisClient, i64), Error=RedisError>> {
     let key = key.into();
 
     Box::new(utils::request_response(&self.command_tx, &self.state, move || {
@@ -883,7 +882,7 @@ impl RedisClient {
   /// Returns `true` if timeout set, `false` if key does not exist.
   ///
   /// https://redis.io/commands/expire
-  pub fn expire<K: Into<RedisKey>, V: Into<RedisValue>>(self, key: K, seconds: i64) -> Box<Future<Item=(RedisClient, bool), Error=RedisError>> {
+  pub fn expire<K: Into<RedisKey>>(self, key: K, seconds: i64) -> Box<Future<Item=(RedisClient, bool), Error=RedisError>> {
     let key = key.into();
 
     Box::new(utils::request_response(&self.command_tx, &self.state, move || {
@@ -914,7 +913,7 @@ impl RedisClient {
   /// Returns `true` if timeout set, `false` if key does not exist.
   ///
   /// https://redis.io/commands/expireat
-  pub fn expire_at<V: Into<RedisValue>, K: Into<RedisKey>>(self, key: K, timestamp: i64) -> Box<Future<Item=(RedisClient, bool), Error=RedisError>> {
+  pub fn expire_at<K: Into<RedisKey>>(self, key: K, timestamp: i64) -> Box<Future<Item=(RedisClient, bool), Error=RedisError>> {
     let key = key.into();
 
     Box::new(utils::request_response(&self.command_tx, &self.state, move || {
@@ -944,7 +943,7 @@ impl RedisClient {
   /// Returns a string reply.
   ///
   /// https://redis.io/commands/flushall
-  pub fn flush_all(self, async: bool) -> Box<Future<Item=(RedisClient, String), Error=RedisError>> {
+  pub fn flushall(self, async: bool) -> Box<Future<Item=(RedisClient, String), Error=RedisError>> {
     let args = if async {
       vec![ASYNC.into()]
     }else{
@@ -970,7 +969,7 @@ impl RedisClient {
   /// Returns a string reply.
   ///
   /// https://redis.io/commands/flushalldb
-  pub fn flush_db(self, async: bool) -> Box<Future<Item=(RedisClient, String), Error=RedisError>> {
+  pub fn flushdb(self, async: bool) -> Box<Future<Item=(RedisClient, String), Error=RedisError>> {
     let args = if async {
       vec![ASYNC.into()]
     }else{
@@ -1323,8 +1322,9 @@ impl RedisClient {
   /// Note: Return value of 1 means new field was created and set. Return of 0 means field already exists and was overwritten.
   ///
   /// https://redis.io/commands/hset
-  pub fn hset<V: Into<RedisValue>, U: Into<RedisValue>, K: Into<RedisKey>> (self, key: K, field: V, value: U) -> Box<Future<Item=(RedisClient, usize), Error=RedisError>> {
+  pub fn hset<K: Into<RedisKey>, F: Into<RedisKey>, V: Into<RedisValue>> (self, key: K, field: F, value: V) -> Box<Future<Item=(RedisClient, usize), Error=RedisError>> {
     let key = key.into();
+    let field = field.into();
 
     Box::new(utils::request_response(&self.command_tx, &self.state, move || {
       let args: Vec<RedisValue> = vec![key.into(), field.into(), value.into()];
@@ -1347,11 +1347,11 @@ impl RedisClient {
   /// Note: Return value of 1 means new field was created and set. Return of 0 means no operation performed.
   ///
   /// https://redis.io/commands/hsetnx
-  pub fn hsetnx<V: Into<RedisValue>, U: Into<RedisValue>, K: Into<RedisKey>> (self, key: K, field: V, value: U) -> Box<Future<Item=(RedisClient, usize), Error=RedisError>> {
+  pub fn hsetnx<K: Into<RedisKey>, F: Into<RedisKey>, V: Into<RedisValue>> (self, key: K, field: F, value: V) -> Box<Future<Item=(RedisClient, usize), Error=RedisError>> {
     let (key, field, value) = (key.into(), field.into(), value.into());
 
     Box::new(utils::request_response(&self.command_tx, &self.state, move || {
-      let args: Vec<RedisValue> = vec![key.into(), field.into(), value.into()];
+      let args: Vec<RedisValue> = vec![key.into(), field.into(), value];
 
       Ok((RedisCommandKind::HSetNx, args))
     }).and_then(|frame| {
@@ -1370,7 +1370,7 @@ impl RedisClient {
   /// If the key or the field do not exist, 0 is returned.
   ///
   /// https://redis.io/commands/hstrlen
-  pub fn hstrlen<V: Into<RedisValue>, K: Into<RedisKey>> (self, key: K, field: V) -> Box<Future<Item=(RedisClient, usize), Error=RedisError>> {
+  pub fn hstrlen<K: Into<RedisKey>, F: Into<RedisKey>> (self, key: K, field: F) -> Box<Future<Item=(RedisClient, usize), Error=RedisError>> {
     let (key, field) = (key.into(), field.into());
 
     Box::new(utils::request_response(&self.command_tx, &self.state, move || {
