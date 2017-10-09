@@ -22,6 +22,7 @@ cargo add redis-client
 * Publish-Subscribe interface.
 * Optional `Send` and `Sync` wrappers for the client.
 * Flexible interface for different use cases.
+* 100% safe rust.
 
 ## Example
 

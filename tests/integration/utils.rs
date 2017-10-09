@@ -79,4 +79,3 @@ pub fn random_string(len: usize) -> String {
     .take(len)
     .collect()
 }
-

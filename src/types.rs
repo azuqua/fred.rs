@@ -345,6 +345,12 @@ impl<'a> From<&'a str> for RedisKey {
   }
 }
 
+impl<'a> From<&'a String> for RedisKey {
+  fn from(s: &'a String) -> RedisKey {
+    RedisKey { key: s.clone() }
+  }
+}
+
 impl From<u8> for RedisKey {
   fn from(i: u8) -> Self {
     RedisKey { key: i.to_string() }
@@ -716,6 +722,12 @@ impl From<String> for RedisValue {
 impl<'a> From<&'a str> for RedisValue {
   fn from(d: &'a str) -> RedisValue {
     RedisValue::String(d.to_owned())
+  }
+}
+
+impl<'a> From<&'a String> for RedisValue {
+  fn from(s: &'a String) -> RedisValue {
+    RedisValue::String(s.clone())
   }
 }
 

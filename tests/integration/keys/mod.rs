@@ -79,7 +79,7 @@ pub fn should_set_and_get_random_keys(client: RedisClient) -> Box<Future<Item=()
     let get_key = key.clone();
     let del_key = key.clone();
     let get_val = val.clone();
-    client.set(key.as_ref(), val, None, None).and_then(move |(client, set)| {
+    client.set(&key, val, None, None).and_then(move |(client, set)| {
       assert!(set);
       client.get(get_key)
     })

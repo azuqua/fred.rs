@@ -135,4 +135,12 @@ pub mod hashes {
     });
   }
 
+  #[test]
+  fn it_should_read_large_hash() {
+    let config = RedisConfig::default();
+    utils::setup_test_client(config, |client| {
+      hashes_tests::should_read_large_hash(client)
+    });
+  }
+
 }
