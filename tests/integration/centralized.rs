@@ -1,4 +1,4 @@
-use redis_client;
+use fred;
 use super::utils;
 
 use tokio_core::reactor::{
@@ -27,12 +27,12 @@ use futures::sync::mpsc::{
 
 use std::time::Duration;
 
-use redis_client::error::{
+use fred::error::{
   RedisErrorKind,
   RedisError
 };
-use redis_client::types::*;
-use redis_client::RedisClient;
+use fred::types::*;
+use fred::RedisClient;
 
 use std::thread;
 use std::sync::Arc;

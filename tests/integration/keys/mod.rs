@@ -8,12 +8,12 @@ use futures::{
 
 use futures::stream;
 
-use redis_client::error::{
+use fred::error::{
   RedisErrorKind,
   RedisError
 };
-use redis_client::types::*;
-use redis_client::RedisClient;
+use fred::types::*;
+use fred::RedisClient;
 
 use super::utils;
 

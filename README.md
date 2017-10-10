@@ -1,18 +1,18 @@
-Redis Client
-============
+Fred
+====
 
-[![Build Status](https://travis-ci.org/azuqua/redis.rs.svg?branch=master)](https://travis-ci.org/azuqua/redis.rs)
+[![Build Status](https://travis-ci.org/azuqua/fred.rs.svg?branch=master)](https://travis-ci.org/azuqua/fred.rs)
 
-[Documentation](https://azuqua.github.io/redis.rs)
+[Documentation](https://azuqua.github.io/fred.rs)
 
 A Redis client for Rust based on [Futures](https://github.com/alexcrichton/futures-rs) and [Tokio](https://tokio.rs/) that supports PubSub commands, clustered Redis deployments, and more.
 
 ## Install
 
-With [cargo add](https://github.com/killercup/cargo-edit).
+With [cargo edit](https://github.com/killercup/cargo-edit).
 
 ```
-cargo add redis-client
+cargo add fred
 ```
 
 ## Features
@@ -27,12 +27,12 @@ cargo add redis-client
 ## Example
 
 ```rust
-extern crate redis_client;
+extern crate fred;
 extern crate tokio_core;
 extern crate futures;
 
-use redis_client::RedisClient;
-use redis_client::types::*;
+use fred::RedisClient;
+use fred::types::*;
 
 use tokio_core::reactor::Core;
 use futures::{

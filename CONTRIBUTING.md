@@ -203,7 +203,7 @@ fn it_should_set_and_get_simple_key() {
 
 The clustered test is identical to the centralized test, but uses a clustered config instead of a centralized one.
 
-That's it. Make sure a centralized redis instance and a clustered deployment are running on the default ports, then `cargo test` or `RUST_LOG=redis_client=debug cargo test` to see the results.
+That's it. Make sure a centralized redis instance and a clustered deployment are running on the default ports, then `cargo test` or `RUST_LOG=fred=debug cargo test` to see the results.
 
 If you're having trouble getting redis installed check out the `tests/scripts/install_redis_centralized.sh` and `tests/scripts/install_redis_clustered.sh` to see how the CI tool installs them.
 
@@ -212,5 +212,5 @@ If you're having trouble getting redis installed check out the `tests/scripts/in
 Unless you're extremely careful with the keys you use in your tests you are likely to see failing tests due to key collisions. By default cargo runs tests using several threads and in a non-deterministic order, and when reading and writing to shared state, such as a Redis server, you're likely to see race conditions. As a result you probably want to run your tests like so:
 
 ```
-RUST_LOG=redis_client=debug cargo test -- --test-threads=1
+RUST_LOG=fred=debug cargo test -- --test-threads=1
 ```

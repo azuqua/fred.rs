@@ -1,12 +1,12 @@
 #![allow(unused_variables)]
 #![allow(unused_imports)]
 
-extern crate redis_client;
+extern crate fred;
 extern crate tokio_core;
 extern crate futures;
 
-use redis_client::RedisClient;
-use redis_client::types::*;
+use fred::RedisClient;
+use fred::types::*;
 
 use tokio_core::reactor::Core;
 use futures::Future;

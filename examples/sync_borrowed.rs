@@ -3,15 +3,15 @@
 
 //! Same idea as `sync_owned.rs`, but shows how the removal of ownership requirements on commands can make using this much easier.
 
-extern crate redis_client;
+extern crate fred;
 extern crate tokio_core;
 extern crate tokio_timer;
 extern crate futures;
 
-use redis_client::RedisClient;
-use redis_client::sync::borrowed::RedisClientRemote;
-use redis_client::types::*;
-use redis_client::error::*;
+use fred::RedisClient;
+use fred::sync::borrowed::RedisClientRemote;
+use fred::types::*;
+use fred::error::*;
 
 use tokio_core::reactor::Core;
 use futures::Future;

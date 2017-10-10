@@ -14,7 +14,7 @@ A local Redis server must be running on 6379 and a clustered deployment must be 
 To see detailed debug logs:
 
 ```bash
-RUST_LOG=redis_client=trace cargo test -- --test-threads=1
+RUST_LOG=fred=trace cargo test -- --test-threads=1
 ```
 
 See the [contributing](../CONTRIBUTING.md) docs for more info on the tests.

@@ -4,7 +4,7 @@
 //! Create two clients, one for publishing messages and one for subscribing to messages. The publisher publishes `MESSAGE_COUNT`
 //! messages and then quits, and the subscriber listens until it receives `MESSAGE_COUNT` messages, and then quits.
 
-extern crate redis_client;
+extern crate fred;
 extern crate tokio_timer;
 extern crate tokio_core;
 extern crate futures;
@@ -13,9 +13,9 @@ extern crate futures;
 extern crate log;
 extern crate pretty_env_logger;
 
-use redis_client::RedisClient;
-use redis_client::types::*;
-use redis_client::error::*;
+use fred::RedisClient;
+use fred::types::*;
+use fred::error::*;
 
 use tokio_core::reactor::Core;
 use futures::Future;

@@ -1,18 +1,18 @@
 #![allow(unused_mut)]
 
-//! # Redis Client
+//! # Fred
 //!
 //! A client library for Redis based on [Futures](https://github.com/alexcrichton/futures-rs) and [Tokio](https://tokio.rs/).
 //!
 //!
 //! ```
-//! extern crate redis_client;
+//! extern crate fred;
 //! extern crate tokio_core;
 //!
 //! use tokio_core::reactor::Core;
 //!
-//! use redis_client::RedisClient;
-//! use redis_client::types::{
+//! use fred::RedisClient;
+//! use fred::types::{
 //!   RedisConfig,
 //!   RedisValue,
 //!   InfoKind
