@@ -1,5 +1,5 @@
 
-use redis_client;
+use fred;
 
 use tokio_core::reactor::{
   Handle,
@@ -27,12 +27,12 @@ use futures::sync::mpsc::{
 };
 use futures::stream::BoxStream;
 
-use redis_client::error::{
+use fred::error::{
   RedisErrorKind,
   RedisError
 };
-use redis_client::types::*;
-use redis_client::RedisClient;
+use fred::types::*;
+use fred::RedisClient;
 
 use std::thread;
 use std::sync::Arc;
@@ -79,4 +79,3 @@ pub fn random_string(len: usize) -> String {
     .take(len)
     .collect()
 }
-

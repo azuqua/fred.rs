@@ -1,18 +1,18 @@
 #![allow(unused_mut)]
 
-//! # Redis Client
+//! # Fred
 //!
 //! A client library for Redis based on [Futures](https://github.com/alexcrichton/futures-rs) and [Tokio](https://tokio.rs/).
 //!
 //!
 //! ```
-//! extern crate redis_client;
+//! extern crate fred;
 //! extern crate tokio_core;
 //!
 //! use tokio_core::reactor::Core;
 //!
-//! use redis_client::RedisClient;
-//! use redis_client::types::{
+//! use fred::RedisClient;
+//! use fred::types::{
 //!   RedisConfig,
 //!   RedisValue,
 //!   InfoKind
@@ -638,11 +638,10 @@ impl RedisClient {
     }).and_then(|frame| {
       let resp = frame.into_single_result()?;
 
-      let kind = resp.kind();
       match resp.into_string() {
         Some(s) => Ok((self, s)),
         None => Err(RedisError::new(
-          RedisErrorKind::Auth, format!("AUTH denied. Password incorrect. Expected String response, found: {:?}", kind)
+          RedisErrorKind::Auth, "AUTH denied."
         ))
       }
     }))
@@ -657,11 +656,10 @@ impl RedisClient {
     }).and_then(|frame| {
       let resp = frame.into_single_result()?;
 
-      let kind = resp.kind();
       match resp.into_string() {
         Some(s) => Ok((self, s)),
         None => Err(RedisError::new(
-          RedisErrorKind::ProtocolError, format!("Invalid BGREWRITEAOF. AOF rewrite is likely already in progress. Expected String response, found: {:?}", kind)
+          RedisErrorKind::ProtocolError, "Invalid BGREWRITEAOF."
         ))
       }
     }))
@@ -677,11 +675,10 @@ impl RedisClient {
     }).and_then(|frame| {
       let resp = frame.into_single_result()?;
 
-      let kind = resp.kind();
       match resp.into_string() {
         Some(s) => Ok((self, s)),
         None => Err(RedisError::new(
-          RedisErrorKind::ProtocolError, format!("Invalid BgSave response. Unknown error. Expected String response, found {:?}", kind)
+          RedisErrorKind::ProtocolError, "Invalid BgSave response."
         ))
       }
     }))
@@ -698,11 +695,10 @@ impl RedisClient {
     }).and_then(|frame| {
       let resp = frame.into_single_result()?;
 
-      let kind = resp.kind();
       match resp.into_string() {
         Some(s) => Ok((self, s)),
         None => Err(RedisError::new(
-          RedisErrorKind::ProtocolError, format!("Invalid client_list response. Unknown error. Expected String, found {:?}", kind)
+          RedisErrorKind::ProtocolError, "Invalid CLIENTLIST response."
         ))
       }
     }))
@@ -751,11 +747,10 @@ impl RedisClient {
     }).and_then(|frame| {
       let resp = frame.into_single_result()?;
 
-      let kind = resp.kind();
       match resp {
         RedisValue::Integer(num) => Ok((self, num as usize)),
         _ => Err(RedisError::new(
-          RedisErrorKind::ProtocolError, format!("Invalid DBsize response. Unknown error. Expected Int response, found {:?}", kind)
+          RedisErrorKind::ProtocolError, "Invalid DBsize response."
         ))
       }
     }))
@@ -773,11 +768,10 @@ impl RedisClient {
     }).and_then(|frame| {
       let resp = frame.into_single_result()?;
 
-      let kind = resp.kind();
       match resp {
         RedisValue::Integer(num) => Ok((self, num as i64)),
         _ => Err(RedisError::new(
-          RedisErrorKind::ProtocolError, format!("Invalid DECR response. Value at key is of wrong type or format. Expected Int response, found {:?}", kind)
+          RedisErrorKind::ProtocolError, "Invalid DECR response."
         ))
       }
     }))
@@ -797,11 +791,10 @@ impl RedisClient {
     }).and_then(|frame| {
       let resp = frame.into_single_result()?;
 
-      let kind = resp.kind();
       match resp {
         RedisValue::Integer(num) => Ok((self, num as i64)),
         _ => Err(RedisError::new(
-          RedisErrorKind::ProtocolError, format!("Invalid DECRBY response. Value at key is of wrong type or format. Expected Int response, found {:?}", kind)
+          RedisErrorKind::ProtocolError, "Invalid DECRBY response."
         ))
       }
     }))
@@ -822,11 +815,10 @@ impl RedisClient {
     }).and_then(|frame| {
       let resp = frame.into_single_result()?;
 
-      let kind = resp.kind();
       match resp {
         RedisValue::Integer(num) => Ok((self, num as usize)),
         _ => Err(RedisError::new(
-          RedisErrorKind::ProtocolError, format!("Invalid DEL response. Expected Int, found type {:?}", kind)
+          RedisErrorKind::ProtocolError, "Invalid DEL response."
         ))
       }
     }))
@@ -844,12 +836,11 @@ impl RedisClient {
     }).and_then(|frame| {
       let resp = frame.into_single_result()?;
 
-      let kind = resp.kind();
       match resp {
         RedisValue::String(s) => Ok((self, Some(s))),
         RedisValue::Null => Ok((self, None)),
         _ => Err(RedisError::new(
-          RedisErrorKind::ProtocolError, format!("Invalid DUMP response. Expected String or Null, found type {:?}", kind)
+          RedisErrorKind::ProtocolError, "Invalid DUMP response."
         ))
       }
     }))
@@ -868,11 +859,10 @@ impl RedisClient {
     }).and_then(|frame| {
       let resp = frame.into_single_result()?;
 
-      let kind = resp.kind();
       match resp {
         RedisValue::Integer(num) => Ok((self, num as usize)),
         _ => Err(RedisError::new(
-          RedisErrorKind::ProtocolError, format!("Invalid EXISTS response. Expected Int, found type {:?}", kind)
+          RedisErrorKind::ProtocolError, "Invalid EXISTS response."
         ))
       }
     }))
@@ -893,17 +883,16 @@ impl RedisClient {
     }).and_then(|frame| {
       let resp = frame.into_single_result()?;
 
-      let kind = resp.kind();
       match resp {
         RedisValue::Integer(num) => match num {
           0 => Ok((self, false)),
           1 => Ok((self, true)),
           _ => Err(RedisError::new(
-            RedisErrorKind::ProtocolError, format!("Invalid EXPIRE response value. Expected 0 or 1, found {}.", num)
+            RedisErrorKind::ProtocolError, "Invalid EXPIRE response value."
           ))
         },
         _ => Err(RedisError::new(
-          RedisErrorKind::ProtocolError, format!("Invalid EXPIRE response. Expected Int, found type {:?}", kind)
+          RedisErrorKind::ProtocolError, "Invalid EXPIRE response."
         ))
       }
     }))
@@ -923,17 +912,16 @@ impl RedisClient {
     }).and_then(|frame| {
       let resp = frame.into_single_result()?;
 
-      let kind = resp.kind();
       match resp {
         RedisValue::Integer(num) => match num {
           0 => Ok((self, false)),
           1 => Ok((self, true)),
           _ => Err(RedisError::new(
-            RedisErrorKind::ProtocolError, format!("Invalid EXPIRE response value. Expected 0 or 1, found {}.", num)
+            RedisErrorKind::ProtocolError, "Invalid EXPIREAT response value."
           ))
         },
         _ => Err(RedisError::new(
-          RedisErrorKind::ProtocolError, format!("Invalid EXPIREAT response. Expected Int, found type {:?}", kind)
+          RedisErrorKind::ProtocolError, "Invalid EXPIREAT response."
         ))
       }
     }))
@@ -955,11 +943,10 @@ impl RedisClient {
     }).and_then(|frame| {
       let resp = frame.into_single_result()?;
 
-      let kind = resp.kind();
       match resp {
         RedisValue::String(s) => Ok((self, s)),
         _ => Err(RedisError::new(
-          RedisErrorKind::ProtocolError, format!("Invalid FLUSHALL response. Expected String, found type {:?}", kind)
+          RedisErrorKind::ProtocolError, "Invalid FLUSHALL response."
         ))
       }
     }))
@@ -981,11 +968,10 @@ impl RedisClient {
     }).and_then(|frame| {
       let resp = frame.into_single_result()?;
 
-      let kind = resp.kind();
       match resp {
         RedisValue::String(s) => Ok((self, s)),
         _ => Err(RedisError::new(
-          RedisErrorKind::ProtocolError, format!("Invalid FLUSHALLDB response. Unknown Error. Expected String, found type {:?}", kind)
+          RedisErrorKind::ProtocolError, "Invalid FLUSHALLDB response."
         ))
       }
     }))
@@ -1011,11 +997,10 @@ impl RedisClient {
     }).and_then(|frame| {
       let resp = frame.into_single_result()?;
 
-      let kind = resp.kind();
       match resp {
         RedisValue::String(s) => Ok((self, s)),
         _ => Err(RedisError::new(
-        RedisErrorKind::ProtocolError, format!("Invalid GETRANGE response. Expected String, found type {:?}", kind)
+        RedisErrorKind::ProtocolError, "Invalid GETRANGE response."
         ))
       }
     }))
@@ -1062,11 +1047,10 @@ impl RedisClient {
     }).and_then(|frame| {
       let resp = frame.into_single_result()?;
 
-      let kind = resp.kind();
       match resp {
         RedisValue::Integer(num) => Ok((self, num as usize)),
         _ => Err(RedisError::new(
-          RedisErrorKind::ProtocolError, format!("Invalid HDEL response. Expected integer, found type {:?}", kind)
+          RedisErrorKind::ProtocolError, "Invalid HDEL response."
         ))
       }
     }))
@@ -1086,17 +1070,16 @@ impl RedisClient {
     }).and_then(|frame| {
       let resp = frame.into_single_result()?;
 
-      let kind = resp.kind();
       match resp {
         RedisValue::Integer(num) => match num {
           0 => Ok((self, false)),
           1 => Ok((self, true)),
           _ => Err(RedisError::new(
-            RedisErrorKind::ProtocolError, format!("Invalid EXPIRE response value. Expected 0 or 1, found {}.", num)
+            RedisErrorKind::Unknown, "Invalid HEXISTS response value."
           ))
         },
         _ => Err(RedisError::new(
-          RedisErrorKind::ProtocolError, format!("Invalid HEXISTS response. Expected integer, found type {:?}", kind)
+          RedisErrorKind::ProtocolError, "Invalid HEXISTS response."
         ))
       }
     }))
@@ -1173,11 +1156,10 @@ impl RedisClient {
     }).and_then(|frame| {
       let resp = frame.into_single_result()?;
 
-      let kind = resp.kind();
       match resp {
         RedisValue::Integer(num) => Ok((self, num as i64)),
         _ => Err(RedisError::new(
-          RedisErrorKind::ProtocolError, format!("Invalid HINCRBY response. Expected Int, found type {:?}", kind)
+          RedisErrorKind::ProtocolError, "Invalid HINCRBY response."
         ))
       }
     }))

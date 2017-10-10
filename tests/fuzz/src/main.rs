@@ -1,12 +1,12 @@
 #![feature(plugin)]
 #![plugin(afl_plugin)]
 
-extern crate redis_client;
+extern crate fred;
 extern crate afl;
 extern crate bytes;
 
-use redis_client::protocol::types::*;
-use redis_client::protocol::utils as protocol_utils;
+use fred::protocol::types::*;
+use fred::protocol::utils as protocol_utils;
 
 use bytes::{
   Bytes,
@@ -19,8 +19,8 @@ use std::io::Cursor;
 
 fn main() {
   afl::handle_bytes(|b: Vec<u8>| {
-    let mut bytes = BytesMut::from(b);
-    let mut cursor = Cursor::new(&mut bytes);
-    let _ = protocol_utils::bytes_to_frames(&mut cursor);
+    let mut empty = BytesMut::new();
+    let bytes = BytesMut::from(b);
+    let _ = protocol_utils::bytes_to_frames(&mut empty, bytes, Some(1000000));
   })
 }

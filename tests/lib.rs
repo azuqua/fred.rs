@@ -8,7 +8,7 @@
 extern crate futures;
 extern crate tokio_core;
 extern crate tokio_timer;
-extern crate redis_client;
+extern crate fred;
 extern crate rand;
 
 #[macro_use]

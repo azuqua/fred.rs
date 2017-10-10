@@ -25,7 +25,7 @@ sudo make install
 3. Build and install the docker image. 
 
 ```
-cd path/to/redis/tests/fuzz/docker
+cd path/to/fred/tests/fuzz/docker
 sudo docker build -t test-afl-redis .
 ```
 
@@ -34,10 +34,10 @@ sudo docker build -t test-afl-redis .
 5. Build the fuzzer.
 
 ```
-cd path/to/redis
+cd path/to/fred
 cargo clean
 cd tests/fuzz
-sudo docker run -v $(pwd):/source -v $(pwd)/../..:/source/redis.rs -it test-afl-redis bash
+sudo docker run -v $(pwd):/source -v $(pwd)/../..:/source/fred.rs -it test-afl-redis bash
 ```
 
 Then, inside the container:
@@ -53,6 +53,6 @@ exit
 afl-fuzz -i in -o out target/debug/redis_fuzzer
 ```
 
-This might create a `redis.rs` folder in your test/fuzz folder, but don't worry about it. It's a side effect of mounting a docker volume there and it's already in the .gitignore.
+This might create a `fred.rs` folder in your test/fuzz folder, but don't worry about it. It's a side effect of mounting a docker volume there and it's already in the .gitignore.
 
 When you're done fuzzing don't forget to comment out the `afl.rs` dependency lines in the parent's Cargo.toml. Also, don't forget to remove the copy of the `Cargo.toml` in this directory, but keep the backup.

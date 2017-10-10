@@ -8,12 +8,12 @@ use futures::{
 
 use futures::stream;
 
-use redis_client::error::{
+use fred::error::{
   RedisErrorKind,
   RedisError
 };
-use redis_client::types::*;
-use redis_client::RedisClient;
+use fred::types::*;
+use fred::RedisClient;
 
 use super::utils;
 
@@ -79,7 +79,7 @@ pub fn should_set_and_get_random_keys(client: RedisClient) -> Box<Future<Item=()
     let get_key = key.clone();
     let del_key = key.clone();
     let get_val = val.clone();
-    client.set(key.as_ref(), val, None, None).and_then(move |(client, set)| {
+    client.set(&key, val, None, None).and_then(move |(client, set)| {
       assert!(set);
       client.get(get_key)
     })

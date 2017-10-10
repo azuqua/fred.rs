@@ -3,8 +3,8 @@ target
 Cargo.lock
 Cargo.toml
 
-redis
-redis.rs
+fred
+fred.rs
 
 out/*
 !out/.gitkeep

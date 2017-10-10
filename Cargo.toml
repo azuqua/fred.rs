@@ -4,17 +4,17 @@ authors = [
   "Howard Lin <linnyflow@gmail.com",
   "Evan Milton <evan@azuqua.com>"
 ]
-name = "redis_client"
+name = "fred"
 version = "0.1.0"
 description = "A Redis client for Rust built on futures and tokio."
 readme = "README.md"
-repository = "https://github.com/azuqua/redis.rs"
-homepage = "https://github.com/azuqua/redis.rs"
+repository = "https://github.com/azuqua/fred.rs"
+homepage = "https://github.com/azuqua/fred.rs"
 keywords = ["redis", "futures", "async", "cluster", "tokio"]
 license = "MIT"
 
 [badges]
-travis-ci = { repository = "azuqua/redis.rs", branch = "master" }
+travis-ci = { repository = "azuqua/fred.rs", branch = "master" }
 maintenance = { status = "actively-developed" }
 
 [dependencies]
@@ -44,7 +44,7 @@ hyper = "0.11"
 [lib]
 doc = true
 doctest = false
-name = "redis_client"
+name = "fred"
 test = true
 
 [features]

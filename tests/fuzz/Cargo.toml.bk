@@ -9,6 +9,6 @@ afl = "0.1"
 afl-plugin = "0.1"
 bytes = "0.4"
 
-[dependencies.redis_client]
-path = "./redis.rs"
+[dependencies.fred]
+path = "./fred.rs"
 features = ["fuzz"]
