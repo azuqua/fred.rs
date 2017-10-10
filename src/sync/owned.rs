@@ -12,11 +12,21 @@ use std::hash::Hash;
 
 use std::fmt;
 
-use std::collections::HashMap;
+use std::collections::{
+  VecDeque,
+  HashMap
+};
 
-use futures::Future;
+use futures::{
+  Future,
+  Stream
+};
 use futures::sync::oneshot::{
   channel as oneshot_channel
+};
+use futures::sync::mpsc::{
+  UnboundedSender,
+  unbounded
 };
 
 use ::error::*;
@@ -45,7 +55,12 @@ use super::commands::ConnectSender;
 pub struct RedisClientRemote {
   // use the borrowed interface under the hood
   borrowed: Arc<RwLock<Option<RedisClientBorrowed>>>,
-  connect_tx: Arc<RwLock<Vec<ConnectSender>>>
+  // buffers for holding on_connect, on_error, and on_message mpsc senders created
+  // before the underlying client is ready. upon calling init() these will be
+  // drained and moved into the underlying client.
+  connect_tx: Arc<RwLock<VecDeque<ConnectSender>>>,
+  error_tx: Arc<RwLock<VecDeque<UnboundedSender<RedisError>>>>,
+  message_tx: Arc<RwLock<VecDeque<UnboundedSender<(String, RedisValue)>>>>
 }
 
 impl fmt::Debug for RedisClientRemote {
@@ -60,16 +75,23 @@ impl RedisClientRemote {
   pub fn new() -> RedisClientRemote {
     RedisClientRemote {
       borrowed: Arc::new(RwLock::new(None)),
-      connect_tx: Arc::new(RwLock::new(Vec::new()))
+      connect_tx: Arc::new(RwLock::new(VecDeque::new())),
+      error_tx: Arc::new(RwLock::new(VecDeque::new())),
+      message_tx: Arc::new(RwLock::new(VecDeque::new()))
     }
   }
 
   /// Create from a borrowed instance.
   pub fn from_borrowed(client: borrowed::RedisClientRemote) -> RedisClientRemote {
-    let connect_tx = client.read_connect_tx();
+    let connect_tx = client.read_connect_tx().clone();
+    let error_tx = client.read_error_tx().clone();
+    let message_tx = client.read_message_tx().clone();
+
     RedisClientRemote {
       borrowed: Arc::new(RwLock::new(Some(client))),
-      connect_tx: connect_tx
+      connect_tx: connect_tx,
+      error_tx: error_tx,
+      message_tx: message_tx
     }
   }
 
@@ -95,13 +117,11 @@ impl RedisClientRemote {
   /// This function must run on the same thread that created the `RedisClient`.
   pub fn init(&self, client: RedisClient) -> Box<Future<Item=RedisClient, Error=RedisError>> {
     let borrowed = borrowed::RedisClientRemote::new();
-    {
-      let mut connect_tx_guard = self.connect_tx.write();
-      let mut connect_tx_ref = connect_tx_guard.deref_mut();
 
-      let taken: Vec<ConnectSender> = connect_tx_ref.drain(..).collect();
-      borrowed.set_connect_tx(taken);
-    }
+    utils::transfer_senders(&self.connect_tx, borrowed.read_connect_tx());
+    utils::transfer_senders(&self.error_tx, borrowed.read_error_tx());
+    utils::transfer_senders(&self.message_tx, borrowed.read_message_tx());
+
     {
       let mut borrowed_guard = self.borrowed.write();
       let mut borrowed_ref = borrowed_guard.deref_mut();
@@ -137,10 +157,75 @@ impl RedisClientRemote {
 
       let mut connect_tx_guard = self.connect_tx.write();
       let mut connect_tx_ref = connect_tx_guard.deref_mut();
-      connect_tx_ref.push(tx);
+      connect_tx_ref.push_back(tx);
 
       Box::new(rx.from_err::<RedisError>().flatten())
     }
+  }
+
+  /// Listen for protocol and connection errors. This stream can be used to more intelligently handle errors that may
+  /// not appear in the request-response cycle, and so cannot be handled by response futures.
+  ///
+  /// Similar to `on_message`, this function does not need to be called again if the connection goes down.
+  pub fn on_error(&self) -> Box<Stream<Item=RedisError, Error=RedisError>> {
+    let is_initialized = {
+      let borrowed_guard = self.borrowed.read();
+      borrowed_guard.deref().is_some()
+    };
+
+    if is_initialized {
+      let borrowed_guard = self.borrowed.read();
+      let borrowed_ref = borrowed_guard.deref();
+
+      let borrowed = borrowed_ref.as_ref().unwrap();
+      borrowed.on_error()
+    }else{
+      let (tx, rx) = unbounded();
+
+      let mut error_tx_guard = self.error_tx.write();
+      let mut error_tx_ref = error_tx_guard.deref_mut();
+      error_tx_ref.push_back(tx);
+
+      Box::new(rx.from_err::<RedisError>())
+    }
+  }
+
+  /// Listen for `(channel, message)` tuples on the PubSub interface.
+  ///
+  /// If the connection to the Redis server goes down for any reason this function does *not* need to be called again.
+  /// Messages will start appearing on the original stream after `subscribe` is called again.
+  pub fn on_message(&self) -> Box<Stream<Item=(String, RedisValue), Error=RedisError>> {
+    let is_initialized = {
+      let borrowed_guard = self.borrowed.read();
+      borrowed_guard.deref().is_some()
+    };
+
+    if is_initialized {
+      let borrowed_guard = self.borrowed.read();
+      let borrowed_ref = borrowed_guard.deref();
+
+      let borrowed = borrowed_ref.as_ref().unwrap();
+      borrowed.on_message()
+    }else{
+      let (tx, rx) = unbounded();
+
+      let mut message_tx_guard = self.message_tx.write();
+      let mut message_tx_ref = message_tx_guard.deref_mut();
+      message_tx_ref.push_back(tx);
+
+      Box::new(rx.from_err::<RedisError>())
+    }
+  }
+
+  /// Select the database this client should use.
+  ///
+  /// https://redis.io/commands/select
+  pub fn select(self, db: u8) -> Box<Future<Item=Self, Error=RedisError>> {
+    utils::run_borrowed(self, move |_self, borrowed| {
+      Box::new(borrowed.select(db).and_then(move |_| {
+        Ok(_self)
+      }))
+    })
   }
 
   /// Subscribe to a channel on the PubSub interface. Any messages received before `on_message` is called will be discarded, so it's

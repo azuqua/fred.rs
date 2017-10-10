@@ -107,7 +107,10 @@ use std::ops::DerefMut;
 use std::sync::Arc;
 use std::hash::Hash;
 
-use std::collections::HashMap;
+use std::collections::{
+  HashMap,
+  VecDeque
+};
 
 use parking_lot::RwLock;
 
@@ -117,7 +120,6 @@ use futures::{
   Future,
   Stream
 };
-use futures::sink::Sink;
 use futures::sync::oneshot::{
   Sender as OneshotSender,
   channel as oneshot_channel
@@ -167,22 +169,22 @@ pub struct RedisClient {
   // The redis config used for initializing connections
   config: Rc<RefCell<RedisConfig>>,
   // An mpsc sender for errors to `on_error` streams
-  error_tx: Rc<RefCell<Option<UnboundedSender<RedisError>>>>,
+  error_tx: Rc<RefCell<VecDeque<UnboundedSender<RedisError>>>>,
   // An mpsc sender for commands to the multiplexer
   command_tx: Rc<RefCell<Option<UnboundedSender<RedisCommand>>>>,
   // An mpsc sender for pubsub messages to `on_message` streams
-  message_tx: Rc<RefCell<Option<UnboundedSender<(String, RedisValue)>>>>,
+  message_tx: Rc<RefCell<VecDeque<UnboundedSender<(String, RedisValue)>>>>,
   // An mpsc sender for reconnection events to `on_reconnect` streams
-  reconnect_tx: Rc<RefCell<Option<UnboundedSender<RedisClient>>>>,
+  reconnect_tx: Rc<RefCell<VecDeque<UnboundedSender<RedisClient>>>>,
   // MPSC senders for `on_connect` futures
-  connect_tx: Rc<RefCell<Vec<OneshotSender<Result<RedisClient, RedisError>>>>>,
+  connect_tx: Rc<RefCell<VecDeque<OneshotSender<Result<RedisClient, RedisError>>>>>,
   // A flag used to determine if the client was intentionally closed. This is used in the loop_serve reconnect logic
   // to determine if `quit` was called while the client was waiting to reconnect.
   closed: Arc<RwLock<bool>>,
   // Senders to remote handles around this client instance. Since forwarding messages between futures and streams itself
   // requires creating and running another future it is quite tedious to do across threads with the command stream pattern.
   // This field exists to allow remotes to register their own `on_connect` callbacks directly on the client.
-  remote_tx: Rc<RefCell<Vec<OneshotSender<Result<(), RedisError>>>>>,
+  remote_tx: Rc<RefCell<VecDeque<OneshotSender<Result<(), RedisError>>>>>,
 }
 
 impl Clone for RedisClient {
@@ -218,13 +220,13 @@ impl RedisClient {
     RedisClient {
       config: Rc::new(RefCell::new(config)),
       state: Arc::new(RwLock::new(state)),
-      error_tx: Rc::new(RefCell::new(None)),
+      error_tx: Rc::new(RefCell::new(VecDeque::new())),
       command_tx: Rc::new(RefCell::new(None)),
-      message_tx: Rc::new(RefCell::new(None)),
-      reconnect_tx: Rc::new(RefCell::new(None)),
-      connect_tx: Rc::new(RefCell::new(Vec::new())),
+      message_tx: Rc::new(RefCell::new(VecDeque::new())),
+      reconnect_tx: Rc::new(RefCell::new(VecDeque::new())),
+      connect_tx: Rc::new(RefCell::new(VecDeque::new())),
       closed: Arc::new(RwLock::new(false)),
-      remote_tx: Rc::new(RefCell::new(Vec::new()))
+      remote_tx: Rc::new(RefCell::new(VecDeque::new()))
     }
   }
 
@@ -284,10 +286,33 @@ impl RedisClient {
     state_guard.deref().clone()
   }
 
-  /// Read a clone of the internal connection state.
+  /// Read a clone of the internal connection state. Used internally by remote wrappers.
   #[doc(hidden)]
+  #[cfg(feature="sync")]
   pub fn state_cloned(&self) -> Arc<RwLock<ClientState>> {
     self.state.clone()
+  }
+
+  /// Read a clone of the internal message senders. Used internally by remote wrappers.
+  #[doc(hidden)]
+  #[cfg(feature="sync")]
+  pub fn messages_cloned(&self) -> Rc<RefCell<VecDeque<UnboundedSender<(String, RedisValue)>>>> {
+    self.message_tx.clone()
+  }
+
+  /// Read a clone of the internal error senders. Used internally by remote wrappers.
+  #[doc(hidden)]
+  #[cfg(feature="sync")]
+  pub fn errors_cloned(&self) -> Rc<RefCell<VecDeque<UnboundedSender<RedisError>>>> {
+    self.error_tx.clone()
+  }
+
+  /// Register a remote `on_connect` callback. This is only used internally.
+  #[doc(hidden)]
+  #[cfg(feature="sync")]
+  pub fn register_connect_callback(&self, tx: OneshotSender<Result<(), RedisError>>) {
+    let mut remote_tx_refs = self.remote_tx.borrow_mut();
+    remote_tx_refs.push_back(tx);
   }
 
   /// Connect to the Redis server. The returned future will resolve when the connection to the Redis server has been fully closed by both ends.
@@ -349,19 +374,12 @@ impl RedisClient {
   /// if set to 0. This function can be used to receive notifications whenever the client successfully reconnects
   /// in order to select the right database again, re-subscribe to channels, etc. A reconnection event is also
   /// triggered upon first connecting.
-  ///
-  /// If called more than once the original stream will be closed before creating the new one.
   pub fn on_reconnect(&self) -> Box<Stream<Item=Self, Error=RedisError>> {
     let (tx, rx) = unbounded();
 
     {
       let mut reconnect_ref = self.reconnect_tx.borrow_mut();
-
-      if let Some(mut reconnect_tx) = reconnect_ref.take() {
-        let _ = reconnect_tx.close();
-      }
-
-      *reconnect_ref = Some(tx);
+      reconnect_ref.push_back(tx);
     }
 
     Box::new(rx.from_err::<RedisError>())
@@ -371,10 +389,7 @@ impl RedisClient {
   /// If the client is already connected this future will resolve immediately.
   ///
   /// This can be used with `on_reconnect` to separate initialization logic that needs
-  /// to occur only on the first connection vs subsequent connections.
-  ///
-  /// Unlike `on_reconnect`, `on_message`, and `on_error` this function can be called
-  /// multiple times and it will not cancel futures returned by previous calls.
+  /// to occur only on the next connection vs subsequent connections.
   pub fn on_connect(&self) -> Box<Future<Item=Self, Error=RedisError>> {
     if utils::read_client_state(&self.state) == ClientState::Connected {
       return utils::future_ok(self.clone());
@@ -384,36 +399,22 @@ impl RedisClient {
 
     {
       let mut connect_ref = self.connect_tx.borrow_mut();
-      connect_ref.push(tx);
+      connect_ref.push_back(tx);
     }
 
     Box::new(rx.from_err::<RedisError>().flatten())
   }
 
-  /// Register a remote `on_connect` callback. This is only used internally.
-  #[doc(hidden)]
-  #[cfg(feature="sync")]
-  pub fn register_connect_callback(&self, tx: OneshotSender<Result<(), RedisError>>) {
-    let mut remote_tx_refs = self.remote_tx.borrow_mut();
-    remote_tx_refs.push(tx);
-  }
-
   /// Listen for protocol and connection errors. This stream can be used to more intelligently handle errors that may
   /// not appear in the request-response cycle, and so cannot be handled by response futures.
   ///
-  /// Similar to `on_message`, this function does not need to be called again if the connection goes down. If it
-  /// is called more than once the previous stream will be closed before creating the new one.
+  /// Similar to `on_message`, this function does not need to be called again if the connection goes down.
   pub fn on_error(&self) -> Box<Stream<Item=RedisError, Error=RedisError>> {
     let (tx, rx) = unbounded();
 
     {
       let mut error_tx_ref = self.error_tx.borrow_mut();
-
-      if let Some(mut error_tx) = error_tx_ref.take() {
-        let _ = error_tx.close();
-      }
-
-      *error_tx_ref = Some(tx);
+      error_tx_ref.push_back(tx);
     }
 
     Box::new(rx.from_err::<RedisError>())
@@ -422,19 +423,13 @@ impl RedisClient {
   /// Listen for `(channel, message)` tuples on the PubSub interface.
   ///
   /// If the connection to the Redis server goes down for any reason this function does *not* need to be called again.
-  /// Messages will start appearing on the original stream after `subscribe` is called again. If this is called more
-  /// than once the previous stream will be closed before creating the new one.
+  /// Messages will start appearing on the original stream after `subscribe` is called again.
   pub fn on_message(&self) -> Box<Stream<Item=(String, RedisValue), Error=RedisError>> {
     let (tx, rx) = unbounded();
 
     {
       let mut message_tx_ref = self.message_tx.borrow_mut();
-
-      if let Some(mut message_tx) = message_tx_ref.take() {
-        let _ = message_tx.close();
-      }
-
-      *message_tx_ref = Some(tx);
+      message_tx_ref.push_back(tx);
     }
 
     Box::new(rx.from_err::<RedisError>())

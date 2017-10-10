@@ -39,7 +39,10 @@ use super::{
 use std::rc::Rc;
 use std::cell::RefCell;
 
-use std::collections::HashMap;
+use std::collections::{
+  HashMap,
+  VecDeque
+};
 
 type FrameStream = Box<Stream<Item=Frame, Error=RedisError>>;
 type QuitFuture = Box<Future<Item=(String, RedisSink), Error=RedisError>>;
@@ -302,8 +305,8 @@ impl Streams {
 pub struct Multiplexer {
   clustered: bool,
   config: Rc<RefCell<RedisConfig>>,
-  pub message_tx: Rc<RefCell<Option<UnboundedSender<(String, RedisValue)>>>>,
-  pub error_tx: Rc<RefCell<Option<UnboundedSender<RedisError>>>>,
+  pub message_tx: Rc<RefCell<VecDeque<UnboundedSender<(String, RedisValue)>>>>,
+  pub error_tx: Rc<RefCell<VecDeque<UnboundedSender<RedisError>>>>,
   pub command_tx: Rc<RefCell<Option<UnboundedSender<RedisCommand>>>>,
   pub state: Arc<RwLock<ClientState>>,
 
@@ -326,8 +329,8 @@ impl Multiplexer {
 
   pub fn new(
     config: Rc<RefCell<RedisConfig>>,
-    message_tx: Rc<RefCell<Option<UnboundedSender<(String, RedisValue)>>>>,
-    error_tx: Rc<RefCell<Option<UnboundedSender<RedisError>>>>,
+    message_tx: Rc<RefCell<VecDeque<UnboundedSender<(String, RedisValue)>>>>,
+    error_tx: Rc<RefCell<VecDeque<UnboundedSender<RedisError>>>>,
     command_tx: Rc<RefCell<Option<UnboundedSender<RedisCommand>>>>,
     state: Arc<RwLock<ClientState>>
   ) -> Rc<Multiplexer>
