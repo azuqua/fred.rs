@@ -8,8 +8,11 @@ use std::sync::Arc;
 
 use std::ops::Deref;
 use std::ops::DerefMut;
+use std::hash::Hash;
 
 use std::fmt;
+
+use std::collections::HashMap;
 
 use futures::Future;
 use futures::sync::oneshot::{
@@ -235,6 +238,30 @@ impl RedisClientRemote {
     })
   }
 
+  /// Increments the number stored at key by incr. If the key does not exist, it is set to 0 before performing the operation.
+  /// Returns an error if the value at key is of the wrong type.
+  ///
+  /// https://redis.io/commands/incrby
+  pub fn incrby<K: Into<RedisKey>>(self, key: K, incr: i64) -> Box<Future<Item=(Self, i64), Error=RedisError>> {
+    utils::run_borrowed(self, move |_self, borrowed| {
+      Box::new(borrowed.incrby(key, incr).and_then(move |resp| {
+        Ok((_self, resp))
+      }))
+    })
+  }
+
+  /// Increment the string representing a floating point number stored at key by the argument value. If the key does not exist, it is set to 0 before performing the operation.
+  /// Returns error if key value is wrong type or if the current value or increment value are not parseable as float value.
+  ///
+  /// https://redis.io/commands/incrbyfloat
+  pub fn incrbyfloat<K: Into<RedisKey>>(self, key: K, incr: f64) -> Box<Future<Item=(Self, f64), Error=RedisError>> {
+    utils::run_borrowed(self, move |_self, borrowed| {
+      Box::new(borrowed.incrbyfloat(key, incr).and_then(move |resp| {
+        Ok((_self, resp))
+      }))
+    })
+  }
+
   /// Returns the value associated with field in the hash stored at key.
   ///
   /// https://redis.io/commands/hget
@@ -270,5 +297,92 @@ impl RedisClientRemote {
       }))
     })
   }
+
+  /// Returns the number of fields contained in the hash stored at key.
+  ///
+  /// https://redis.io/commands/hlen
+  pub fn hlen<K: Into<RedisKey>> (self, key: K) -> Box<Future<Item=(Self, usize), Error=RedisError>> {
+    utils::run_borrowed(self, move |_self, borrowed| {
+      Box::new(borrowed.hlen(key).and_then(move |resp| {
+        Ok((_self, resp))
+      }))
+    })
+  }
+
+  /// Returns the values associated with the specified fields in the hash stored at key.
+  /// Values in a returned list may be null.
+  ///
+  /// https://redis.io/commands/hmget
+  pub fn hmget<F: Into<MultipleKeys>, K: Into<RedisKey>> (self, key: K, fields: F) -> Box<Future<Item=(Self, Vec<RedisValue>), Error=RedisError>> {
+    utils::run_borrowed(self, move |_self, borrowed| {
+      Box::new(borrowed.hmget(key, fields).and_then(move |resp| {
+        Ok((_self, resp))
+      }))
+    })
+  }
+
+  /// Sets the specified fields to their respective values in the hash stored at key. This command overwrites any specified fields already existing in the hash.
+  /// If key does not exist, a new key holding a hash is created.
+  ///
+  /// https://redis.io/commands/hmset
+  pub fn hmset<V: Into<RedisValue>, F: Into<RedisKey> + Hash + Eq, K: Into<RedisKey>> (self, key: K, values: HashMap<F, V>) -> Box<Future<Item=(Self, String), Error=RedisError>> {
+    utils::run_borrowed(self, move |_self, borrowed| {
+      Box::new(borrowed.hmset(key, values).and_then(move |resp| {
+        Ok((_self, resp))
+      }))
+    })
+  }
+
+  /// Sets field in the hash stored at key to value, only if field does not yet exist.
+  /// If key does not exist, a new key holding a hash is created.
+  /// Note: Return value of 1 means new field was created and set. Return of 0 means no operation performed.
+  ///
+  /// https://redis.io/commands/hsetnx
+  pub fn hsetnx<K: Into<RedisKey>, F: Into<RedisKey>, V: Into<RedisValue>> (self, key: K, field: F, value: V) -> Box<Future<Item=(Self, usize), Error=RedisError>> {
+    utils::run_borrowed(self, move |_self, borrowed| {
+      Box::new(borrowed.hsetnx(key, field, value).and_then(move |resp| {
+        Ok((_self, resp))
+      }))
+    })
+  }
+
+  /// Returns the string length of the value associated with field in the hash stored at key.
+  /// If the key or the field do not exist, 0 is returned.
+  ///
+  /// https://redis.io/commands/hstrlen
+  pub fn hstrlen<K: Into<RedisKey>, F: Into<RedisKey>> (self, key: K, field: F) -> Box<Future<Item=(Self, usize), Error=RedisError>> {
+    utils::run_borrowed(self, move |_self, borrowed| {
+      Box::new(borrowed.hstrlen(key, field).and_then(move |resp| {
+        Ok((_self, resp))
+      }))
+    })
+  }
+
+  /// Returns all values in the hash stored at key.
+  /// Returns an empty vector if the list is empty.
+  ///
+  /// https://redis.io/commands/hvals
+  pub fn hvals<K: Into<RedisKey>> (self, key: K) -> Box<Future<Item=(Self, Vec<RedisValue>), Error=RedisError>> {
+    utils::run_borrowed(self, move |_self, borrowed| {
+      Box::new(borrowed.hvals(key).and_then(move |resp| {
+        Ok((_self, resp))
+      }))
+    })
+  }
+
+  /// Returns all field names in the hash stored at key.
+  /// Returns an empty vec if the list is empty.
+  /// Null fields are converted to "nil".
+  ///
+  /// https://redis.io/commands/hkeys
+  pub fn hkeys<K: Into<RedisKey>> (self, key: K) -> Box<Future<Item=(Self, Vec<String>), Error=RedisError>> {
+    utils::run_borrowed(self, move |_self, borrowed| {
+      Box::new(borrowed.hkeys(key).and_then(move |resp| {
+        Ok((_self, resp))
+      }))
+    })
+  }
+
+  // TODO more commands...
 
 }
