@@ -101,7 +101,7 @@ fn main() {
     }
   });
 
-  // block this thread while the three child threads run
+  // block this thread while the three child threads run, in this case blocking forever
   let _ = event_loop_jh.join();
   let _ = reader_jh.join();
   let _ = writer_jh.join();

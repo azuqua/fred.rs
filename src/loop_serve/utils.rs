@@ -101,6 +101,33 @@ pub fn close_messages_tx(messages_tx: &Rc<RefCell<Option<UnboundedSender<(String
   }
 }
 
+pub fn close_connect_tx(connect_tx: &Rc<RefCell<Vec<OneshotSender<Result<RedisClient, RedisError>>>>>, remote_tx: &Rc<RefCell<Vec<OneshotSender<Result<(), RedisError>>>>>) {
+  debug!("Closing connection tx.");
+
+  {
+    let mut connect_tx_refs = connect_tx.borrow_mut();
+    if connect_tx_refs.len() > 0 {
+      let len = connect_tx_refs.len() - 1; // don't use the last one
+
+      for tx in connect_tx_refs.drain(0..len) {
+        let _ = tx.send(Err(RedisError::new_canceled()));
+      }
+
+      let last = match connect_tx_refs.pop() {
+        Some(last) => last,
+        None => return
+      };
+      let _ = last.send(Err(RedisError::new_canceled()));
+    }
+  }
+  {
+    let mut remote_tx_refs = remote_tx.borrow_mut();
+    for tx in remote_tx_refs.drain(..) {
+      let _ = tx.send(Err(RedisError::new_canceled()));
+    }
+  }
+}
+
 pub fn emit_error(tx: &Rc<RefCell<Option<UnboundedSender<RedisError>>>>, error: RedisError) -> Result<(), RedisError> {
   let tx_ref = tx.borrow();
 

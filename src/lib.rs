@@ -246,6 +246,7 @@ impl RedisClient {
     loop_serve::utils::close_error_tx(&self.error_tx);
     loop_serve::utils::close_reconnect_tx(&self.reconnect_tx);
     loop_serve::utils::close_messages_tx(&self.message_tx);
+    loop_serve::utils::close_connect_tx(&self.connect_tx, &self.remote_tx);
 
     if exit_early {
       utils::future_ok(self)
@@ -684,7 +685,7 @@ impl RedisClient {
     }))
   }
 
-  /// Returns information and statistics about the client connections server.
+  /// Returns information and statistics about the client connections.
   ///
   /// https://redis.io/commands/client-list
   pub fn client_list(self) -> Box<Future<Item=(RedisClient, String), Error=RedisError>> {
@@ -704,7 +705,7 @@ impl RedisClient {
     }))
   }
 
-  /// Returns the name of the current connection as a string, or null if no name is set.
+  /// Returns the name of the current connection as a string, or None if no name is set.
   ///
   /// https://redis.io/commands/client-getname
   pub fn client_getname(self) -> Box<Future<Item=(RedisClient, Option<String>), Error=RedisError>> {
@@ -720,7 +721,7 @@ impl RedisClient {
     }))
   }
 
-  /// Assigns a name to the current connection. Returns ok if successful, null otherwise.
+  /// Assigns a name to the current connection. Returns ok if successful, None otherwise.
   ///
   /// https://redis.io/commands/client-setname
   pub fn client_setname<V: Into<String>>(self, name: V) -> Box<Future<Item=(RedisClient, Option<String>), Error=RedisError>> {
@@ -825,7 +826,7 @@ impl RedisClient {
   }
 
   /// Serialize the value stored at key in a Redis-specific format and return it as bulk string.
-  /// If key does not exist a Null is returned
+  /// If key does not exist None is returned
   ///
   /// https://redis.io/commands/dump
   pub fn dump<K: Into<RedisKey>>(self, key: K) -> Box<Future<Item=(RedisClient, Option<String>), Error=RedisError>> {
@@ -846,7 +847,7 @@ impl RedisClient {
     }))
   }
 
-  /// Returns number of keys that exist from the key arguments.
+  /// Returns number of keys that exist from the `keys` arguments.
   ///
   /// https://redis.io/commands/exists
   pub fn exists<K: Into<MultipleKeys>>(self, keys: K) -> Box<Future<Item=(RedisClient, usize), Error=RedisError>> {
@@ -952,7 +953,7 @@ impl RedisClient {
     }))
   }
 
-  /// Delete all the keys of the currently selected database.
+  /// Delete all the keys in the currently selected database.
   /// Returns a string reply.
   ///
   /// https://redis.io/commands/flushalldb
@@ -1138,7 +1139,7 @@ impl RedisClient {
     }))
   }
 
-  /// Increments the number stored at field in the hash stored at key by increment. If key does not exist, a new key holding a hash is created.
+  /// Increments the number stored at `field` in the hash stored at `key` by `incr`. If key does not exist, a new key holding a hash is created.
   /// If field does not exist the value is set to 0 before the operation is performed.
   ///
   /// https://redis.io/commands/hincrby
@@ -1165,7 +1166,7 @@ impl RedisClient {
     }))
   }
 
-  /// Increment the specified field of a hash stored at key, and representing a floating point number, by the specified increment.
+  /// Increment the specified `field` of a hash stored at `key`, and representing a floating point number, by the specified increment.
   /// If the field does not exist, it is set to 0 before performing the operation.
   /// Returns an error if field value contains wrong type or content/increment are not parsable.
   ///
@@ -1200,6 +1201,7 @@ impl RedisClient {
 
   /// Returns all field names in the hash stored at key.
   /// Returns an empty vec if the list is empty.
+  /// Null fields are converted to "nil".
   ///
   /// https://redis.io/commands/hkeys
   pub fn hkeys<K: Into<RedisKey>> (self, key: K) -> Box<Future<Item=(RedisClient, Vec<String>), Error=RedisError>> {
@@ -1386,7 +1388,7 @@ impl RedisClient {
   }
 
   /// Increments the number stored at key by one. If the key does not exist, it is set to 0 before performing the operation.
-  /// Returns error if the value at key is of wrong type.
+  /// Returns an error if the value at key is of the wrong type.
   ///
   /// https://redis.io/commands/incr
   pub fn incr<K: Into<RedisKey>> (self, key: K) -> Box<Future<Item=(RedisClient, i64), Error=RedisError>>  {
@@ -1406,8 +1408,8 @@ impl RedisClient {
     }))
   }
 
-  /// Increments the number stored at key by value argument. If the key does not exist, it is set to 0 before performing the operation.
-  /// Returns error if the value at key is of wrong type.
+  /// Increments the number stored at key by incr. If the key does not exist, it is set to 0 before performing the operation.
+  /// Returns an error if the value at key is of the wrong type.
   ///
   /// https://redis.io/commands/incrby
   pub fn incrby<K: Into<RedisKey>>(self, key: K, incr: i64) -> Box<Future<Item=(RedisClient, i64), Error=RedisError>> {
