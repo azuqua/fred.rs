@@ -5,8 +5,8 @@ authors = [
   "Evan Milton <evan@azuqua.com>"
 ]
 name = "fred"
-version = "0.1.0"
-description = "A Redis client for Rust built on futures and tokio."
+version = "0.0.1"
+description = "A Redis client for Rust built on Futures and Tokio."
 readme = "README.md"
 repository = "https://github.com/azuqua/fred.rs"
 homepage = "https://github.com/azuqua/fred.rs"
