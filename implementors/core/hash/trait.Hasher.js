@@ -1,0 +1,20 @@
+(function() {var implementors = {};
+implementors["bytes"] = ["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/nightly/core/hash/trait.Hasher.html\" title=\"trait core::hash::Hasher\">Hasher</a> for <a class=\"struct\" href=\"https://doc.rust-lang.org/nightly/std/collections/hash/map/struct.DefaultHasher.html\" title=\"struct std::collections::hash::map::DefaultHasher\">DefaultHasher</a>",];
+implementors["crc16"] = ["impl&lt;T:&nbsp;<a class=\"trait\" href=\"crc16/trait.CrcType.html\" title=\"trait crc16::CrcType\">CrcType</a>&gt; <a class=\"trait\" href=\"https://doc.rust-lang.org/nightly/core/hash/trait.Hasher.html\" title=\"trait core::hash::Hasher\">Hasher</a> for <a class=\"struct\" href=\"crc16/struct.State.html\" title=\"struct crc16::State\">State</a>&lt;T&gt;",];
+implementors["libc"] = ["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/nightly/core/hash/trait.Hasher.html\" title=\"trait core::hash::Hasher\">Hasher</a> for <a class=\"struct\" href=\"https://doc.rust-lang.org/nightly/std/collections/hash/map/struct.DefaultHasher.html\" title=\"struct std::collections::hash::map::DefaultHasher\">DefaultHasher</a>",];
+implementors["mio"] = ["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/nightly/core/hash/trait.Hasher.html\" title=\"trait core::hash::Hasher\">Hasher</a> for <a class=\"struct\" href=\"https://doc.rust-lang.org/nightly/std/collections/hash/map/struct.DefaultHasher.html\" title=\"struct std::collections::hash::map::DefaultHasher\">DefaultHasher</a>",];
+implementors["owning_ref"] = ["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/nightly/core/hash/trait.Hasher.html\" title=\"trait core::hash::Hasher\">Hasher</a> for <a class=\"struct\" href=\"https://doc.rust-lang.org/nightly/std/collections/hash/map/struct.DefaultHasher.html\" title=\"struct std::collections::hash::map::DefaultHasher\">DefaultHasher</a>",];
+implementors["parking_lot"] = ["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/nightly/core/hash/trait.Hasher.html\" title=\"trait core::hash::Hasher\">Hasher</a> for <a class=\"struct\" href=\"https://doc.rust-lang.org/nightly/std/collections/hash/map/struct.DefaultHasher.html\" title=\"struct std::collections::hash::map::DefaultHasher\">DefaultHasher</a>",];
+implementors["parking_lot_core"] = ["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/nightly/core/hash/trait.Hasher.html\" title=\"trait core::hash::Hasher\">Hasher</a> for <a class=\"struct\" href=\"https://doc.rust-lang.org/nightly/std/collections/hash/map/struct.DefaultHasher.html\" title=\"struct std::collections::hash::map::DefaultHasher\">DefaultHasher</a>",];
+implementors["regex_syntax"] = ["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/nightly/core/hash/trait.Hasher.html\" title=\"trait core::hash::Hasher\">Hasher</a> for <a class=\"struct\" href=\"https://doc.rust-lang.org/nightly/std/collections/hash/map/struct.DefaultHasher.html\" title=\"struct std::collections::hash::map::DefaultHasher\">DefaultHasher</a>",];
+implementors["thread_local"] = ["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/nightly/core/hash/trait.Hasher.html\" title=\"trait core::hash::Hasher\">Hasher</a> for <a class=\"struct\" href=\"https://doc.rust-lang.org/nightly/std/collections/hash/map/struct.DefaultHasher.html\" title=\"struct std::collections::hash::map::DefaultHasher\">DefaultHasher</a>",];
+implementors["tokio_core"] = ["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/nightly/core/hash/trait.Hasher.html\" title=\"trait core::hash::Hasher\">Hasher</a> for <a class=\"struct\" href=\"https://doc.rust-lang.org/nightly/std/collections/hash/map/struct.DefaultHasher.html\" title=\"struct std::collections::hash::map::DefaultHasher\">DefaultHasher</a>",];
+implementors["void"] = [];
+
+            if (window.register_implementors) {
+                window.register_implementors(implementors);
+            } else {
+                window.pending_implementors = implementors;
+            }
+        
+})()

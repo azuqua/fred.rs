@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="generator" content="rustdoc">
+    <meta name="description" content="API documentation for the Rust `RedisClientRemote` struct in crate `fred`.">
+    <meta name="keywords" content="rust, rustlang, rust-lang, RedisClientRemote">
+
+    <title>fred::sync::borrowed::RedisClientRemote - Rust</title>
+
+    <link rel="stylesheet" type="text/css" href="../../../normalize.css">
+    <link rel="stylesheet" type="text/css" href="../../../rustdoc.css">
+    <link rel="stylesheet" type="text/css" href="../../../main.css">
+    
+
+    
+    
+</head>
+<body class="rustdoc struct">
+    <!--[if lte IE 8]>
+    <div class="warning">
+        This old browser is unsupported and will most likely display funky
+        things.
+    </div>
+    <![endif]-->
+
+    
+
+    <nav class="sidebar">
+        
+        <p class='location'>Struct RedisClientRemote</p><div class="block items"><ul><li><a href="#methods">Methods</a></li><li><a href="#implementations">Trait Implementations</a></li></ul></div><p class='location'><a href='../../index.html'>fred</a>::<wbr><a href='../index.html'>sync</a>::<wbr><a href='index.html'>borrowed</a></p><script>window.sidebarCurrent = {name: 'RedisClientRemote', ty: 'struct', relpath: ''};</script><script defer src="sidebar-items.js"></script>
+    </nav>
+
+    <nav class="sub">
+        <form class="search-form js-only">
+            <div class="search-container">
+                <input class="search-input" name="search"
+                       autocomplete="off"
+                       placeholder="Click or press ‘S’ to search, ‘?’ for more options…"
+                       type="search">
+            </div>
+        </form>
+    </nav>
+
+    <section id='main' class="content">
+<h1 class='fqn'><span class='in-band'>Struct <a href='../../index.html'>fred</a>::<wbr><a href='../index.html'>sync</a>::<wbr><a href='index.html'>borrowed</a>::<wbr><a class="struct" href=''>RedisClientRemote</a></span><span class='out-of-band'><span id='render-detail'>
+                   <a id="toggle-all-docs" href="javascript:void(0)" title="collapse all docs">
+                       [<span class='inner'>&#x2212;</span>]
+                   </a>
+               </span><a class='srclink' href='../../../src/fred/sync/borrowed.rs.html#68-71' title='goto source code'>[src]</a></span></h1>
+<pre class='rust struct'>pub struct RedisClientRemote { /* fields omitted */ }</pre><div class='docblock'><p>A <code>Send</code> and <code>Sync</code> wrapper around a redis client that borrows <code>self</code> on each command, instead
+of taking ownership over <code>self</code>. This pattern gives the caller more freedom to manage ownership
+over the value, such as when the client is wrapped with another struct.</p>
+
+<p>However, this pattern is more tedious to use when commands are chained together in a single
+chain of futures as it requires the caller to either explicitly clone or move the client into
+those callbacks. For that reason it is not the default interface. However, if you intend on
+wrapping the client in another struct, or an <code>Arc</code>, or something that manages ownership
+and mutability for the inner value, then this interface is probably what you want. You
+will still have to manually move or clone the wrapper struct into callbacks as needed,
+but with this interface the ownership requirements are removed on all commands.</p>
+
+<p>For example, one use case for this interface would be as follows:</p>
+
+<ol>
+<li>Create several <code>RedisClient</code> instances on an event loop.</li>
+<li>Create <code>RedisClientRemote</code> wrappers for them.</li>
+<li>Move each of the <code>RedisClientRemote</code> instances into another wrapper struct <code>Foo</code>.</li>
+<li>Wrap <code>Foo</code> in an <code>Arc</code>, and send clones of the <code>Arc&lt;Foo&gt;</code> to different threads.</li>
+</ol>
+
+<p>If the commands on the <code>RedisClientRemote</code> instances required taking ownership over <code>self</code>
+then this pattern would be much more difficult to implement, since an <code>Arc</code> only allows for
+using functions that borrow the inner value. This interface is primarily designed to support
+this kind of usage.</p>
+
+<p>See <code>examples/sync_borrowed.rs</code> for usage examples.</p>
+</div><h2 id='methods'>Methods</h2><h3 class='impl'><span class='in-band'><code>impl <a class="struct" href="../../../fred/sync/borrowed/struct.RedisClientRemote.html" title="struct fred::sync::borrowed::RedisClientRemote">RedisClientRemote</a></code></span><span class='out-of-band'><div class='ghost'></div><a class='srclink' href='../../../src/fred/sync/borrowed.rs.html#88-571' title='goto source code'>[src]</a></span></h3>
+<div class='impl-items'><h4 id='method.new' class="method"><span id='new.v' class='invisible'><code>fn <a href='#method.new' class='fnname'>new</a>() -&gt; <a class="struct" href="../../../fred/sync/borrowed/struct.RedisClientRemote.html" title="struct fred::sync::borrowed::RedisClientRemote">RedisClientRemote</a></code></span></h4>
+<div class='docblock'><p>Create a new, empty <code>RedisClientRemote</code>.</p>
+</div><h4 id='method.to_owned' class="method"><span id='to_owned.v' class='invisible'><code>fn <a href='#method.to_owned' class='fnname'>to_owned</a>(&amp;self) -&gt; <a class="struct" href="../../../fred/sync/owned/struct.RedisClientRemote.html" title="struct fred::sync::owned::RedisClientRemote">RedisClientRemote</a></code></span></h4>
+<div class='docblock'><p>Convert a clone of this <code>borrowed::RedisClientRemote</code> to an <code>owned::RedisClientRemote</code>.</p>
+</div><h4 id='method.into_owned' class="method"><span id='into_owned.v' class='invisible'><code>fn <a href='#method.into_owned' class='fnname'>into_owned</a>(self) -&gt; <a class="struct" href="../../../fred/sync/owned/struct.RedisClientRemote.html" title="struct fred::sync::owned::RedisClientRemote">RedisClientRemote</a></code></span></h4>
+<div class='docblock'><p>Convert this <code>borrowed::RedisClientRemote</code> to an <code>owned::RedisClientRemote</code>.</p>
+</div><h4 id='method.init' class="method"><span id='init.v' class='invisible'><code>fn <a href='#method.init' class='fnname'>init</a>(<br>&nbsp;&nbsp;&nbsp;&nbsp;&amp;self, <br>&nbsp;&nbsp;&nbsp;&nbsp;client: <a class="struct" href="../../../fred/struct.RedisClient.html" title="struct fred::RedisClient">RedisClient</a><br>) -&gt; <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/boxed/struct.Box.html" title="struct alloc::boxed::Box">Box</a>&lt;<a class="trait" href="../../../futures/future/trait.Future.html" title="trait futures::future::Future">Future</a>&lt;Item = <a class="struct" href="../../../fred/struct.RedisClient.html" title="struct fred::RedisClient">RedisClient</a>, Error = <a class="struct" href="../../../fred/error/struct.RedisError.html" title="struct fred::error::RedisError">RedisError</a>&gt;&gt;</code></span></h4>
+<div class='docblock'><p>Initialize the remote interface with an existing <code>RedisClient</code>. This must be called on the same
+thread that initialized the <code>RedisClient</code>.</p>
+
+<p>The future returned by this function runs the message passing logic between this remote instance
+and the <code>RedisClient</code> argument on the event loop thread.</p>
+</div><h4 id='method.on_connect' class="method"><span id='on_connect.v' class='invisible'><code>fn <a href='#method.on_connect' class='fnname'>on_connect</a>(&amp;self) -&gt; <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/boxed/struct.Box.html" title="struct alloc::boxed::Box">Box</a>&lt;<a class="trait" href="../../../futures/future/trait.Future.html" title="trait futures::future::Future">Future</a>&lt;Item = <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.tuple.html">()</a>, Error = <a class="struct" href="../../../fred/error/struct.RedisError.html" title="struct fred::error::RedisError">RedisError</a>&gt;&gt;</code></span></h4>
+<div class='docblock'><p>Returns a future that resolves when the underlying client connects to the server. This
+function can act as a convenient way of notifying a separate thread when the client has
+connected to the server and can begin processing commands.</p>
+
+<p>This can be called before <code>init</code> if needed, however the callback will not be registered
+on the underlying client until <code>init</code> is called. For this reason it&#39;s best to call <code>init</code>
+with a client that has not yet starting running its connection future.</p>
+
+<p>See the <code>examples/sync_borrowed.rs</code> file for usage examples.</p>
+</div><h4 id='method.subscribe' class="method"><span id='subscribe.v' class='invisible'><code>fn <a href='#method.subscribe' class='fnname'>subscribe</a>&lt;K:&nbsp;<a class="trait" href="https://doc.rust-lang.org/nightly/core/convert/trait.Into.html" title="trait core::convert::Into">Into</a>&lt;<a class="struct" href="https://doc.rust-lang.org/nightly/alloc/string/struct.String.html" title="struct alloc::string::String">String</a>&gt;&gt;(<br>&nbsp;&nbsp;&nbsp;&nbsp;&amp;self, <br>&nbsp;&nbsp;&nbsp;&nbsp;channel: K<br>) -&gt; <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/boxed/struct.Box.html" title="struct alloc::boxed::Box">Box</a>&lt;<a class="trait" href="../../../futures/future/trait.Future.html" title="trait futures::future::Future">Future</a>&lt;Item = <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.usize.html">usize</a>, Error = <a class="struct" href="../../../fred/error/struct.RedisError.html" title="struct fred::error::RedisError">RedisError</a>&gt;&gt;</code></span></h4>
+<div class='docblock'><p>Subscribe to a channel on the PubSub interface. Any messages received before <code>on_message</code> is called will be discarded, so it&#39;s
+usually best to call <code>on_message</code> before calling <code>subscribe</code> for the first time. The <code>usize</code> returned here is the number of
+channels to which the client is currently subscribed.</p>
+
+<p><a href="https://redis.io/commands/subscribe">https://redis.io/commands/subscribe</a></p>
+</div><h4 id='method.unsubscribe' class="method"><span id='unsubscribe.v' class='invisible'><code>fn <a href='#method.unsubscribe' class='fnname'>unsubscribe</a>&lt;K:&nbsp;<a class="trait" href="https://doc.rust-lang.org/nightly/core/convert/trait.Into.html" title="trait core::convert::Into">Into</a>&lt;<a class="struct" href="https://doc.rust-lang.org/nightly/alloc/string/struct.String.html" title="struct alloc::string::String">String</a>&gt;&gt;(<br>&nbsp;&nbsp;&nbsp;&nbsp;&amp;self, <br>&nbsp;&nbsp;&nbsp;&nbsp;channel: K<br>) -&gt; <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/boxed/struct.Box.html" title="struct alloc::boxed::Box">Box</a>&lt;<a class="trait" href="../../../futures/future/trait.Future.html" title="trait futures::future::Future">Future</a>&lt;Item = <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.usize.html">usize</a>, Error = <a class="struct" href="../../../fred/error/struct.RedisError.html" title="struct fred::error::RedisError">RedisError</a>&gt;&gt;</code></span></h4>
+<div class='docblock'><p>Unsubscribe from a channel on the PubSub interface.</p>
+
+<p><a href="https://redis.io/commands/unsubscribe">https://redis.io/commands/unsubscribe</a></p>
+</div><h4 id='method.publish' class="method"><span id='publish.v' class='invisible'><code>fn <a href='#method.publish' class='fnname'>publish</a>&lt;K:&nbsp;<a class="trait" href="https://doc.rust-lang.org/nightly/core/convert/trait.Into.html" title="trait core::convert::Into">Into</a>&lt;<a class="struct" href="https://doc.rust-lang.org/nightly/alloc/string/struct.String.html" title="struct alloc::string::String">String</a>&gt;, V:&nbsp;<a class="trait" href="https://doc.rust-lang.org/nightly/core/convert/trait.Into.html" title="trait core::convert::Into">Into</a>&lt;<a class="enum" href="../../../fred/types/enum.RedisValue.html" title="enum fred::types::RedisValue">RedisValue</a>&gt;&gt;(<br>&nbsp;&nbsp;&nbsp;&nbsp;&amp;self, <br>&nbsp;&nbsp;&nbsp;&nbsp;channel: K, <br>&nbsp;&nbsp;&nbsp;&nbsp;message: V<br>) -&gt; <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/boxed/struct.Box.html" title="struct alloc::boxed::Box">Box</a>&lt;<a class="trait" href="../../../futures/future/trait.Future.html" title="trait futures::future::Future">Future</a>&lt;Item = <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.i64.html">i64</a>, Error = <a class="struct" href="../../../fred/error/struct.RedisError.html" title="struct fred::error::RedisError">RedisError</a>&gt;&gt;</code></span></h4>
+<div class='docblock'><p>Publish a message on the PubSub interface, returning the number of clients that received the message.</p>
+
+<p><a href="https://redis.io/commands/publish">https://redis.io/commands/publish</a></p>
+</div><h4 id='method.get' class="method"><span id='get.v' class='invisible'><code>fn <a href='#method.get' class='fnname'>get</a>&lt;K:&nbsp;<a class="trait" href="https://doc.rust-lang.org/nightly/core/convert/trait.Into.html" title="trait core::convert::Into">Into</a>&lt;<a class="struct" href="../../../fred/types/struct.RedisKey.html" title="struct fred::types::RedisKey">RedisKey</a>&gt;&gt;(<br>&nbsp;&nbsp;&nbsp;&nbsp;&amp;self, <br>&nbsp;&nbsp;&nbsp;&nbsp;key: K<br>) -&gt; <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/boxed/struct.Box.html" title="struct alloc::boxed::Box">Box</a>&lt;<a class="trait" href="../../../futures/future/trait.Future.html" title="trait futures::future::Future">Future</a>&lt;Item = <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="enum" href="../../../fred/types/enum.RedisValue.html" title="enum fred::types::RedisValue">RedisValue</a>&gt;, Error = <a class="struct" href="../../../fred/error/struct.RedisError.html" title="struct fred::error::RedisError">RedisError</a>&gt;&gt;</code></span></h4>
+<div class='docblock'><p>Read a value from Redis at <code>key</code>.</p>
+
+<p><a href="https://redis.io/commands/get">https://redis.io/commands/get</a></p>
+</div><h4 id='method.set' class="method"><span id='set.v' class='invisible'><code>fn <a href='#method.set' class='fnname'>set</a>&lt;K:&nbsp;<a class="trait" href="https://doc.rust-lang.org/nightly/core/convert/trait.Into.html" title="trait core::convert::Into">Into</a>&lt;<a class="struct" href="../../../fred/types/struct.RedisKey.html" title="struct fred::types::RedisKey">RedisKey</a>&gt;, V:&nbsp;<a class="trait" href="https://doc.rust-lang.org/nightly/core/convert/trait.Into.html" title="trait core::convert::Into">Into</a>&lt;<a class="enum" href="../../../fred/types/enum.RedisValue.html" title="enum fred::types::RedisValue">RedisValue</a>&gt;&gt;(<br>&nbsp;&nbsp;&nbsp;&nbsp;&amp;self, <br>&nbsp;&nbsp;&nbsp;&nbsp;key: K, <br>&nbsp;&nbsp;&nbsp;&nbsp;value: V, <br>&nbsp;&nbsp;&nbsp;&nbsp;expire: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="enum" href="../../../fred/types/enum.Expiration.html" title="enum fred::types::Expiration">Expiration</a>&gt;, <br>&nbsp;&nbsp;&nbsp;&nbsp;options: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="enum" href="../../../fred/types/enum.SetOptions.html" title="enum fred::types::SetOptions">SetOptions</a>&gt;<br>) -&gt; <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/boxed/struct.Box.html" title="struct alloc::boxed::Box">Box</a>&lt;<a class="trait" href="../../../futures/future/trait.Future.html" title="trait futures::future::Future">Future</a>&lt;Item = <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a>, Error = <a class="struct" href="../../../fred/error/struct.RedisError.html" title="struct fred::error::RedisError">RedisError</a>&gt;&gt;</code></span></h4>
+<div class='docblock'><p>Set a value at <code>key</code> with optional NX|XX and EX|PX arguments.
+The <code>bool</code> returned by this function describes whether or not the key was set due to any NX|XX options.</p>
+
+<p><a href="https://redis.io/commands/set">https://redis.io/commands/set</a></p>
+</div><h4 id='method.del' class="method"><span id='del.v' class='invisible'><code>fn <a href='#method.del' class='fnname'>del</a>&lt;K:&nbsp;<a class="trait" href="https://doc.rust-lang.org/nightly/core/convert/trait.Into.html" title="trait core::convert::Into">Into</a>&lt;<a class="struct" href="../../../fred/types/struct.MultipleKeys.html" title="struct fred::types::MultipleKeys">MultipleKeys</a>&gt;&gt;(<br>&nbsp;&nbsp;&nbsp;&nbsp;&amp;self, <br>&nbsp;&nbsp;&nbsp;&nbsp;keys: K<br>) -&gt; <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/boxed/struct.Box.html" title="struct alloc::boxed::Box">Box</a>&lt;<a class="trait" href="../../../futures/future/trait.Future.html" title="trait futures::future::Future">Future</a>&lt;Item = <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.usize.html">usize</a>, Error = <a class="struct" href="../../../fred/error/struct.RedisError.html" title="struct fred::error::RedisError">RedisError</a>&gt;&gt;</code></span></h4>
+<div class='docblock'><p>Removes the specified keys. A key is ignored if it does not exist.
+Returns the number of keys removed.</p>
+
+<p><a href="https://redis.io/commands/del">https://redis.io/commands/del</a></p>
+</div><h4 id='method.decr' class="method"><span id='decr.v' class='invisible'><code>fn <a href='#method.decr' class='fnname'>decr</a>&lt;K:&nbsp;<a class="trait" href="https://doc.rust-lang.org/nightly/core/convert/trait.Into.html" title="trait core::convert::Into">Into</a>&lt;<a class="struct" href="../../../fred/types/struct.RedisKey.html" title="struct fred::types::RedisKey">RedisKey</a>&gt;&gt;(<br>&nbsp;&nbsp;&nbsp;&nbsp;&amp;self, <br>&nbsp;&nbsp;&nbsp;&nbsp;key: K<br>) -&gt; <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/boxed/struct.Box.html" title="struct alloc::boxed::Box">Box</a>&lt;<a class="trait" href="../../../futures/future/trait.Future.html" title="trait futures::future::Future">Future</a>&lt;Item = <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.i64.html">i64</a>, Error = <a class="struct" href="../../../fred/error/struct.RedisError.html" title="struct fred::error::RedisError">RedisError</a>&gt;&gt;</code></span></h4>
+<div class='docblock'><p>Decrements the number stored at key by one. If the key does not exist, it is set to 0 before performing the operation.
+Returns error if the key contains a value of the wrong type.</p>
+
+<p><a href="https://redis.io/commands/decr">https://redis.io/commands/decr</a></p>
+</div><h4 id='method.incr' class="method"><span id='incr.v' class='invisible'><code>fn <a href='#method.incr' class='fnname'>incr</a>&lt;K:&nbsp;<a class="trait" href="https://doc.rust-lang.org/nightly/core/convert/trait.Into.html" title="trait core::convert::Into">Into</a>&lt;<a class="struct" href="../../../fred/types/struct.RedisKey.html" title="struct fred::types::RedisKey">RedisKey</a>&gt;&gt;(<br>&nbsp;&nbsp;&nbsp;&nbsp;&amp;self, <br>&nbsp;&nbsp;&nbsp;&nbsp;key: K<br>) -&gt; <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/boxed/struct.Box.html" title="struct alloc::boxed::Box">Box</a>&lt;<a class="trait" href="../../../futures/future/trait.Future.html" title="trait futures::future::Future">Future</a>&lt;Item = <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.i64.html">i64</a>, Error = <a class="struct" href="../../../fred/error/struct.RedisError.html" title="struct fred::error::RedisError">RedisError</a>&gt;&gt;</code></span></h4>
+<div class='docblock'><p>Increments the number stored at key by one. If the key does not exist, it is set to 0 before performing the operation.
+Returns error if the value at key is of wrong type.</p>
+
+<p><a href="https://redis.io/commands/incr">https://redis.io/commands/incr</a></p>
+</div><h4 id='method.incrby' class="method"><span id='incrby.v' class='invisible'><code>fn <a href='#method.incrby' class='fnname'>incrby</a>&lt;K:&nbsp;<a class="trait" href="https://doc.rust-lang.org/nightly/core/convert/trait.Into.html" title="trait core::convert::Into">Into</a>&lt;<a class="struct" href="../../../fred/types/struct.RedisKey.html" title="struct fred::types::RedisKey">RedisKey</a>&gt;&gt;(<br>&nbsp;&nbsp;&nbsp;&nbsp;&amp;self, <br>&nbsp;&nbsp;&nbsp;&nbsp;key: K, <br>&nbsp;&nbsp;&nbsp;&nbsp;incr: <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.i64.html">i64</a><br>) -&gt; <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/boxed/struct.Box.html" title="struct alloc::boxed::Box">Box</a>&lt;<a class="trait" href="../../../futures/future/trait.Future.html" title="trait futures::future::Future">Future</a>&lt;Item = <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.i64.html">i64</a>, Error = <a class="struct" href="../../../fred/error/struct.RedisError.html" title="struct fred::error::RedisError">RedisError</a>&gt;&gt;</code></span></h4>
+<div class='docblock'><p>Increments the number stored at key by incr. If the key does not exist, it is set to 0 before performing the operation.
+Returns an error if the value at key is of the wrong type.</p>
+
+<p><a href="https://redis.io/commands/incrby">https://redis.io/commands/incrby</a></p>
+</div><h4 id='method.incrbyfloat' class="method"><span id='incrbyfloat.v' class='invisible'><code>fn <a href='#method.incrbyfloat' class='fnname'>incrbyfloat</a>&lt;K:&nbsp;<a class="trait" href="https://doc.rust-lang.org/nightly/core/convert/trait.Into.html" title="trait core::convert::Into">Into</a>&lt;<a class="struct" href="../../../fred/types/struct.RedisKey.html" title="struct fred::types::RedisKey">RedisKey</a>&gt;&gt;(<br>&nbsp;&nbsp;&nbsp;&nbsp;&amp;self, <br>&nbsp;&nbsp;&nbsp;&nbsp;key: K, <br>&nbsp;&nbsp;&nbsp;&nbsp;incr: <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.f64.html">f64</a><br>) -&gt; <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/boxed/struct.Box.html" title="struct alloc::boxed::Box">Box</a>&lt;<a class="trait" href="../../../futures/future/trait.Future.html" title="trait futures::future::Future">Future</a>&lt;Item = <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.f64.html">f64</a>, Error = <a class="struct" href="../../../fred/error/struct.RedisError.html" title="struct fred::error::RedisError">RedisError</a>&gt;&gt;</code></span></h4>
+<div class='docblock'><p>Increment the string representing a floating point number stored at key by the argument value. If the key does not exist, it is set to 0 before performing the operation.
+Returns error if key value is wrong type or if the current value or increment value are not parseable as float value.</p>
+
+<p><a href="https://redis.io/commands/incrbyfloat">https://redis.io/commands/incrbyfloat</a></p>
+</div><h4 id='method.hget' class="method"><span id='hget.v' class='invisible'><code>fn <a href='#method.hget' class='fnname'>hget</a>&lt;F:&nbsp;<a class="trait" href="https://doc.rust-lang.org/nightly/core/convert/trait.Into.html" title="trait core::convert::Into">Into</a>&lt;<a class="struct" href="../../../fred/types/struct.RedisKey.html" title="struct fred::types::RedisKey">RedisKey</a>&gt;, K:&nbsp;<a class="trait" href="https://doc.rust-lang.org/nightly/core/convert/trait.Into.html" title="trait core::convert::Into">Into</a>&lt;<a class="struct" href="../../../fred/types/struct.RedisKey.html" title="struct fred::types::RedisKey">RedisKey</a>&gt;&gt;(<br>&nbsp;&nbsp;&nbsp;&nbsp;&amp;self, <br>&nbsp;&nbsp;&nbsp;&nbsp;key: K, <br>&nbsp;&nbsp;&nbsp;&nbsp;field: F<br>) -&gt; <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/boxed/struct.Box.html" title="struct alloc::boxed::Box">Box</a>&lt;<a class="trait" href="../../../futures/future/trait.Future.html" title="trait futures::future::Future">Future</a>&lt;Item = <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="enum" href="../../../fred/types/enum.RedisValue.html" title="enum fred::types::RedisValue">RedisValue</a>&gt;, Error = <a class="struct" href="../../../fred/error/struct.RedisError.html" title="struct fred::error::RedisError">RedisError</a>&gt;&gt;</code></span></h4>
+<div class='docblock'><p>Returns the value associated with field in the hash stored at key.</p>
+
+<p><a href="https://redis.io/commands/hget">https://redis.io/commands/hget</a></p>
+</div><h4 id='method.hset' class="method"><span id='hset.v' class='invisible'><code>fn <a href='#method.hset' class='fnname'>hset</a>&lt;K:&nbsp;<a class="trait" href="https://doc.rust-lang.org/nightly/core/convert/trait.Into.html" title="trait core::convert::Into">Into</a>&lt;<a class="struct" href="../../../fred/types/struct.RedisKey.html" title="struct fred::types::RedisKey">RedisKey</a>&gt;, F:&nbsp;<a class="trait" href="https://doc.rust-lang.org/nightly/core/convert/trait.Into.html" title="trait core::convert::Into">Into</a>&lt;<a class="struct" href="../../../fred/types/struct.RedisKey.html" title="struct fred::types::RedisKey">RedisKey</a>&gt;, V:&nbsp;<a class="trait" href="https://doc.rust-lang.org/nightly/core/convert/trait.Into.html" title="trait core::convert::Into">Into</a>&lt;<a class="enum" href="../../../fred/types/enum.RedisValue.html" title="enum fred::types::RedisValue">RedisValue</a>&gt;&gt;(<br>&nbsp;&nbsp;&nbsp;&nbsp;&amp;self, <br>&nbsp;&nbsp;&nbsp;&nbsp;key: K, <br>&nbsp;&nbsp;&nbsp;&nbsp;field: F, <br>&nbsp;&nbsp;&nbsp;&nbsp;value: V<br>) -&gt; <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/boxed/struct.Box.html" title="struct alloc::boxed::Box">Box</a>&lt;<a class="trait" href="../../../futures/future/trait.Future.html" title="trait futures::future::Future">Future</a>&lt;Item = <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.usize.html">usize</a>, Error = <a class="struct" href="../../../fred/error/struct.RedisError.html" title="struct fred::error::RedisError">RedisError</a>&gt;&gt;</code></span></h4>
+<div class='docblock'><p>Sets field in the hash stored at key to value. If key does not exist, a new key holding a hash is created.
+If field already exists in the hash, it is overwritten.
+Note: Return value of 1 means new field was created and set. Return of 0 means field already exists and was overwritten.</p>
+
+<p><a href="https://redis.io/commands/hset">https://redis.io/commands/hset</a></p>
+</div><h4 id='method.hdel' class="method"><span id='hdel.v' class='invisible'><code>fn <a href='#method.hdel' class='fnname'>hdel</a>&lt;K:&nbsp;<a class="trait" href="https://doc.rust-lang.org/nightly/core/convert/trait.Into.html" title="trait core::convert::Into">Into</a>&lt;<a class="struct" href="../../../fred/types/struct.RedisKey.html" title="struct fred::types::RedisKey">RedisKey</a>&gt;, F:&nbsp;<a class="trait" href="https://doc.rust-lang.org/nightly/core/convert/trait.Into.html" title="trait core::convert::Into">Into</a>&lt;<a class="struct" href="../../../fred/types/struct.MultipleKeys.html" title="struct fred::types::MultipleKeys">MultipleKeys</a>&gt;&gt;(<br>&nbsp;&nbsp;&nbsp;&nbsp;&amp;self, <br>&nbsp;&nbsp;&nbsp;&nbsp;key: K, <br>&nbsp;&nbsp;&nbsp;&nbsp;fields: F<br>) -&gt; <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/boxed/struct.Box.html" title="struct alloc::boxed::Box">Box</a>&lt;<a class="trait" href="../../../futures/future/trait.Future.html" title="trait futures::future::Future">Future</a>&lt;Item = <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.usize.html">usize</a>, Error = <a class="struct" href="../../../fred/error/struct.RedisError.html" title="struct fred::error::RedisError">RedisError</a>&gt;&gt;</code></span></h4>
+<div class='docblock'><p>Removes the specified fields from the hash stored at key. Specified fields that do not exist within this hash are ignored.
+If key does not exist, it is treated as an empty hash and this command returns 0.</p>
+
+<p><a href="https://redis.io/commands/hdel">https://redis.io/commands/hdel</a></p>
+</div><h4 id='method.hlen' class="method"><span id='hlen.v' class='invisible'><code>fn <a href='#method.hlen' class='fnname'>hlen</a>&lt;K:&nbsp;<a class="trait" href="https://doc.rust-lang.org/nightly/core/convert/trait.Into.html" title="trait core::convert::Into">Into</a>&lt;<a class="struct" href="../../../fred/types/struct.RedisKey.html" title="struct fred::types::RedisKey">RedisKey</a>&gt;&gt;(<br>&nbsp;&nbsp;&nbsp;&nbsp;&amp;self, <br>&nbsp;&nbsp;&nbsp;&nbsp;key: K<br>) -&gt; <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/boxed/struct.Box.html" title="struct alloc::boxed::Box">Box</a>&lt;<a class="trait" href="../../../futures/future/trait.Future.html" title="trait futures::future::Future">Future</a>&lt;Item = <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.usize.html">usize</a>, Error = <a class="struct" href="../../../fred/error/struct.RedisError.html" title="struct fred::error::RedisError">RedisError</a>&gt;&gt;</code></span></h4>
+<div class='docblock'><p>Returns the number of fields contained in the hash stored at key.</p>
+
+<p><a href="https://redis.io/commands/hlen">https://redis.io/commands/hlen</a></p>
+</div><h4 id='method.hmget' class="method"><span id='hmget.v' class='invisible'><code>fn <a href='#method.hmget' class='fnname'>hmget</a>&lt;F:&nbsp;<a class="trait" href="https://doc.rust-lang.org/nightly/core/convert/trait.Into.html" title="trait core::convert::Into">Into</a>&lt;<a class="struct" href="../../../fred/types/struct.MultipleKeys.html" title="struct fred::types::MultipleKeys">MultipleKeys</a>&gt;, K:&nbsp;<a class="trait" href="https://doc.rust-lang.org/nightly/core/convert/trait.Into.html" title="trait core::convert::Into">Into</a>&lt;<a class="struct" href="../../../fred/types/struct.RedisKey.html" title="struct fred::types::RedisKey">RedisKey</a>&gt;&gt;(<br>&nbsp;&nbsp;&nbsp;&nbsp;&amp;self, <br>&nbsp;&nbsp;&nbsp;&nbsp;key: K, <br>&nbsp;&nbsp;&nbsp;&nbsp;fields: F<br>) -&gt; <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/boxed/struct.Box.html" title="struct alloc::boxed::Box">Box</a>&lt;<a class="trait" href="../../../futures/future/trait.Future.html" title="trait futures::future::Future">Future</a>&lt;Item = <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="enum" href="../../../fred/types/enum.RedisValue.html" title="enum fred::types::RedisValue">RedisValue</a>&gt;, Error = <a class="struct" href="../../../fred/error/struct.RedisError.html" title="struct fred::error::RedisError">RedisError</a>&gt;&gt;</code></span></h4>
+<div class='docblock'><p>Returns the values associated with the specified fields in the hash stored at key.
+Values in a returned list may be null.</p>
+
+<p><a href="https://redis.io/commands/hmget">https://redis.io/commands/hmget</a></p>
+</div><h4 id='method.hmset' class="method"><span id='hmset.v' class='invisible'><code>fn <a href='#method.hmset' class='fnname'>hmset</a>&lt;V:&nbsp;<a class="trait" href="https://doc.rust-lang.org/nightly/core/convert/trait.Into.html" title="trait core::convert::Into">Into</a>&lt;<a class="enum" href="../../../fred/types/enum.RedisValue.html" title="enum fred::types::RedisValue">RedisValue</a>&gt;, F:&nbsp;<a class="trait" href="https://doc.rust-lang.org/nightly/core/convert/trait.Into.html" title="trait core::convert::Into">Into</a>&lt;<a class="struct" href="../../../fred/types/struct.RedisKey.html" title="struct fred::types::RedisKey">RedisKey</a>&gt; + <a class="trait" href="https://doc.rust-lang.org/nightly/core/hash/trait.Hash.html" title="trait core::hash::Hash">Hash</a> + <a class="trait" href="https://doc.rust-lang.org/nightly/core/cmp/trait.Eq.html" title="trait core::cmp::Eq">Eq</a>, K:&nbsp;<a class="trait" href="https://doc.rust-lang.org/nightly/core/convert/trait.Into.html" title="trait core::convert::Into">Into</a>&lt;<a class="struct" href="../../../fred/types/struct.RedisKey.html" title="struct fred::types::RedisKey">RedisKey</a>&gt;&gt;(<br>&nbsp;&nbsp;&nbsp;&nbsp;&amp;self, <br>&nbsp;&nbsp;&nbsp;&nbsp;key: K, <br>&nbsp;&nbsp;&nbsp;&nbsp;values: <a class="struct" href="https://doc.rust-lang.org/nightly/std/collections/hash/map/struct.HashMap.html" title="struct std::collections::hash::map::HashMap">HashMap</a>&lt;F, V&gt;<br>) -&gt; <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/boxed/struct.Box.html" title="struct alloc::boxed::Box">Box</a>&lt;<a class="trait" href="../../../futures/future/trait.Future.html" title="trait futures::future::Future">Future</a>&lt;Item = <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/string/struct.String.html" title="struct alloc::string::String">String</a>, Error = <a class="struct" href="../../../fred/error/struct.RedisError.html" title="struct fred::error::RedisError">RedisError</a>&gt;&gt;</code></span></h4>
+<div class='docblock'><p>Sets the specified fields to their respective values in the hash stored at key. This command overwrites any specified fields already existing in the hash.
+If key does not exist, a new key holding a hash is created.</p>
+
+<p><a href="https://redis.io/commands/hmset">https://redis.io/commands/hmset</a></p>
+</div><h4 id='method.hsetnx' class="method"><span id='hsetnx.v' class='invisible'><code>fn <a href='#method.hsetnx' class='fnname'>hsetnx</a>&lt;K:&nbsp;<a class="trait" href="https://doc.rust-lang.org/nightly/core/convert/trait.Into.html" title="trait core::convert::Into">Into</a>&lt;<a class="struct" href="../../../fred/types/struct.RedisKey.html" title="struct fred::types::RedisKey">RedisKey</a>&gt;, F:&nbsp;<a class="trait" href="https://doc.rust-lang.org/nightly/core/convert/trait.Into.html" title="trait core::convert::Into">Into</a>&lt;<a class="struct" href="../../../fred/types/struct.RedisKey.html" title="struct fred::types::RedisKey">RedisKey</a>&gt;, V:&nbsp;<a class="trait" href="https://doc.rust-lang.org/nightly/core/convert/trait.Into.html" title="trait core::convert::Into">Into</a>&lt;<a class="enum" href="../../../fred/types/enum.RedisValue.html" title="enum fred::types::RedisValue">RedisValue</a>&gt;&gt;(<br>&nbsp;&nbsp;&nbsp;&nbsp;&amp;self, <br>&nbsp;&nbsp;&nbsp;&nbsp;key: K, <br>&nbsp;&nbsp;&nbsp;&nbsp;field: F, <br>&nbsp;&nbsp;&nbsp;&nbsp;value: V<br>) -&gt; <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/boxed/struct.Box.html" title="struct alloc::boxed::Box">Box</a>&lt;<a class="trait" href="../../../futures/future/trait.Future.html" title="trait futures::future::Future">Future</a>&lt;Item = <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.usize.html">usize</a>, Error = <a class="struct" href="../../../fred/error/struct.RedisError.html" title="struct fred::error::RedisError">RedisError</a>&gt;&gt;</code></span></h4>
+<div class='docblock'><p>Sets field in the hash stored at key to value, only if field does not yet exist.
+If key does not exist, a new key holding a hash is created.
+Note: Return value of 1 means new field was created and set. Return of 0 means no operation performed.</p>
+
+<p><a href="https://redis.io/commands/hsetnx">https://redis.io/commands/hsetnx</a></p>
+</div><h4 id='method.hstrlen' class="method"><span id='hstrlen.v' class='invisible'><code>fn <a href='#method.hstrlen' class='fnname'>hstrlen</a>&lt;K:&nbsp;<a class="trait" href="https://doc.rust-lang.org/nightly/core/convert/trait.Into.html" title="trait core::convert::Into">Into</a>&lt;<a class="struct" href="../../../fred/types/struct.RedisKey.html" title="struct fred::types::RedisKey">RedisKey</a>&gt;, F:&nbsp;<a class="trait" href="https://doc.rust-lang.org/nightly/core/convert/trait.Into.html" title="trait core::convert::Into">Into</a>&lt;<a class="struct" href="../../../fred/types/struct.RedisKey.html" title="struct fred::types::RedisKey">RedisKey</a>&gt;&gt;(<br>&nbsp;&nbsp;&nbsp;&nbsp;&amp;self, <br>&nbsp;&nbsp;&nbsp;&nbsp;key: K, <br>&nbsp;&nbsp;&nbsp;&nbsp;field: F<br>) -&gt; <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/boxed/struct.Box.html" title="struct alloc::boxed::Box">Box</a>&lt;<a class="trait" href="../../../futures/future/trait.Future.html" title="trait futures::future::Future">Future</a>&lt;Item = <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.usize.html">usize</a>, Error = <a class="struct" href="../../../fred/error/struct.RedisError.html" title="struct fred::error::RedisError">RedisError</a>&gt;&gt;</code></span></h4>
+<div class='docblock'><p>Returns the string length of the value associated with field in the hash stored at key.
+If the key or the field do not exist, 0 is returned.</p>
+
+<p><a href="https://redis.io/commands/hstrlen">https://redis.io/commands/hstrlen</a></p>
+</div><h4 id='method.hvals' class="method"><span id='hvals.v' class='invisible'><code>fn <a href='#method.hvals' class='fnname'>hvals</a>&lt;K:&nbsp;<a class="trait" href="https://doc.rust-lang.org/nightly/core/convert/trait.Into.html" title="trait core::convert::Into">Into</a>&lt;<a class="struct" href="../../../fred/types/struct.RedisKey.html" title="struct fred::types::RedisKey">RedisKey</a>&gt;&gt;(<br>&nbsp;&nbsp;&nbsp;&nbsp;&amp;self, <br>&nbsp;&nbsp;&nbsp;&nbsp;key: K<br>) -&gt; <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/boxed/struct.Box.html" title="struct alloc::boxed::Box">Box</a>&lt;<a class="trait" href="../../../futures/future/trait.Future.html" title="trait futures::future::Future">Future</a>&lt;Item = <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="enum" href="../../../fred/types/enum.RedisValue.html" title="enum fred::types::RedisValue">RedisValue</a>&gt;, Error = <a class="struct" href="../../../fred/error/struct.RedisError.html" title="struct fred::error::RedisError">RedisError</a>&gt;&gt;</code></span></h4>
+<div class='docblock'><p>Returns all values in the hash stored at key.
+Returns an empty vector if the list is empty.</p>
+
+<p><a href="https://redis.io/commands/hvals">https://redis.io/commands/hvals</a></p>
+</div><h4 id='method.hkeys' class="method"><span id='hkeys.v' class='invisible'><code>fn <a href='#method.hkeys' class='fnname'>hkeys</a>&lt;K:&nbsp;<a class="trait" href="https://doc.rust-lang.org/nightly/core/convert/trait.Into.html" title="trait core::convert::Into">Into</a>&lt;<a class="struct" href="../../../fred/types/struct.RedisKey.html" title="struct fred::types::RedisKey">RedisKey</a>&gt;&gt;(<br>&nbsp;&nbsp;&nbsp;&nbsp;&amp;self, <br>&nbsp;&nbsp;&nbsp;&nbsp;key: K<br>) -&gt; <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/boxed/struct.Box.html" title="struct alloc::boxed::Box">Box</a>&lt;<a class="trait" href="../../../futures/future/trait.Future.html" title="trait futures::future::Future">Future</a>&lt;Item = <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="struct" href="https://doc.rust-lang.org/nightly/alloc/string/struct.String.html" title="struct alloc::string::String">String</a>&gt;, Error = <a class="struct" href="../../../fred/error/struct.RedisError.html" title="struct fred::error::RedisError">RedisError</a>&gt;&gt;</code></span></h4>
+<div class='docblock'><p>Returns all field names in the hash stored at key.
+Returns an empty vec if the list is empty.
+Null fields are converted to &quot;nil&quot;.</p>
+
+<p><a href="https://redis.io/commands/hkeys">https://redis.io/commands/hkeys</a></p>
+</div></div><h2 id='implementations'>Trait Implementations</h2><h3 class='impl'><span class='in-band'><code>impl <a class="trait" href="https://doc.rust-lang.org/nightly/core/clone/trait.Clone.html" title="trait core::clone::Clone">Clone</a> for <a class="struct" href="../../../fred/sync/borrowed/struct.RedisClientRemote.html" title="struct fred::sync::borrowed::RedisClientRemote">RedisClientRemote</a></code></span><span class='out-of-band'><div class='ghost'></div><a class='srclink' href='../../../src/fred/sync/borrowed.rs.html#73-80' title='goto source code'>[src]</a></span></h3>
+<div class='impl-items'><h4 id='method.clone' class="method"><span id='clone.v' class='invisible'><code>fn <a href='https://doc.rust-lang.org/nightly/core/clone/trait.Clone.html#tymethod.clone' class='fnname'>clone</a>(&amp;self) -&gt; Self</code></span></h4>
+<div class='docblock'><p>Returns a copy of the value. <a href="https://doc.rust-lang.org/nightly/core/clone/trait.Clone.html#tymethod.clone">Read more</a></p>
+</div><h4 id='method.clone_from' class="method"><span id='clone_from.v' class='invisible'><code>fn <a href='https://doc.rust-lang.org/nightly/core/clone/trait.Clone.html#method.clone_from' class='fnname'>clone_from</a>(&amp;mut self, source: &amp;Self)</code><div class='since' title='Stable since Rust version 1.0.0'>1.0.0</div></span></h4>
+<div class='docblock'><p>Performs copy-assignment from <code>source</code>. <a href="https://doc.rust-lang.org/nightly/core/clone/trait.Clone.html#method.clone_from">Read more</a></p>
+</div></div><h3 class='impl'><span class='in-band'><code>impl <a class="trait" href="https://doc.rust-lang.org/nightly/core/fmt/trait.Debug.html" title="trait core::fmt::Debug">Debug</a> for <a class="struct" href="../../../fred/sync/borrowed/struct.RedisClientRemote.html" title="struct fred::sync::borrowed::RedisClientRemote">RedisClientRemote</a></code></span><span class='out-of-band'><div class='ghost'></div><a class='srclink' href='../../../src/fred/sync/borrowed.rs.html#82-86' title='goto source code'>[src]</a></span></h3>
+<div class='impl-items'><h4 id='method.fmt' class="method"><span id='fmt.v' class='invisible'><code>fn <a href='https://doc.rust-lang.org/nightly/core/fmt/trait.Debug.html#tymethod.fmt' class='fnname'>fmt</a>(&amp;self, f: &amp;mut <a class="struct" href="https://doc.rust-lang.org/nightly/core/fmt/struct.Formatter.html" title="struct core::fmt::Formatter">Formatter</a>) -&gt; <a class="type" href="https://doc.rust-lang.org/nightly/core/fmt/type.Result.html" title="type core::fmt::Result">Result</a></code></span></h4>
+<div class='docblock'><p>Formats the value using the given formatter.</p>
+</div></div></section>
+    <section id='search' class="content hidden"></section>
+
+    <section class="footer"></section>
+
+    <aside id="help" class="hidden">
+        <div>
+            <h1 class="hidden">Help</h1>
+
+            <div class="shortcuts">
+                <h2>Keyboard Shortcuts</h2>
+
+                <dl>
+                    <dt>?</dt>
+                    <dd>Show this help dialog</dd>
+                    <dt>S</dt>
+                    <dd>Focus the search field</dd>
+                    <dt>&larrb;</dt>
+                    <dd>Move up in search results</dd>
+                    <dt>&rarrb;</dt>
+                    <dd>Move down in search results</dd>
+                    <dt>&#9166;</dt>
+                    <dd>Go to active search result</dd>
+                    <dt>+</dt>
+                    <dd>Collapse/expand all sections</dd>
+                </dl>
+            </div>
+
+            <div class="infos">
+                <h2>Search Tricks</h2>
+
+                <p>
+                    Prefix searches with a type followed by a colon (e.g.
+                    <code>fn:</code>) to restrict the search to a given type.
+                </p>
+
+                <p>
+                    Accepted types are: <code>fn</code>, <code>mod</code>,
+                    <code>struct</code>, <code>enum</code>,
+                    <code>trait</code>, <code>type</code>, <code>macro</code>,
+                    and <code>const</code>.
+                </p>
+
+                <p>
+                    Search functions by type signature (e.g.
+                    <code>vec -> usize</code> or <code>* -> vec</code>)
+                </p>
+            </div>
+        </div>
+    </aside>
+
+    
+
+    <script>
+        window.rootPath = "../../../";
+        window.currentCrate = "fred";
+    </script>
+    <script src="../../../main.js"></script>
+    <script defer src="../../../search-index.js"></script>
+</body>
+</html>

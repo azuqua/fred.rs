@@ -1,0 +1,1 @@
+initSidebarItems({"fn":[["init","Initializes the global logger with a pretty env logger."]]});

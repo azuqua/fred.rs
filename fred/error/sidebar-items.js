@@ -1,0 +1,1 @@
+initSidebarItems({"enum":[["RedisErrorKind","An enum representing the type of error from Redis."]],"struct":[["RedisError","A struct representing an error from Redis. "]]});

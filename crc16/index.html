@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="generator" content="rustdoc">
+    <meta name="description" content="API documentation for the Rust `crc16` crate.">
+    <meta name="keywords" content="rust, rustlang, rust-lang, crc16">
+
+    <title>crc16 - Rust</title>
+
+    <link rel="stylesheet" type="text/css" href="../normalize.css">
+    <link rel="stylesheet" type="text/css" href="../rustdoc.css">
+    <link rel="stylesheet" type="text/css" href="../main.css">
+    
+
+    
+    
+</head>
+<body class="rustdoc mod">
+    <!--[if lte IE 8]>
+    <div class="warning">
+        This old browser is unsupported and will most likely display funky
+        things.
+    </div>
+    <![endif]-->
+
+    
+
+    <nav class="sidebar">
+        
+        <p class='location'>Crate crc16</p><div class="block items"><ul><li><a href="#structs">Structs</a></li><li><a href="#enums">Enums</a></li><li><a href="#traits">Traits</a></li></ul></div><p class='location'></p><script>window.sidebarCurrent = {name: 'crc16', ty: 'mod', relpath: '../'};</script>
+    </nav>
+
+    <nav class="sub">
+        <form class="search-form js-only">
+            <div class="search-container">
+                <input class="search-input" name="search"
+                       autocomplete="off"
+                       placeholder="Click or press ‘S’ to search, ‘?’ for more options…"
+                       type="search">
+            </div>
+        </form>
+    </nav>
+
+    <section id='main' class="content">
+<h1 class='fqn'><span class='in-band'>Crate <a class="mod" href=''>crc16</a></span><span class='out-of-band'><span id='render-detail'>
+                   <a id="toggle-all-docs" href="javascript:void(0)" title="collapse all docs">
+                       [<span class='inner'>&#x2212;</span>]
+                   </a>
+               </span><a class='srclink' href='../src/crc16/lib.rs.html#1-372' title='goto source code'>[src]</a></span></h1>
+<div class='docblock'>
+<h3 id='crc16' class='section-header'><a href='#crc16'>crc16</a></h3>
+<h4 id='installation' class='section-header'><a href='#installation'>Installation</a></h4>
+<pre><code class="language-toml">[dependencies]
+crc16 = &quot;*&quot;
+</code></pre>
+
+<h4 id='usage' class='section-header'><a href='#usage'>Usage</a></h4>
+<pre class="rust rust-example-rendered">
+<span class="kw">use</span> <span class="ident">crc16</span>::<span class="kw-2">*</span>;
+
+<span class="comment">// In one pass</span>
+<span class="macro">assert_eq</span><span class="macro">!</span>(<span class="ident">State</span>::<span class="op">&lt;</span><span class="ident">ARC</span><span class="op">&gt;</span>::<span class="ident">calculate</span>(<span class="string">b&quot;123456789&quot;</span>), <span class="number">0xBB3D</span>);
+
+<span class="comment">// Incrementally</span>
+<span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">state</span> <span class="op">=</span> <span class="ident">State</span>::<span class="op">&lt;</span><span class="ident">ARC</span><span class="op">&gt;</span>::<span class="ident">new</span>();
+<span class="ident">state</span>.<span class="ident">update</span>(<span class="string">b&quot;12345&quot;</span>);
+<span class="ident">state</span>.<span class="ident">update</span>(<span class="string">b&quot;6789&quot;</span>);
+<span class="macro">assert_eq</span><span class="macro">!</span>(<span class="ident">state</span>.<span class="ident">get</span>(), <span class="number">0xBB3D</span>);</pre>
+</div><h2 id='structs' class='section-header'><a href="#structs">Structs</a></h2>
+<table>
+                       <tr class=' module-item'>
+                           <td><a class="struct" href="struct.State.html"
+                                  title='struct crc16::State'>State</a></td>
+                           <td class='docblock-short'>
+                                <p>State of crc calculation.</p>
+                           </td>
+                       </tr></table><h2 id='enums' class='section-header'><a href="#enums">Enums</a></h2>
+<table>
+                       <tr class=' module-item'>
+                           <td><a class="enum" href="enum.ARC.html"
+                                  title='enum crc16::ARC'>ARC</a></td>
+                           <td class='docblock-short'>
+                                <p>ARC <code>poly=0x8005</code> <code>check=0xbb3d</code></p>
+                           </td>
+                       </tr>
+                       <tr class=' module-item'>
+                           <td><a class="enum" href="enum.AUG_CCITT.html"
+                                  title='enum crc16::AUG_CCITT'>AUG_CCITT</a></td>
+                           <td class='docblock-short'>
+                                <p>CRC-16/AUG-CCITT <code>poly=0x1021</code> <code>check=0xe5cc</code></p>
+                           </td>
+                       </tr>
+                       <tr class=' module-item'>
+                           <td><a class="enum" href="enum.BUYPASS.html"
+                                  title='enum crc16::BUYPASS'>BUYPASS</a></td>
+                           <td class='docblock-short'>
+                                <p>CRC-16/BUYPASS <code>poly=0x8005</code> <code>check=0xfee8</code></p>
+                           </td>
+                       </tr>
+                       <tr class=' module-item'>
+                           <td><a class="enum" href="enum.CCITT_FALSE.html"
+                                  title='enum crc16::CCITT_FALSE'>CCITT_FALSE</a></td>
+                           <td class='docblock-short'>
+                                <p>CRC-16/CCITT-FALSE <code>poly=0x1021</code> <code>check=0x29b1</code></p>
+                           </td>
+                       </tr>
+                       <tr class=' module-item'>
+                           <td><a class="enum" href="enum.CDMA2000.html"
+                                  title='enum crc16::CDMA2000'>CDMA2000</a></td>
+                           <td class='docblock-short'>
+                                <p>CRC-16/CDMA2000 <code>poly=0xc867</code> <code>check=0x4c06</code></p>
+                           </td>
+                       </tr>
+                       <tr class=' module-item'>
+                           <td><a class="enum" href="enum.CRC_A.html"
+                                  title='enum crc16::CRC_A'>CRC_A</a></td>
+                           <td class='docblock-short'>
+                                <p>CRC-A <code>poly=0x1021</code> <code>check=0xbf05</code></p>
+                           </td>
+                       </tr>
+                       <tr class=' module-item'>
+                           <td><a class="enum" href="enum.DDS_110.html"
+                                  title='enum crc16::DDS_110'>DDS_110</a></td>
+                           <td class='docblock-short'>
+                                <p>CRC-16/DDS-110 <code>poly=0x1021</code> <code>check=0x29b1</code></p>
+                           </td>
+                       </tr>
+                       <tr class=' module-item'>
+                           <td><a class="enum" href="enum.DECT_R.html"
+                                  title='enum crc16::DECT_R'>DECT_R</a></td>
+                           <td class='docblock-short'>
+                                <p>CRC-16/DECT-R <code>poly=0x0589</code> <code>check=0x007e</code></p>
+                           </td>
+                       </tr>
+                       <tr class=' module-item'>
+                           <td><a class="enum" href="enum.DECT_X.html"
+                                  title='enum crc16::DECT_X'>DECT_X</a></td>
+                           <td class='docblock-short'>
+                                <p>CRC-16/DECT-X <code>poly=0x0589</code> <code>check=0x007f</code></p>
+                           </td>
+                       </tr>
+                       <tr class=' module-item'>
+                           <td><a class="enum" href="enum.DNP.html"
+                                  title='enum crc16::DNP'>DNP</a></td>
+                           <td class='docblock-short'>
+                                <p>CRC-16/DNP <code>poly=0x3d65</code> <code>check=0xea82</code></p>
+                           </td>
+                       </tr>
+                       <tr class=' module-item'>
+                           <td><a class="enum" href="enum.EN_13757.html"
+                                  title='enum crc16::EN_13757'>EN_13757</a></td>
+                           <td class='docblock-short'>
+                                <p>CRC-16/EN-13757 <code>poly=0x3d65</code> <code>check=0xc2b7</code></p>
+                           </td>
+                       </tr>
+                       <tr class=' module-item'>
+                           <td><a class="enum" href="enum.GENIBUS.html"
+                                  title='enum crc16::GENIBUS'>GENIBUS</a></td>
+                           <td class='docblock-short'>
+                                <p>CRC-16/GENIBUS <code>poly=0x1021</code> <code>check=0xd64e</code></p>
+                           </td>
+                       </tr>
+                       <tr class=' module-item'>
+                           <td><a class="enum" href="enum.KERMIT.html"
+                                  title='enum crc16::KERMIT'>KERMIT</a></td>
+                           <td class='docblock-short'>
+                                <p>KERMIT <code>poly=0x1021</code> <code>check=0x2189</code></p>
+                           </td>
+                       </tr>
+                       <tr class=' module-item'>
+                           <td><a class="enum" href="enum.MAXIM.html"
+                                  title='enum crc16::MAXIM'>MAXIM</a></td>
+                           <td class='docblock-short'>
+                                <p>CRC-16/MAXIM <code>poly=0x8005</code> <code>check=0x44c2</code></p>
+                           </td>
+                       </tr>
+                       <tr class=' module-item'>
+                           <td><a class="enum" href="enum.MCRF4XX.html"
+                                  title='enum crc16::MCRF4XX'>MCRF4XX</a></td>
+                           <td class='docblock-short'>
+                                <p>CRC-16/MCRF4XX <code>poly=0x1021</code> <code>check=0x6f91</code></p>
+                           </td>
+                       </tr>
+                       <tr class=' module-item'>
+                           <td><a class="enum" href="enum.MODBUS.html"
+                                  title='enum crc16::MODBUS'>MODBUS</a></td>
+                           <td class='docblock-short'>
+                                <p>MODBUS <code>poly=0x8005</code> <code>check=0x4b37</code></p>
+                           </td>
+                       </tr>
+                       <tr class=' module-item'>
+                           <td><a class="enum" href="enum.RIELLO.html"
+                                  title='enum crc16::RIELLO'>RIELLO</a></td>
+                           <td class='docblock-short'>
+                                <p>CRC-16/RIELLO <code>poly=0x1021</code> <code>check=0x63d0</code></p>
+                           </td>
+                       </tr>
+                       <tr class=' module-item'>
+                           <td><a class="enum" href="enum.T10_DIF.html"
+                                  title='enum crc16::T10_DIF'>T10_DIF</a></td>
+                           <td class='docblock-short'>
+                                <p>CRC-16/T10-DIF <code>poly=0x8bb7</code> <code>check=0xd0db</code></p>
+                           </td>
+                       </tr>
+                       <tr class=' module-item'>
+                           <td><a class="enum" href="enum.TELEDISK.html"
+                                  title='enum crc16::TELEDISK'>TELEDISK</a></td>
+                           <td class='docblock-short'>
+                                <p>CRC-16/TELEDISK <code>poly=0xa097</code> <code>check=0x0fb3</code></p>
+                           </td>
+                       </tr>
+                       <tr class=' module-item'>
+                           <td><a class="enum" href="enum.TMS37157.html"
+                                  title='enum crc16::TMS37157'>TMS37157</a></td>
+                           <td class='docblock-short'>
+                                <p>CRC-16/TMS37157 <code>poly=0x1021</code> <code>check=0x26b1</code></p>
+                           </td>
+                       </tr>
+                       <tr class=' module-item'>
+                           <td><a class="enum" href="enum.USB.html"
+                                  title='enum crc16::USB'>USB</a></td>
+                           <td class='docblock-short'>
+                                <p>CRC-16/USB <code>poly=0x8005</code> <code>check=0xb4c8</code></p>
+                           </td>
+                       </tr>
+                       <tr class=' module-item'>
+                           <td><a class="enum" href="enum.XMODEM.html"
+                                  title='enum crc16::XMODEM'>XMODEM</a></td>
+                           <td class='docblock-short'>
+                                <p>XMODEM <code>poly=0x1021</code> <code>check=0x31c3</code></p>
+                           </td>
+                       </tr>
+                       <tr class=' module-item'>
+                           <td><a class="enum" href="enum.X_25.html"
+                                  title='enum crc16::X_25'>X_25</a></td>
+                           <td class='docblock-short'>
+                                <p>X-25 <code>poly=0x1021</code> <code>check=0x906e</code></p>
+                           </td>
+                       </tr></table><h2 id='traits' class='section-header'><a href="#traits">Traits</a></h2>
+<table>
+                       <tr class=' module-item'>
+                           <td><a class="trait" href="trait.CrcType.html"
+                                  title='trait crc16::CrcType'>CrcType</a></td>
+                           <td class='docblock-short'>
+                                
+                           </td>
+                       </tr></table></section>
+    <section id='search' class="content hidden"></section>
+
+    <section class="footer"></section>
+
+    <aside id="help" class="hidden">
+        <div>
+            <h1 class="hidden">Help</h1>
+
+            <div class="shortcuts">
+                <h2>Keyboard Shortcuts</h2>
+
+                <dl>
+                    <dt>?</dt>
+                    <dd>Show this help dialog</dd>
+                    <dt>S</dt>
+                    <dd>Focus the search field</dd>
+                    <dt>&larrb;</dt>
+                    <dd>Move up in search results</dd>
+                    <dt>&rarrb;</dt>
+                    <dd>Move down in search results</dd>
+                    <dt>&#9166;</dt>
+                    <dd>Go to active search result</dd>
+                    <dt>+</dt>
+                    <dd>Collapse/expand all sections</dd>
+                </dl>
+            </div>
+
+            <div class="infos">
+                <h2>Search Tricks</h2>
+
+                <p>
+                    Prefix searches with a type followed by a colon (e.g.
+                    <code>fn:</code>) to restrict the search to a given type.
+                </p>
+
+                <p>
+                    Accepted types are: <code>fn</code>, <code>mod</code>,
+                    <code>struct</code>, <code>enum</code>,
+                    <code>trait</code>, <code>type</code>, <code>macro</code>,
+                    and <code>const</code>.
+                </p>
+
+                <p>
+                    Search functions by type signature (e.g.
+                    <code>vec -> usize</code> or <code>* -> vec</code>)
+                </p>
+            </div>
+        </div>
+    </aside>
+
+    
+
+    <script>
+        window.rootPath = "../";
+        window.currentCrate = "crc16";
+    </script>
+    <script src="../main.js"></script>
+    <script defer src="../search-index.js"></script>
+</body>
+</html>

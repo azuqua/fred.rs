@@ -1,0 +1,1 @@
+initSidebarItems({"struct":[["RedisClientRemote","A `Send` and `Sync` wrapper around a redis client that borrows `self` on each command, instead of taking ownership over `self`. This pattern gives the caller more freedom to manage ownership over the value, such as when the client is wrapped with another struct."]]});

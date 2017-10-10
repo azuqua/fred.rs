@@ -1,0 +1,1 @@
+initSidebarItems({"struct":[["BoxFnOnce","`BoxFnOnce` boxes any `FnOnce` function up to a certain number of arguments (10 as of now)."],["SendBoxFnOnce","`SendBoxFnOnce` boxes any `FnOnce + Send` function up to a certain number of arguments (10 as of now)."]]});

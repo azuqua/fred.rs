@@ -1,0 +1,1 @@
+initSidebarItems({"mod":[["error","Error handling."],["sync","`Send` and `Sync` wrappers for the client."],["types","Configuration options, return value types, etc."]],"struct":[["RedisClient","A Redis client."]]});

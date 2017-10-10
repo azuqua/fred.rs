@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="generator" content="rustdoc">
+    <meta name="description" content="API documentation for the Rust `RedisConfig` enum in crate `fred`.">
+    <meta name="keywords" content="rust, rustlang, rust-lang, RedisConfig">
+
+    <title>fred::types::RedisConfig - Rust</title>
+
+    <link rel="stylesheet" type="text/css" href="../../normalize.css">
+    <link rel="stylesheet" type="text/css" href="../../rustdoc.css">
+    <link rel="stylesheet" type="text/css" href="../../main.css">
+    
+
+    
+    
+</head>
+<body class="rustdoc enum">
+    <!--[if lte IE 8]>
+    <div class="warning">
+        This old browser is unsupported and will most likely display funky
+        things.
+    </div>
+    <![endif]-->
+
+    
+
+    <nav class="sidebar">
+        
+        <p class='location'>Enum RedisConfig</p><div class="block items"><ul><li><a href="#variants">Variants</a></li><li><a href="#methods">Methods</a></li><li><a href="#implementations">Trait Implementations</a></li></ul></div><p class='location'><a href='../index.html'>fred</a>::<wbr><a href='index.html'>types</a></p><script>window.sidebarCurrent = {name: 'RedisConfig', ty: 'enum', relpath: ''};</script><script defer src="sidebar-items.js"></script>
+    </nav>
+
+    <nav class="sub">
+        <form class="search-form js-only">
+            <div class="search-container">
+                <input class="search-input" name="search"
+                       autocomplete="off"
+                       placeholder="Click or press ‘S’ to search, ‘?’ for more options…"
+                       type="search">
+            </div>
+        </form>
+    </nav>
+
+    <section id='main' class="content">
+<h1 class='fqn'><span class='in-band'>Enum <a href='../index.html'>fred</a>::<wbr><a href='index.html'>types</a>::<wbr><a class="enum" href=''>RedisConfig</a></span><span class='out-of-band'><span id='render-detail'>
+                   <a id="toggle-all-docs" href="javascript:void(0)" title="collapse all docs">
+                       [<span class='inner'>&#x2212;</span>]
+                   </a>
+               </span><a class='srclink' href='../../src/fred/types.rs.html#157-177' title='goto source code'>[src]</a></span></h1>
+<pre class='rust enum'>pub enum RedisConfig {
+    Centralized {
+        host: <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/string/struct.String.html" title="struct alloc::string::String">String</a>,
+        port: <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u16.html">u16</a>,
+        key: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="https://doc.rust-lang.org/nightly/alloc/string/struct.String.html" title="struct alloc::string::String">String</a>&gt;,
+        max_value_size: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.usize.html">usize</a>&gt;,
+    },
+    Clustered {
+        hosts: <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.tuple.html">(</a><a class="struct" href="https://doc.rust-lang.org/nightly/alloc/string/struct.String.html" title="struct alloc::string::String">String</a>, <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u16.html">u16</a><a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.tuple.html">)</a>&gt;,
+        key: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="https://doc.rust-lang.org/nightly/alloc/string/struct.String.html" title="struct alloc::string::String">String</a>&gt;,
+        max_value_size: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.usize.html">usize</a>&gt;,
+    },
+}</pre><div class='docblock'><p>Connection configuration for the Redis server.</p>
+</div><h2 id='variants' class='variants'>Variants</h2>
+<span id='variant.Centralized' class='variant'><span id='Centralized.v' class='invisible'><code>Centralized</code></span></span><span class='docblock autohide sub-variant' id='variant.Centralized.fields'><h3 class='fields'>Fields of <code>Centralized</code></h3>
+
+                           <table><tr><td id='variant.Centralized.field.host'><span id='Centralized.v.host.v' class='invisible'><code>host:&nbsp;<a class="struct" href="https://doc.rust-lang.org/nightly/alloc/string/struct.String.html" title="struct alloc::string::String">String</a></code></span></td><td><div class='docblock'><p>The hostname or IP address of the Redis server.</p>
+</div></td></tr><tr><td id='variant.Centralized.field.port'><span id='Centralized.v.port.v' class='invisible'><code>port:&nbsp;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u16.html">u16</a></code></span></td><td><div class='docblock'><p>The port on which the Redis server is listening. </p>
+</div></td></tr><tr><td id='variant.Centralized.field.key'><span id='Centralized.v.key.v' class='invisible'><code>key:&nbsp;<a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="https://doc.rust-lang.org/nightly/alloc/string/struct.String.html" title="struct alloc::string::String">String</a>&gt;</code></span></td><td><div class='docblock'><p>An optional authentication key to use after connecting.</p>
+</div></td></tr><tr><td id='variant.Centralized.field.max_value_size'><span id='Centralized.v.max_value_size.v' class='invisible'><code>max_value_size:&nbsp;<a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.usize.html">usize</a>&gt;</code></span></td><td><div class='docblock'><p>The maximum number of bytes that can be allocated for a value, or <code>None</code> for no limit.</p>
+</div></td></tr></table></span><span id='variant.Clustered' class='variant'><span id='Clustered.v' class='invisible'><code>Clustered</code></span></span><span class='docblock autohide sub-variant' id='variant.Clustered.fields'><h3 class='fields'>Fields of <code>Clustered</code></h3>
+
+                           <table><tr><td id='variant.Clustered.field.hosts'><span id='Clustered.v.hosts.v' class='invisible'><code>hosts:&nbsp;<a class="struct" href="https://doc.rust-lang.org/nightly/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.tuple.html">(</a><a class="struct" href="https://doc.rust-lang.org/nightly/alloc/string/struct.String.html" title="struct alloc::string::String">String</a>, <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u16.html">u16</a><a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.tuple.html">)</a>&gt;</code></span></td><td><div class='docblock'><p>A vector of (Host, Port) tuples for nodes in the cluster. Only a subset of nodes in the cluster need to be provided here,
+the rest will be discovered via the CLUSTER NODES command.</p>
+</div></td></tr><tr><td id='variant.Clustered.field.key'><span id='Clustered.v.key.v' class='invisible'><code>key:&nbsp;<a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="https://doc.rust-lang.org/nightly/alloc/string/struct.String.html" title="struct alloc::string::String">String</a>&gt;</code></span></td><td><div class='docblock'><p>An optional authentication key to use after connecting.</p>
+</div></td></tr><tr><td id='variant.Clustered.field.max_value_size'><span id='Clustered.v.max_value_size.v' class='invisible'><code>max_value_size:&nbsp;<a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.usize.html">usize</a>&gt;</code></span></td><td><div class='docblock'><p>The maximum number of bytes that can be allocated for a value, or <code>None</code> for no limit.</p>
+</div></td></tr></table></span><h2 id='methods'>Methods</h2><h3 class='impl'><span class='in-band'><code>impl <a class="enum" href="../../fred/types/enum.RedisConfig.html" title="enum fred::types::RedisConfig">RedisConfig</a></code></span><span class='out-of-band'><div class='ghost'></div><a class='srclink' href='../../src/fred/types.rs.html#185-259' title='goto source code'>[src]</a></span></h3>
+<div class='impl-items'><h4 id='method.new_centralized' class="method"><span id='new_centralized.v' class='invisible'><code>fn <a href='#method.new_centralized' class='fnname'>new_centralized</a>(host: <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/string/struct.String.html" title="struct alloc::string::String">String</a>, port: <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u16.html">u16</a>, key: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="https://doc.rust-lang.org/nightly/alloc/string/struct.String.html" title="struct alloc::string::String">String</a>&gt;) -&gt; <a class="enum" href="../../fred/types/enum.RedisConfig.html" title="enum fred::types::RedisConfig">RedisConfig</a></code></span></h4>
+<h4 id='method.new_clustered' class="method"><span id='new_clustered.v' class='invisible'><code>fn <a href='#method.new_clustered' class='fnname'>new_clustered</a>(hosts: <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.tuple.html">(</a><a class="struct" href="https://doc.rust-lang.org/nightly/alloc/string/struct.String.html" title="struct alloc::string::String">String</a>, <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u16.html">u16</a><a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.tuple.html">)</a>&gt;, key: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="https://doc.rust-lang.org/nightly/alloc/string/struct.String.html" title="struct alloc::string::String">String</a>&gt;) -&gt; <a class="enum" href="../../fred/types/enum.RedisConfig.html" title="enum fred::types::RedisConfig">RedisConfig</a></code></span></h4>
+<h4 id='method.default_centralized' class="method"><span id='default_centralized.v' class='invisible'><code>fn <a href='#method.default_centralized' class='fnname'>default_centralized</a>() -&gt; <a class="enum" href="../../fred/types/enum.RedisConfig.html" title="enum fred::types::RedisConfig">RedisConfig</a></code></span></h4>
+<div class='docblock'><p>Create a centralized config with default settings for a local deployment.</p>
+</div><h4 id='method.default_clustered' class="method"><span id='default_clustered.v' class='invisible'><code>fn <a href='#method.default_clustered' class='fnname'>default_clustered</a>() -&gt; <a class="enum" href="../../fred/types/enum.RedisConfig.html" title="enum fred::types::RedisConfig">RedisConfig</a></code></span></h4>
+<div class='docblock'><p>Create a clustered config with the same defaults as specified in the <code>create-cluster</code> script provided by Redis.</p>
+</div><h4 id='method.set_key' class="method"><span id='set_key.v' class='invisible'><code>fn <a href='#method.set_key' class='fnname'>set_key</a>&lt;T:&nbsp;<a class="trait" href="https://doc.rust-lang.org/nightly/core/convert/trait.Into.html" title="trait core::convert::Into">Into</a>&lt;<a class="struct" href="https://doc.rust-lang.org/nightly/alloc/string/struct.String.html" title="struct alloc::string::String">String</a>&gt;&gt;(&amp;mut self, new_key: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;T&gt;)</code></span></h4>
+<div class='docblock'><p>Overwrite the auth key on this config.</p>
+</div><h4 id='method.set_max_size' class="method"><span id='set_max_size.v' class='invisible'><code>fn <a href='#method.set_max_size' class='fnname'>set_max_size</a>(&amp;mut self, size: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.usize.html">usize</a>&gt;)</code></span></h4>
+<div class='docblock'><p>Set the max size of values received over the socket, or <code>None</code> for no limit.</p>
+</div><h4 id='method.get_max_size' class="method"><span id='get_max_size.v' class='invisible'><code>fn <a href='#method.get_max_size' class='fnname'>get_max_size</a>(&amp;self) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.usize.html">usize</a>&gt;</code></span></h4>
+<div class='docblock'><p>Read a copy of the <code>max_value_size</code>.</p>
+</div></div><h2 id='implementations'>Trait Implementations</h2><h3 class='impl'><span class='in-band'><code>impl <a class="trait" href="https://doc.rust-lang.org/nightly/core/clone/trait.Clone.html" title="trait core::clone::Clone">Clone</a> for <a class="enum" href="../../fred/types/enum.RedisConfig.html" title="enum fred::types::RedisConfig">RedisConfig</a></code></span><span class='out-of-band'><div class='ghost'></div><a class='srclink' href='../../src/fred/types.rs.html#156' title='goto source code'>[src]</a></span></h3>
+<div class='impl-items'><h4 id='method.clone' class="method"><span id='clone.v' class='invisible'><code>fn <a href='https://doc.rust-lang.org/nightly/core/clone/trait.Clone.html#tymethod.clone' class='fnname'>clone</a>(&amp;self) -&gt; <a class="enum" href="../../fred/types/enum.RedisConfig.html" title="enum fred::types::RedisConfig">RedisConfig</a></code></span></h4>
+<div class='docblock'><p>Returns a copy of the value. <a href="https://doc.rust-lang.org/nightly/core/clone/trait.Clone.html#tymethod.clone">Read more</a></p>
+</div><h4 id='method.clone_from' class="method"><span id='clone_from.v' class='invisible'><code>fn <a href='https://doc.rust-lang.org/nightly/core/clone/trait.Clone.html#method.clone_from' class='fnname'>clone_from</a>(&amp;mut self, source: &amp;Self)</code><div class='since' title='Stable since Rust version 1.0.0'>1.0.0</div></span></h4>
+<div class='docblock'><p>Performs copy-assignment from <code>source</code>. <a href="https://doc.rust-lang.org/nightly/core/clone/trait.Clone.html#method.clone_from">Read more</a></p>
+</div></div><h3 class='impl'><span class='in-band'><code>impl <a class="trait" href="https://doc.rust-lang.org/nightly/core/fmt/trait.Debug.html" title="trait core::fmt::Debug">Debug</a> for <a class="enum" href="../../fred/types/enum.RedisConfig.html" title="enum fred::types::RedisConfig">RedisConfig</a></code></span><span class='out-of-band'><div class='ghost'></div><a class='srclink' href='../../src/fred/types.rs.html#156' title='goto source code'>[src]</a></span></h3>
+<div class='impl-items'><h4 id='method.fmt' class="method"><span id='fmt.v' class='invisible'><code>fn <a href='https://doc.rust-lang.org/nightly/core/fmt/trait.Debug.html#tymethod.fmt' class='fnname'>fmt</a>(&amp;self, __arg_0: &amp;mut <a class="struct" href="https://doc.rust-lang.org/nightly/core/fmt/struct.Formatter.html" title="struct core::fmt::Formatter">Formatter</a>) -&gt; <a class="type" href="https://doc.rust-lang.org/nightly/core/fmt/type.Result.html" title="type core::fmt::Result">Result</a></code></span></h4>
+<div class='docblock'><p>Formats the value using the given formatter.</p>
+</div></div><h3 class='impl'><span class='in-band'><code>impl <a class="trait" href="https://doc.rust-lang.org/nightly/core/cmp/trait.Eq.html" title="trait core::cmp::Eq">Eq</a> for <a class="enum" href="../../fred/types/enum.RedisConfig.html" title="enum fred::types::RedisConfig">RedisConfig</a></code></span><span class='out-of-band'><div class='ghost'></div><a class='srclink' href='../../src/fred/types.rs.html#156' title='goto source code'>[src]</a></span></h3>
+<div class='impl-items'></div><h3 class='impl'><span class='in-band'><code>impl <a class="trait" href="https://doc.rust-lang.org/nightly/core/cmp/trait.PartialEq.html" title="trait core::cmp::PartialEq">PartialEq</a> for <a class="enum" href="../../fred/types/enum.RedisConfig.html" title="enum fred::types::RedisConfig">RedisConfig</a></code></span><span class='out-of-band'><div class='ghost'></div><a class='srclink' href='../../src/fred/types.rs.html#156' title='goto source code'>[src]</a></span></h3>
+<div class='impl-items'><h4 id='method.eq' class="method"><span id='eq.v' class='invisible'><code>fn <a href='https://doc.rust-lang.org/nightly/core/cmp/trait.PartialEq.html#tymethod.eq' class='fnname'>eq</a>(&amp;self, __arg_0: &amp;<a class="enum" href="../../fred/types/enum.RedisConfig.html" title="enum fred::types::RedisConfig">RedisConfig</a>) -&gt; <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a></code></span></h4>
+<div class='docblock'><p>This method tests for <code>self</code> and <code>other</code> values to be equal, and is used by <code>==</code>. <a href="https://doc.rust-lang.org/nightly/core/cmp/trait.PartialEq.html#tymethod.eq">Read more</a></p>
+</div><h4 id='method.ne' class="method"><span id='ne.v' class='invisible'><code>fn <a href='https://doc.rust-lang.org/nightly/core/cmp/trait.PartialEq.html#method.ne' class='fnname'>ne</a>(&amp;self, __arg_0: &amp;<a class="enum" href="../../fred/types/enum.RedisConfig.html" title="enum fred::types::RedisConfig">RedisConfig</a>) -&gt; <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a></code></span></h4>
+<div class='docblock'><p>This method tests for <code>!=</code>.</p>
+</div></div><h3 class='impl'><span class='in-band'><code>impl <a class="trait" href="https://doc.rust-lang.org/nightly/core/default/trait.Default.html" title="trait core::default::Default">Default</a> for <a class="enum" href="../../fred/types/enum.RedisConfig.html" title="enum fred::types::RedisConfig">RedisConfig</a></code></span><span class='out-of-band'><div class='ghost'></div><a class='srclink' href='../../src/fred/types.rs.html#179-183' title='goto source code'>[src]</a></span></h3>
+<div class='impl-items'><h4 id='method.default' class="method"><span id='default.v' class='invisible'><code>fn <a href='https://doc.rust-lang.org/nightly/core/default/trait.Default.html#tymethod.default' class='fnname'>default</a>() -&gt; <a class="enum" href="../../fred/types/enum.RedisConfig.html" title="enum fred::types::RedisConfig">RedisConfig</a></code></span></h4>
+<div class='docblock'><p>Returns the &quot;default value&quot; for a type. <a href="https://doc.rust-lang.org/nightly/core/default/trait.Default.html#tymethod.default">Read more</a></p>
+</div></div></section>
+    <section id='search' class="content hidden"></section>
+
+    <section class="footer"></section>
+
+    <aside id="help" class="hidden">
+        <div>
+            <h1 class="hidden">Help</h1>
+
+            <div class="shortcuts">
+                <h2>Keyboard Shortcuts</h2>
+
+                <dl>
+                    <dt>?</dt>
+                    <dd>Show this help dialog</dd>
+                    <dt>S</dt>
+                    <dd>Focus the search field</dd>
+                    <dt>&larrb;</dt>
+                    <dd>Move up in search results</dd>
+                    <dt>&rarrb;</dt>
+                    <dd>Move down in search results</dd>
+                    <dt>&#9166;</dt>
+                    <dd>Go to active search result</dd>
+                    <dt>+</dt>
+                    <dd>Collapse/expand all sections</dd>
+                </dl>
+            </div>
+
+            <div class="infos">
+                <h2>Search Tricks</h2>
+
+                <p>
+                    Prefix searches with a type followed by a colon (e.g.
+                    <code>fn:</code>) to restrict the search to a given type.
+                </p>
+
+                <p>
+                    Accepted types are: <code>fn</code>, <code>mod</code>,
+                    <code>struct</code>, <code>enum</code>,
+                    <code>trait</code>, <code>type</code>, <code>macro</code>,
+                    and <code>const</code>.
+                </p>
+
+                <p>
+                    Search functions by type signature (e.g.
+                    <code>vec -> usize</code> or <code>* -> vec</code>)
+                </p>
+            </div>
+        </div>
+    </aside>
+
+    
+
+    <script>
+        window.rootPath = "../../";
+        window.currentCrate = "fred";
+    </script>
+    <script src="../../main.js"></script>
+    <script defer src="../../search-index.js"></script>
+</body>
+</html>

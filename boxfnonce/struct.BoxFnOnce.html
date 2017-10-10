@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="generator" content="rustdoc">
+    <meta name="description" content="API documentation for the Rust `BoxFnOnce` struct in crate `boxfnonce`.">
+    <meta name="keywords" content="rust, rustlang, rust-lang, BoxFnOnce">
+
+    <title>boxfnonce::BoxFnOnce - Rust</title>
+
+    <link rel="stylesheet" type="text/css" href="../normalize.css">
+    <link rel="stylesheet" type="text/css" href="../rustdoc.css">
+    <link rel="stylesheet" type="text/css" href="../main.css">
+    
+
+    
+    
+</head>
+<body class="rustdoc struct">
+    <!--[if lte IE 8]>
+    <div class="warning">
+        This old browser is unsupported and will most likely display funky
+        things.
+    </div>
+    <![endif]-->
+
+    
+
+    <nav class="sidebar">
+        
+        <p class='location'>Struct BoxFnOnce</p><div class="block items"><ul><li><a href="#methods">Methods</a></li><li><a href="#implementations">Trait Implementations</a></li></ul></div><p class='location'><a href='index.html'>boxfnonce</a></p><script>window.sidebarCurrent = {name: 'BoxFnOnce', ty: 'struct', relpath: ''};</script><script defer src="sidebar-items.js"></script>
+    </nav>
+
+    <nav class="sub">
+        <form class="search-form js-only">
+            <div class="search-container">
+                <input class="search-input" name="search"
+                       autocomplete="off"
+                       placeholder="Click or press ‘S’ to search, ‘?’ for more options…"
+                       type="search">
+            </div>
+        </form>
+    </nav>
+
+    <section id='main' class="content">
+<h1 class='fqn'><span class='in-band'>Struct <a href='index.html'>boxfnonce</a>::<wbr><a class="struct" href=''>BoxFnOnce</a></span><span class='out-of-band'><span id='render-detail'>
+                   <a id="toggle-all-docs" href="javascript:void(0)" title="collapse all docs">
+                       [<span class='inner'>&#x2212;</span>]
+                   </a>
+               </span><a class='srclink' href='../src/boxfnonce/no_send.rs.html#50' title='goto source code'>[src]</a></span></h1>
+<pre class='rust struct'>pub struct BoxFnOnce&lt;Arguments, Result&nbsp;=&nbsp;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.tuple.html">()</a>&gt;(_);</pre><div class='docblock'><p><code>BoxFnOnce</code> boxes any <code>FnOnce</code> function up to a certain number of
+arguments (10 as of now).</p>
+
+<p>As <code>Box&lt;FnOnce()&gt;</code> doesn&#39;t work yet, and <code>Box&lt;FnBox()&gt;</code> will not be
+available in stable rust, <code>BoxFnOnce</code> tries to provide a safe
+implementation.</p>
+
+<p>Instead of <code>Box&lt;FnOnce(Args...) -&gt; Result&gt;</code> (or <code>Box&lt;FnBox(Args...) -&gt; Result&gt;</code>) the box type is <code>BoxFnOnce&lt;(Args...,), Result&gt;</code>  (the
+arguments are always given as tuple type).  If the function doesn&#39;t
+return a value (i.e. the empty tuple) <code>Result</code> can be ommitted:
+<code>BoxFnOnce&lt;(Args...,)&gt;</code>.</p>
+
+<p>Internally it is implemented similar to <code>Box&lt;FnBox()&gt;</code>, but there is
+no <code>FnOnce</code> implementation for <code>BoxFnOnce</code>.</p>
+
+<p>You can build boxes for diverging functions too, but specifying the
+type (like <code>BoxFnOnce&lt;(), !&gt;</code>) is not possible as the <code>!</code> type is
+experimental.</p>
+
+<p>If you need to send the FnOnce use <code>SendBoxFnOnce</code> instead.</p>
+
+<h1 id='examples' class='section-header'><a href='#examples'>Examples</a></h1>
+<p>Move value into closure and box it:</p>
+
+<pre class="rust rust-example-rendered">
+<span class="kw">use</span> <span class="ident">boxfnonce</span>::<span class="ident">BoxFnOnce</span>;
+<span class="kw">let</span> <span class="ident">s</span> <span class="op">=</span> <span class="ident">String</span>::<span class="ident">from</span>(<span class="string">&quot;foo&quot;</span>);
+<span class="kw">let</span> <span class="ident">f</span> : <span class="ident">BoxFnOnce</span><span class="op">&lt;</span>()<span class="op">&gt;</span> <span class="op">=</span> <span class="ident">BoxFnOnce</span>::<span class="ident">from</span>(<span class="op">||</span> {
+    <span class="macro">println</span><span class="macro">!</span>(<span class="string">&quot;Got called: {}&quot;</span>, <span class="ident">s</span>);
+    <span class="ident">drop</span>(<span class="ident">s</span>);
+});
+<span class="ident">f</span>.<span class="ident">call</span>();</pre>
+
+<p>Move value into closure to return it, and box the closure:</p>
+
+<pre class="rust rust-example-rendered">
+<span class="kw">use</span> <span class="ident">boxfnonce</span>::<span class="ident">BoxFnOnce</span>;
+<span class="kw">let</span> <span class="ident">s</span> <span class="op">=</span> <span class="ident">String</span>::<span class="ident">from</span>(<span class="string">&quot;foo&quot;</span>);
+<span class="kw">let</span> <span class="ident">f</span> : <span class="ident">BoxFnOnce</span><span class="op">&lt;</span>(), <span class="ident">String</span><span class="op">&gt;</span> <span class="op">=</span> <span class="ident">BoxFnOnce</span>::<span class="ident">from</span>(<span class="op">||</span> {
+    <span class="macro">println</span><span class="macro">!</span>(<span class="string">&quot;Got called: {}&quot;</span>, <span class="ident">s</span>);
+    <span class="ident">s</span>
+});
+<span class="macro">assert_eq</span><span class="macro">!</span>(<span class="ident">f</span>.<span class="ident">call</span>(), <span class="string">&quot;foo&quot;</span>.<span class="ident">to_string</span>());</pre>
+</div><h2 id='methods'>Methods</h2><h3 class='impl'><span class='in-band'><code>impl&lt;Args, Result&gt; <a class="struct" href="../boxfnonce/struct.BoxFnOnce.html" title="struct boxfnonce::BoxFnOnce">BoxFnOnce</a>&lt;Args, Result&gt;</code></span><span class='out-of-band'><div class='ghost'></div><a class='srclink' href='../src/boxfnonce/no_send.rs.html#52-70' title='goto source code'>[src]</a></span></h3>
+<div class='impl-items'><h4 id='method.call_tuple' class="method"><span id='call_tuple.v' class='invisible'><code>fn <a href='#method.call_tuple' class='fnname'>call_tuple</a>(self, args: Args) -&gt; Result</code></span></h4>
+<div class='docblock'><p>call inner function, consumes the box.</p>
+
+<p><code>call_tuple</code> can be used if the arguments are available as
+tuple. Each usable instance of BoxFnOnce&lt;(...), Result&gt; has a
+separate <code>call</code> method for passing arguments &quot;untupled&quot;.</p>
+</div><h4 id='method.new' class="method"><span id='new.v' class='invisible'><code>fn <a href='#method.new' class='fnname'>new</a>&lt;F&gt;(func: F) -&gt; Self <span class="where fmt-newline">where<br>&nbsp;&nbsp;&nbsp;&nbsp;Self: <a class="trait" href="https://doc.rust-lang.org/nightly/core/convert/trait.From.html" title="trait core::convert::From">From</a>&lt;F&gt;,&nbsp;</span></code></span></h4>
+<div class='docblock'><p><code>BoxFnOnce::new</code> is an alias for <code>BoxFnOnce::from</code>.</p>
+</div></div><h3 class='impl'><span class='in-band'><code>impl&lt;Result&gt; <a class="struct" href="../boxfnonce/struct.BoxFnOnce.html" title="struct boxfnonce::BoxFnOnce">BoxFnOnce</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.tuple.html">()</a>, Result&gt;</code></span><span class='out-of-band'><div class='ghost'></div><a class='srclink' href='../src/boxfnonce/macros.rs.html#14-20' title='goto source code'>[src]</a></span></h3>
+<div class='impl-items'><h4 id='method.call' class="method"><span id='call.v' class='invisible'><code>fn <a href='#method.call' class='fnname'>call</a>(self) -&gt; Result</code></span></h4>
+<div class='docblock'><p>call inner function, consumes the box.</p>
+</div></div><h3 class='impl'><span class='in-band'><code>impl&lt;A1, Result&gt; <a class="struct" href="../boxfnonce/struct.BoxFnOnce.html" title="struct boxfnonce::BoxFnOnce">BoxFnOnce</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.tuple.html">(</a>A1<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.tuple.html">,)</a>, Result&gt;</code></span><span class='out-of-band'><div class='ghost'></div><a class='srclink' href='../src/boxfnonce/macros.rs.html#14-20' title='goto source code'>[src]</a></span></h3>
+<div class='impl-items'><h4 id='method.call-1' class="method"><span id='call.v-1' class='invisible'><code>fn <a href='#method.call-1' class='fnname'>call</a>(self, a1: A1) -&gt; Result</code></span></h4>
+<div class='docblock'><p>call inner function, consumes the box.</p>
+</div></div><h3 class='impl'><span class='in-band'><code>impl&lt;A1, A2, Result&gt; <a class="struct" href="../boxfnonce/struct.BoxFnOnce.html" title="struct boxfnonce::BoxFnOnce">BoxFnOnce</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.tuple.html">(</a>A1, A2<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.tuple.html">)</a>, Result&gt;</code></span><span class='out-of-band'><div class='ghost'></div><a class='srclink' href='../src/boxfnonce/macros.rs.html#14-20' title='goto source code'>[src]</a></span></h3>
+<div class='impl-items'><h4 id='method.call-2' class="method"><span id='call.v-2' class='invisible'><code>fn <a href='#method.call-2' class='fnname'>call</a>(self, a1: A1, a2: A2) -&gt; Result</code></span></h4>
+<div class='docblock'><p>call inner function, consumes the box.</p>
+</div></div><h3 class='impl'><span class='in-band'><code>impl&lt;A1, A2, A3, Result&gt; <a class="struct" href="../boxfnonce/struct.BoxFnOnce.html" title="struct boxfnonce::BoxFnOnce">BoxFnOnce</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.tuple.html">(</a>A1, A2, A3<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.tuple.html">)</a>, Result&gt;</code></span><span class='out-of-band'><div class='ghost'></div><a class='srclink' href='../src/boxfnonce/macros.rs.html#14-20' title='goto source code'>[src]</a></span></h3>
+<div class='impl-items'><h4 id='method.call-3' class="method"><span id='call.v-3' class='invisible'><code>fn <a href='#method.call-3' class='fnname'>call</a>(self, a1: A1, a2: A2, a3: A3) -&gt; Result</code></span></h4>
+<div class='docblock'><p>call inner function, consumes the box.</p>
+</div></div><h3 class='impl'><span class='in-band'><code>impl&lt;A1, A2, A3, A4, Result&gt; <a class="struct" href="../boxfnonce/struct.BoxFnOnce.html" title="struct boxfnonce::BoxFnOnce">BoxFnOnce</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.tuple.html">(</a>A1, A2, A3, A4<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.tuple.html">)</a>, Result&gt;</code></span><span class='out-of-band'><div class='ghost'></div><a class='srclink' href='../src/boxfnonce/macros.rs.html#14-20' title='goto source code'>[src]</a></span></h3>
+<div class='impl-items'><h4 id='method.call-4' class="method"><span id='call.v-4' class='invisible'><code>fn <a href='#method.call-4' class='fnname'>call</a>(self, a1: A1, a2: A2, a3: A3, a4: A4) -&gt; Result</code></span></h4>
+<div class='docblock'><p>call inner function, consumes the box.</p>
+</div></div><h3 class='impl'><span class='in-band'><code>impl&lt;A1, A2, A3, A4, A5, Result&gt; <a class="struct" href="../boxfnonce/struct.BoxFnOnce.html" title="struct boxfnonce::BoxFnOnce">BoxFnOnce</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.tuple.html">(</a>A1, A2, A3, A4, A5<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.tuple.html">)</a>, Result&gt;</code></span><span class='out-of-band'><div class='ghost'></div><a class='srclink' href='../src/boxfnonce/macros.rs.html#14-20' title='goto source code'>[src]</a></span></h3>
+<div class='impl-items'><h4 id='method.call-5' class="method"><span id='call.v-5' class='invisible'><code>fn <a href='#method.call-5' class='fnname'>call</a>(self, a1: A1, a2: A2, a3: A3, a4: A4, a5: A5) -&gt; Result</code></span></h4>
+<div class='docblock'><p>call inner function, consumes the box.</p>
+</div></div><h3 class='impl'><span class='in-band'><code>impl&lt;A1, A2, A3, A4, A5, A6, Result&gt; <a class="struct" href="../boxfnonce/struct.BoxFnOnce.html" title="struct boxfnonce::BoxFnOnce">BoxFnOnce</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.tuple.html">(</a>A1, A2, A3, A4, A5, A6<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.tuple.html">)</a>, Result&gt;</code></span><span class='out-of-band'><div class='ghost'></div><a class='srclink' href='../src/boxfnonce/macros.rs.html#14-20' title='goto source code'>[src]</a></span></h3>
+<div class='impl-items'><h4 id='method.call-6' class="method"><span id='call.v-6' class='invisible'><code>fn <a href='#method.call-6' class='fnname'>call</a>(self, a1: A1, a2: A2, a3: A3, a4: A4, a5: A5, a6: A6) -&gt; Result</code></span></h4>
+<div class='docblock'><p>call inner function, consumes the box.</p>
+</div></div><h3 class='impl'><span class='in-band'><code>impl&lt;A1, A2, A3, A4, A5, A6, A7, Result&gt; <a class="struct" href="../boxfnonce/struct.BoxFnOnce.html" title="struct boxfnonce::BoxFnOnce">BoxFnOnce</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.tuple.html">(</a>A1, A2, A3, A4, A5, A6, A7<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.tuple.html">)</a>, Result&gt;</code></span><span class='out-of-band'><div class='ghost'></div><a class='srclink' href='../src/boxfnonce/macros.rs.html#14-20' title='goto source code'>[src]</a></span></h3>
+<div class='impl-items'><h4 id='method.call-7' class="method"><span id='call.v-7' class='invisible'><code>fn <a href='#method.call-7' class='fnname'>call</a>(self, a1: A1, a2: A2, a3: A3, a4: A4, a5: A5, a6: A6, a7: A7) -&gt; Result</code></span></h4>
+<div class='docblock'><p>call inner function, consumes the box.</p>
+</div></div><h3 class='impl'><span class='in-band'><code>impl&lt;A1, A2, A3, A4, A5, A6, A7, A8, Result&gt; <a class="struct" href="../boxfnonce/struct.BoxFnOnce.html" title="struct boxfnonce::BoxFnOnce">BoxFnOnce</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.tuple.html">(</a>A1, A2, A3, A4, A5, A6, A7, A8<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.tuple.html">)</a>, Result&gt;</code></span><span class='out-of-band'><div class='ghost'></div><a class='srclink' href='../src/boxfnonce/macros.rs.html#14-20' title='goto source code'>[src]</a></span></h3>
+<div class='impl-items'><h4 id='method.call-8' class="method"><span id='call.v-8' class='invisible'><code>fn <a href='#method.call-8' class='fnname'>call</a>(<br>&nbsp;&nbsp;&nbsp;&nbsp;self, <br>&nbsp;&nbsp;&nbsp;&nbsp;a1: A1, <br>&nbsp;&nbsp;&nbsp;&nbsp;a2: A2, <br>&nbsp;&nbsp;&nbsp;&nbsp;a3: A3, <br>&nbsp;&nbsp;&nbsp;&nbsp;a4: A4, <br>&nbsp;&nbsp;&nbsp;&nbsp;a5: A5, <br>&nbsp;&nbsp;&nbsp;&nbsp;a6: A6, <br>&nbsp;&nbsp;&nbsp;&nbsp;a7: A7, <br>&nbsp;&nbsp;&nbsp;&nbsp;a8: A8<br>) -&gt; Result</code></span></h4>
+<div class='docblock'><p>call inner function, consumes the box.</p>
+</div></div><h3 class='impl'><span class='in-band'><code>impl&lt;A1, A2, A3, A4, A5, A6, A7, A8, A9, Result&gt; <a class="struct" href="../boxfnonce/struct.BoxFnOnce.html" title="struct boxfnonce::BoxFnOnce">BoxFnOnce</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.tuple.html">(</a>A1, A2, A3, A4, A5, A6, A7, A8, A9<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.tuple.html">)</a>, Result&gt;</code></span><span class='out-of-band'><div class='ghost'></div><a class='srclink' href='../src/boxfnonce/macros.rs.html#14-20' title='goto source code'>[src]</a></span></h3>
+<div class='impl-items'><h4 id='method.call-9' class="method"><span id='call.v-9' class='invisible'><code>fn <a href='#method.call-9' class='fnname'>call</a>(<br>&nbsp;&nbsp;&nbsp;&nbsp;self, <br>&nbsp;&nbsp;&nbsp;&nbsp;a1: A1, <br>&nbsp;&nbsp;&nbsp;&nbsp;a2: A2, <br>&nbsp;&nbsp;&nbsp;&nbsp;a3: A3, <br>&nbsp;&nbsp;&nbsp;&nbsp;a4: A4, <br>&nbsp;&nbsp;&nbsp;&nbsp;a5: A5, <br>&nbsp;&nbsp;&nbsp;&nbsp;a6: A6, <br>&nbsp;&nbsp;&nbsp;&nbsp;a7: A7, <br>&nbsp;&nbsp;&nbsp;&nbsp;a8: A8, <br>&nbsp;&nbsp;&nbsp;&nbsp;a9: A9<br>) -&gt; Result</code></span></h4>
+<div class='docblock'><p>call inner function, consumes the box.</p>
+</div></div><h3 class='impl'><span class='in-band'><code>impl&lt;A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, Result&gt; <a class="struct" href="../boxfnonce/struct.BoxFnOnce.html" title="struct boxfnonce::BoxFnOnce">BoxFnOnce</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.tuple.html">(</a>A1, A2, A3, A4, A5, A6, A7, A8, A9, A10<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.tuple.html">)</a>, Result&gt;</code></span><span class='out-of-band'><div class='ghost'></div><a class='srclink' href='../src/boxfnonce/macros.rs.html#14-20' title='goto source code'>[src]</a></span></h3>
+<div class='impl-items'><h4 id='method.call-10' class="method"><span id='call.v-10' class='invisible'><code>fn <a href='#method.call-10' class='fnname'>call</a>(<br>&nbsp;&nbsp;&nbsp;&nbsp;self, <br>&nbsp;&nbsp;&nbsp;&nbsp;a1: A1, <br>&nbsp;&nbsp;&nbsp;&nbsp;a2: A2, <br>&nbsp;&nbsp;&nbsp;&nbsp;a3: A3, <br>&nbsp;&nbsp;&nbsp;&nbsp;a4: A4, <br>&nbsp;&nbsp;&nbsp;&nbsp;a5: A5, <br>&nbsp;&nbsp;&nbsp;&nbsp;a6: A6, <br>&nbsp;&nbsp;&nbsp;&nbsp;a7: A7, <br>&nbsp;&nbsp;&nbsp;&nbsp;a8: A8, <br>&nbsp;&nbsp;&nbsp;&nbsp;a9: A9, <br>&nbsp;&nbsp;&nbsp;&nbsp;a10: A10<br>) -&gt; Result</code></span></h4>
+<div class='docblock'><p>call inner function, consumes the box.</p>
+</div></div><h2 id='implementations'>Trait Implementations</h2><h3 class='impl'><span class='in-band'><code>impl&lt;Result, F:&nbsp;'static + <a class="trait" href="https://doc.rust-lang.org/nightly/core/ops/function/trait.FnOnce.html" title="trait core::ops::function::FnOnce">FnOnce</a>() -&gt; Result&gt; <a class="trait" href="https://doc.rust-lang.org/nightly/core/convert/trait.From.html" title="trait core::convert::From">From</a>&lt;F&gt; for <a class="struct" href="../boxfnonce/struct.BoxFnOnce.html" title="struct boxfnonce::BoxFnOnce">BoxFnOnce</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.tuple.html">()</a>, Result&gt;</code></span><span class='out-of-band'><div class='ghost'></div><a class='srclink' href='../src/boxfnonce/macros.rs.html#22-26' title='goto source code'>[src]</a></span></h3>
+<div class='impl-items'><h4 id='method.from' class="method"><span id='from.v' class='invisible'><code>fn <a href='https://doc.rust-lang.org/nightly/core/convert/trait.From.html#tymethod.from' class='fnname'>from</a>(func: F) -&gt; Self</code></span></h4>
+<div class='docblock'><p>Performs the conversion.</p>
+</div></div><h3 class='impl'><span class='in-band'><code>impl&lt;A1, Result, F:&nbsp;'static + <a class="trait" href="https://doc.rust-lang.org/nightly/core/ops/function/trait.FnOnce.html" title="trait core::ops::function::FnOnce">FnOnce</a>(A1) -&gt; Result&gt; <a class="trait" href="https://doc.rust-lang.org/nightly/core/convert/trait.From.html" title="trait core::convert::From">From</a>&lt;F&gt; for <a class="struct" href="../boxfnonce/struct.BoxFnOnce.html" title="struct boxfnonce::BoxFnOnce">BoxFnOnce</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.tuple.html">(</a>A1<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.tuple.html">,)</a>, Result&gt;</code></span><span class='out-of-band'><div class='ghost'></div><a class='srclink' href='../src/boxfnonce/macros.rs.html#22-26' title='goto source code'>[src]</a></span></h3>
+<div class='impl-items'><h4 id='method.from-1' class="method"><span id='from.v-1' class='invisible'><code>fn <a href='https://doc.rust-lang.org/nightly/core/convert/trait.From.html#tymethod.from' class='fnname'>from</a>(func: F) -&gt; Self</code></span></h4>
+<div class='docblock'><p>Performs the conversion.</p>
+</div></div><h3 class='impl'><span class='in-band'><code>impl&lt;A1, A2, Result, F:&nbsp;'static + <a class="trait" href="https://doc.rust-lang.org/nightly/core/ops/function/trait.FnOnce.html" title="trait core::ops::function::FnOnce">FnOnce</a>(A1, A2) -&gt; Result&gt; <a class="trait" href="https://doc.rust-lang.org/nightly/core/convert/trait.From.html" title="trait core::convert::From">From</a>&lt;F&gt; for <a class="struct" href="../boxfnonce/struct.BoxFnOnce.html" title="struct boxfnonce::BoxFnOnce">BoxFnOnce</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.tuple.html">(</a>A1, A2<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.tuple.html">)</a>, Result&gt;</code></span><span class='out-of-band'><div class='ghost'></div><a class='srclink' href='../src/boxfnonce/macros.rs.html#22-26' title='goto source code'>[src]</a></span></h3>
+<div class='impl-items'><h4 id='method.from-2' class="method"><span id='from.v-2' class='invisible'><code>fn <a href='https://doc.rust-lang.org/nightly/core/convert/trait.From.html#tymethod.from' class='fnname'>from</a>(func: F) -&gt; Self</code></span></h4>
+<div class='docblock'><p>Performs the conversion.</p>
+</div></div><h3 class='impl'><span class='in-band'><code>impl&lt;A1, A2, A3, Result, F:&nbsp;'static + <a class="trait" href="https://doc.rust-lang.org/nightly/core/ops/function/trait.FnOnce.html" title="trait core::ops::function::FnOnce">FnOnce</a>(A1, A2, A3) -&gt; Result&gt; <a class="trait" href="https://doc.rust-lang.org/nightly/core/convert/trait.From.html" title="trait core::convert::From">From</a>&lt;F&gt; for <a class="struct" href="../boxfnonce/struct.BoxFnOnce.html" title="struct boxfnonce::BoxFnOnce">BoxFnOnce</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.tuple.html">(</a>A1, A2, A3<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.tuple.html">)</a>, Result&gt;</code></span><span class='out-of-band'><div class='ghost'></div><a class='srclink' href='../src/boxfnonce/macros.rs.html#22-26' title='goto source code'>[src]</a></span></h3>
+<div class='impl-items'><h4 id='method.from-3' class="method"><span id='from.v-3' class='invisible'><code>fn <a href='https://doc.rust-lang.org/nightly/core/convert/trait.From.html#tymethod.from' class='fnname'>from</a>(func: F) -&gt; Self</code></span></h4>
+<div class='docblock'><p>Performs the conversion.</p>
+</div></div><h3 class='impl'><span class='in-band'><code>impl&lt;A1, A2, A3, A4, Result, F:&nbsp;'static + <a class="trait" href="https://doc.rust-lang.org/nightly/core/ops/function/trait.FnOnce.html" title="trait core::ops::function::FnOnce">FnOnce</a>(A1, A2, A3, A4) -&gt; Result&gt; <a class="trait" href="https://doc.rust-lang.org/nightly/core/convert/trait.From.html" title="trait core::convert::From">From</a>&lt;F&gt; for <a class="struct" href="../boxfnonce/struct.BoxFnOnce.html" title="struct boxfnonce::BoxFnOnce">BoxFnOnce</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.tuple.html">(</a>A1, A2, A3, A4<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.tuple.html">)</a>, Result&gt;</code></span><span class='out-of-band'><div class='ghost'></div><a class='srclink' href='../src/boxfnonce/macros.rs.html#22-26' title='goto source code'>[src]</a></span></h3>
+<div class='impl-items'><h4 id='method.from-4' class="method"><span id='from.v-4' class='invisible'><code>fn <a href='https://doc.rust-lang.org/nightly/core/convert/trait.From.html#tymethod.from' class='fnname'>from</a>(func: F) -&gt; Self</code></span></h4>
+<div class='docblock'><p>Performs the conversion.</p>
+</div></div><h3 class='impl'><span class='in-band'><code>impl&lt;A1, A2, A3, A4, A5, Result, F:&nbsp;'static + <a class="trait" href="https://doc.rust-lang.org/nightly/core/ops/function/trait.FnOnce.html" title="trait core::ops::function::FnOnce">FnOnce</a>(A1, A2, A3, A4, A5) -&gt; Result&gt; <a class="trait" href="https://doc.rust-lang.org/nightly/core/convert/trait.From.html" title="trait core::convert::From">From</a>&lt;F&gt; for <a class="struct" href="../boxfnonce/struct.BoxFnOnce.html" title="struct boxfnonce::BoxFnOnce">BoxFnOnce</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.tuple.html">(</a>A1, A2, A3, A4, A5<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.tuple.html">)</a>, Result&gt;</code></span><span class='out-of-band'><div class='ghost'></div><a class='srclink' href='../src/boxfnonce/macros.rs.html#22-26' title='goto source code'>[src]</a></span></h3>
+<div class='impl-items'><h4 id='method.from-5' class="method"><span id='from.v-5' class='invisible'><code>fn <a href='https://doc.rust-lang.org/nightly/core/convert/trait.From.html#tymethod.from' class='fnname'>from</a>(func: F) -&gt; Self</code></span></h4>
+<div class='docblock'><p>Performs the conversion.</p>
+</div></div><h3 class='impl'><span class='in-band'><code>impl&lt;A1, A2, A3, A4, A5, A6, Result, F:&nbsp;'static + <a class="trait" href="https://doc.rust-lang.org/nightly/core/ops/function/trait.FnOnce.html" title="trait core::ops::function::FnOnce">FnOnce</a>(A1, A2, A3, A4, A5, A6) -&gt; Result&gt; <a class="trait" href="https://doc.rust-lang.org/nightly/core/convert/trait.From.html" title="trait core::convert::From">From</a>&lt;F&gt; for <a class="struct" href="../boxfnonce/struct.BoxFnOnce.html" title="struct boxfnonce::BoxFnOnce">BoxFnOnce</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.tuple.html">(</a>A1, A2, A3, A4, A5, A6<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.tuple.html">)</a>, Result&gt;</code></span><span class='out-of-band'><div class='ghost'></div><a class='srclink' href='../src/boxfnonce/macros.rs.html#22-26' title='goto source code'>[src]</a></span></h3>
+<div class='impl-items'><h4 id='method.from-6' class="method"><span id='from.v-6' class='invisible'><code>fn <a href='https://doc.rust-lang.org/nightly/core/convert/trait.From.html#tymethod.from' class='fnname'>from</a>(func: F) -&gt; Self</code></span></h4>
+<div class='docblock'><p>Performs the conversion.</p>
+</div></div><h3 class='impl'><span class='in-band'><code>impl&lt;A1, A2, A3, A4, A5, A6, A7, Result, F:&nbsp;'static + <a class="trait" href="https://doc.rust-lang.org/nightly/core/ops/function/trait.FnOnce.html" title="trait core::ops::function::FnOnce">FnOnce</a>(A1, A2, A3, A4, A5, A6, A7) -&gt; Result&gt; <a class="trait" href="https://doc.rust-lang.org/nightly/core/convert/trait.From.html" title="trait core::convert::From">From</a>&lt;F&gt; for <a class="struct" href="../boxfnonce/struct.BoxFnOnce.html" title="struct boxfnonce::BoxFnOnce">BoxFnOnce</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.tuple.html">(</a>A1, A2, A3, A4, A5, A6, A7<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.tuple.html">)</a>, Result&gt;</code></span><span class='out-of-band'><div class='ghost'></div><a class='srclink' href='../src/boxfnonce/macros.rs.html#22-26' title='goto source code'>[src]</a></span></h3>
+<div class='impl-items'><h4 id='method.from-7' class="method"><span id='from.v-7' class='invisible'><code>fn <a href='https://doc.rust-lang.org/nightly/core/convert/trait.From.html#tymethod.from' class='fnname'>from</a>(func: F) -&gt; Self</code></span></h4>
+<div class='docblock'><p>Performs the conversion.</p>
+</div></div><h3 class='impl'><span class='in-band'><code>impl&lt;A1, A2, A3, A4, A5, A6, A7, A8, Result, F:&nbsp;'static + <a class="trait" href="https://doc.rust-lang.org/nightly/core/ops/function/trait.FnOnce.html" title="trait core::ops::function::FnOnce">FnOnce</a>(A1, A2, A3, A4, A5, A6, A7, A8) -&gt; Result&gt; <a class="trait" href="https://doc.rust-lang.org/nightly/core/convert/trait.From.html" title="trait core::convert::From">From</a>&lt;F&gt; for <a class="struct" href="../boxfnonce/struct.BoxFnOnce.html" title="struct boxfnonce::BoxFnOnce">BoxFnOnce</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.tuple.html">(</a>A1, A2, A3, A4, A5, A6, A7, A8<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.tuple.html">)</a>, Result&gt;</code></span><span class='out-of-band'><div class='ghost'></div><a class='srclink' href='../src/boxfnonce/macros.rs.html#22-26' title='goto source code'>[src]</a></span></h3>
+<div class='impl-items'><h4 id='method.from-8' class="method"><span id='from.v-8' class='invisible'><code>fn <a href='https://doc.rust-lang.org/nightly/core/convert/trait.From.html#tymethod.from' class='fnname'>from</a>(func: F) -&gt; Self</code></span></h4>
+<div class='docblock'><p>Performs the conversion.</p>
+</div></div><h3 class='impl'><span class='in-band'><code>impl&lt;A1, A2, A3, A4, A5, A6, A7, A8, A9, Result, F:&nbsp;'static + <a class="trait" href="https://doc.rust-lang.org/nightly/core/ops/function/trait.FnOnce.html" title="trait core::ops::function::FnOnce">FnOnce</a>(A1, A2, A3, A4, A5, A6, A7, A8, A9) -&gt; Result&gt; <a class="trait" href="https://doc.rust-lang.org/nightly/core/convert/trait.From.html" title="trait core::convert::From">From</a>&lt;F&gt; for <a class="struct" href="../boxfnonce/struct.BoxFnOnce.html" title="struct boxfnonce::BoxFnOnce">BoxFnOnce</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.tuple.html">(</a>A1, A2, A3, A4, A5, A6, A7, A8, A9<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.tuple.html">)</a>, Result&gt;</code></span><span class='out-of-band'><div class='ghost'></div><a class='srclink' href='../src/boxfnonce/macros.rs.html#22-26' title='goto source code'>[src]</a></span></h3>
+<div class='impl-items'><h4 id='method.from-9' class="method"><span id='from.v-9' class='invisible'><code>fn <a href='https://doc.rust-lang.org/nightly/core/convert/trait.From.html#tymethod.from' class='fnname'>from</a>(func: F) -&gt; Self</code></span></h4>
+<div class='docblock'><p>Performs the conversion.</p>
+</div></div><h3 class='impl'><span class='in-band'><code>impl&lt;A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, Result, F:&nbsp;'static + <a class="trait" href="https://doc.rust-lang.org/nightly/core/ops/function/trait.FnOnce.html" title="trait core::ops::function::FnOnce">FnOnce</a>(A1, A2, A3, A4, A5, A6, A7, A8, A9, A10) -&gt; Result&gt; <a class="trait" href="https://doc.rust-lang.org/nightly/core/convert/trait.From.html" title="trait core::convert::From">From</a>&lt;F&gt; for <a class="struct" href="../boxfnonce/struct.BoxFnOnce.html" title="struct boxfnonce::BoxFnOnce">BoxFnOnce</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.tuple.html">(</a>A1, A2, A3, A4, A5, A6, A7, A8, A9, A10<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.tuple.html">)</a>, Result&gt;</code></span><span class='out-of-band'><div class='ghost'></div><a class='srclink' href='../src/boxfnonce/macros.rs.html#22-26' title='goto source code'>[src]</a></span></h3>
+<div class='impl-items'><h4 id='method.from-10' class="method"><span id='from.v-10' class='invisible'><code>fn <a href='https://doc.rust-lang.org/nightly/core/convert/trait.From.html#tymethod.from' class='fnname'>from</a>(func: F) -&gt; Self</code></span></h4>
+<div class='docblock'><p>Performs the conversion.</p>
+</div></div></section>
+    <section id='search' class="content hidden"></section>
+
+    <section class="footer"></section>
+
+    <aside id="help" class="hidden">
+        <div>
+            <h1 class="hidden">Help</h1>
+
+            <div class="shortcuts">
+                <h2>Keyboard Shortcuts</h2>
+
+                <dl>
+                    <dt>?</dt>
+                    <dd>Show this help dialog</dd>
+                    <dt>S</dt>
+                    <dd>Focus the search field</dd>
+                    <dt>&larrb;</dt>
+                    <dd>Move up in search results</dd>
+                    <dt>&rarrb;</dt>
+                    <dd>Move down in search results</dd>
+                    <dt>&#9166;</dt>
+                    <dd>Go to active search result</dd>
+                    <dt>+</dt>
+                    <dd>Collapse/expand all sections</dd>
+                </dl>
+            </div>
+
+            <div class="infos">
+                <h2>Search Tricks</h2>
+
+                <p>
+                    Prefix searches with a type followed by a colon (e.g.
+                    <code>fn:</code>) to restrict the search to a given type.
+                </p>
+
+                <p>
+                    Accepted types are: <code>fn</code>, <code>mod</code>,
+                    <code>struct</code>, <code>enum</code>,
+                    <code>trait</code>, <code>type</code>, <code>macro</code>,
+                    and <code>const</code>.
+                </p>
+
+                <p>
+                    Search functions by type signature (e.g.
+                    <code>vec -> usize</code> or <code>* -> vec</code>)
+                </p>
+            </div>
+        </div>
+    </aside>
+
+    
+
+    <script>
+        window.rootPath = "../";
+        window.currentCrate = "boxfnonce";
+    </script>
+    <script src="../main.js"></script>
+    <script defer src="../search-index.js"></script>
+</body>
+</html>

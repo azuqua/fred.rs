@@ -1,0 +1,1 @@
+initSidebarItems({"struct":[["RedisClientRemote","A `Send` and `Sync` wrapper around a `RedisClient`."]]});
