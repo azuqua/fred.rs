@@ -3,7 +3,7 @@ Fred
 
 [![Build Status](https://travis-ci.org/azuqua/fred.rs.svg?branch=master)](https://travis-ci.org/azuqua/fred.rs)
 
-[Documentation](https://azuqua.github.io/fred.rs)
+[Documentation](https://azuqua.github.io/fred.rs/fred/index.html)
 
 A Redis client for Rust based on [Futures](https://github.com/alexcrichton/futures-rs) and [Tokio](https://tokio.rs/) that supports PubSub commands, clustered Redis deployments, and more.
 
