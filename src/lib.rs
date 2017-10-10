@@ -8,43 +8,62 @@
 //! ```
 //! extern crate fred;
 //! extern crate tokio_core;
-//!
-//! use tokio_core::reactor::Core;
+//! extern crate futures;
 //!
 //! use fred::RedisClient;
-//! use fred::types::{
-//!   RedisConfig,
-//!   RedisValue,
-//!   InfoKind
+//! use fred::types::*;
+//!
+//! use tokio_core::reactor::Core;
+//! use futures::{
+//!   Future,
+//!   Stream
 //! };
 //!
 //! fn main() {
 //!   let config = RedisConfig::default();
+//!
 //!   let mut core = Core::new().unwrap();
 //!   let handle = core.handle();
 //!
-//!   let client = RedisClient::new(config);
-//!   let connection_ft = client.connect(&handle);
+//!   println!("Connecting to {:?}...", config);
 //!
-//!   let commands_ft = client.on_connect().and_then(|client| {
+//!   let client = RedisClient::new(config);
+//!   let connection = client.connect(&handle);
+//!
+//!   let commands = client.on_connect().and_then(|client| {
+//!     println!("Client connected.");
+//!
 //!     client.select(0)
 //!   })
-//!   .and_then(|client| {
-//!     client.info(Some(InfoKind::All))
-//!   })
-//!   .and_then(|(client, info)| {
-//!     println!("Server info: {:?}", info);
-//!     client.quit()
-//!   });
+//!     .and_then(|client| {
+//!       println!("Selected database.");
 //!
-//!   let (err, client) = core.run(connection_ft.join(commands_ft)).unwrap();
+//!       client.info(None)
+//!     })
+//!     .and_then(|(client, info)| {
+//!       println!("Redis server info: {}", info);
 //!
-//!   if let Some(err) = err {
-//!     println!("Client closed with error: {:?}", err);
-//!   }
+//!       client.get("foo")
+//!     })
+//!     .and_then(|(client, result)| {
+//!       println!("Got foo: {:?}", result);
+//!
+//!       client.set("foo", "bar", Some(Expiration::PX(1000)), Some(SetOptions::NX))
+//!     })
+//!     .and_then(|(client, result)| {
+//!       println!("Set 'bar' at 'foo'? {}.", result);
+//!
+//!       client.quit()
+//!     });
+//!
+//!   let (reason, client) = match core.run(connection.join(commands)) {
+//!     Ok((r, c)) => (r, c),
+//!     Err(e) => panic!("Connection closed abruptly: {}", e)
+//!   };
+//!
+//!   println!("Connection closed gracefully with error: {:?}", reason);
 //! }
 //! ```
-//!
 
 
 extern crate futures;

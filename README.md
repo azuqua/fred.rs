@@ -2,6 +2,7 @@ Fred
 ====
 
 [![Build Status](https://travis-ci.org/azuqua/fred.rs.svg?branch=master)](https://travis-ci.org/azuqua/fred.rs)
+[![Crates.io](https://img.shields.io/crates/v/fred.svg)](https://crates.io/crates/fred)
 
 [Documentation](https://azuqua.github.io/fred.rs/fred/index.html)
 
@@ -86,7 +87,7 @@ fn main() {
 }
 ```
 
-See [examples](examples/README.md) for more.
+See [examples](https://github.com/azuqua/fred.rs/tree/master/examples) for more.
 
 ## Redis Cluster
 
@@ -118,4 +119,4 @@ Note a local Redis server must be running on port 6379 and a clustered deploymen
 * Distribute reads among slaves.
 * Pipelined requests.
 * Lua.
-* Change the protocol parsing to use nom.
+* Change the protocol parsing to use [nom](https://github.com/Geal/nom).
