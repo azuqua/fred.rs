@@ -7,6 +7,7 @@ use parking_lot::{
 use std::sync::Arc;
 use std::ops::{Deref, DerefMut};
 use std::fmt;
+use std::hash::Hash;
 
 use futures::Future;
 use futures::sync::oneshot::{
@@ -23,6 +24,8 @@ use futures::stream::{
 use futures::sink::Sink;
 
 use boxfnonce::SendBoxFnOnce;
+
+use std::collections::HashMap;
 
 use ::error::*;
 use ::types::*;
@@ -339,6 +342,42 @@ impl RedisClientRemote {
     }
   }
 
+  /// Increments the number stored at key by incr. If the key does not exist, it is set to 0 before performing the operation.
+  /// Returns an error if the value at key is of the wrong type.
+  ///
+  /// https://redis.io/commands/incrby
+  pub fn incrby<K: Into<RedisKey>>(&self, key: K, incr: i64) -> Box<Future<Item=i64, Error=RedisError>> {
+    let (tx, rx) = oneshot_channel();
+    let key = key.into();
+
+    let func: CommandFn = SendBoxFnOnce::new(move |client: RedisClient| {
+      commands::incrby(client, tx, key, incr)
+    });
+
+    match utils::send_command(&self.command_tx, func) {
+      Ok(_) => Box::new(rx.from_err::<RedisError>().flatten()),
+      Err(e) => client_utils::future_error(e)
+    }
+  }
+
+  /// Increment the string representing a floating point number stored at key by the argument value. If the key does not exist, it is set to 0 before performing the operation.
+  /// Returns error if key value is wrong type or if the current value or increment value are not parseable as float value.
+  ///
+  /// https://redis.io/commands/incrbyfloat
+  pub fn incrbyfloat<K: Into<RedisKey>>(&self, key: K, incr: f64) -> Box<Future<Item=f64, Error=RedisError>> {
+    let (tx, rx) = oneshot_channel();
+    let key = key.into();
+
+    let func: CommandFn = SendBoxFnOnce::new(move |client: RedisClient| {
+      commands::incrbyfloat(client, tx, key, incr)
+    });
+
+    match utils::send_command(&self.command_tx, func) {
+      Ok(_) => Box::new(rx.from_err::<RedisError>().flatten()),
+      Err(e) => client_utils::future_error(e)
+    }
+  }
+
   /// Returns the value associated with field in the hash stored at key.
   ///
   /// https://redis.io/commands/hget
@@ -386,6 +425,139 @@ impl RedisClientRemote {
 
     let func: CommandFn = SendBoxFnOnce::new(move |client: RedisClient| {
       commands::hdel(client, tx, key, fields)
+    });
+
+    match utils::send_command(&self.command_tx, func) {
+      Ok(_) => Box::new(rx.from_err::<RedisError>().flatten()),
+      Err(e) => client_utils::future_error(e)
+    }
+  }
+
+  /// Returns the number of fields contained in the hash stored at key.
+  ///
+  /// https://redis.io/commands/hlen
+  pub fn hlen<K: Into<RedisKey>> (&self, key: K) -> Box<Future<Item=usize, Error=RedisError>> {
+    let (tx, rx) = oneshot_channel();
+    let key = key.into();
+
+    let func: CommandFn = SendBoxFnOnce::new(move |client: RedisClient| {
+      commands::hlen(client, tx, key)
+    });
+
+    match utils::send_command(&self.command_tx, func) {
+      Ok(_) => Box::new(rx.from_err::<RedisError>().flatten()),
+      Err(e) => client_utils::future_error(e)
+    }
+  }
+
+  /// Returns the values associated with the specified fields in the hash stored at key.
+  /// Values in a returned list may be null.
+  ///
+  /// https://redis.io/commands/hmget
+  pub fn hmget<F: Into<MultipleKeys>, K: Into<RedisKey>> (&self, key: K, fields: F) -> Box<Future<Item=Vec<RedisValue>, Error=RedisError>> {
+    let (tx, rx) = oneshot_channel();
+    let key = key.into();
+    let fields = fields.into().inner();
+
+    let func: CommandFn = SendBoxFnOnce::new(move |client: RedisClient| {
+      commands::hmget(client, tx, key, fields)
+    });
+
+    match utils::send_command(&self.command_tx, func) {
+      Ok(_) => Box::new(rx.from_err::<RedisError>().flatten()),
+      Err(e) => client_utils::future_error(e)
+    }
+  }
+
+  /// Sets the specified fields to their respective values in the hash stored at key. This command overwrites any specified fields already existing in the hash.
+  /// If key does not exist, a new key holding a hash is created.
+  ///
+  /// https://redis.io/commands/hmset
+  pub fn hmset<V: Into<RedisValue>, F: Into<RedisKey> + Hash + Eq, K: Into<RedisKey>> (&self, key: K, mut values: HashMap<F, V>) -> Box<Future<Item=String, Error=RedisError>> {
+    let (tx, rx) = oneshot_channel();
+    let key = key.into();
+
+    let mut owned_values = HashMap::with_capacity(values.len());
+    for (key, val) in values.drain() {
+      owned_values.insert(key.into(), val.into());
+    }
+
+    let func: CommandFn = SendBoxFnOnce::new(move |client: RedisClient| {
+      commands::hmset(client, tx, key, owned_values)
+    });
+
+    match utils::send_command(&self.command_tx, func) {
+      Ok(_) => Box::new(rx.from_err::<RedisError>().flatten()),
+      Err(e) => client_utils::future_error(e)
+    }
+  }
+
+  /// Sets field in the hash stored at key to value, only if field does not yet exist.
+  /// If key does not exist, a new key holding a hash is created.
+  /// Note: Return value of 1 means new field was created and set. Return of 0 means no operation performed.
+  ///
+  /// https://redis.io/commands/hsetnx
+  pub fn hsetnx<K: Into<RedisKey>, F: Into<RedisKey>, V: Into<RedisValue>> (&self, key: K, field: F, value: V) -> Box<Future<Item=usize, Error=RedisError>> {
+    let (tx, rx) = oneshot_channel();
+    let (key, field, value) = (key.into(), field.into(), value.into());
+
+    let func: CommandFn = SendBoxFnOnce::new(move |client: RedisClient| {
+      commands::hsetnx(client, tx, key, field, value)
+    });
+
+    match utils::send_command(&self.command_tx, func) {
+      Ok(_) => Box::new(rx.from_err::<RedisError>().flatten()),
+      Err(e) => client_utils::future_error(e)
+    }
+  }
+
+  /// Returns the string length of the value associated with field in the hash stored at key.
+  /// If the key or the field do not exist, 0 is returned.
+  ///
+  /// https://redis.io/commands/hstrlen
+  pub fn hstrlen<K: Into<RedisKey>, F: Into<RedisKey>> (&self, key: K, field: F) -> Box<Future<Item=usize, Error=RedisError>> {
+    let (tx, rx) = oneshot_channel();
+    let (key, field) = (key.into(), field.into());
+
+    let func: CommandFn = SendBoxFnOnce::new(move |client: RedisClient| {
+      commands::hstrlen(client, tx, key, field)
+    });
+
+    match utils::send_command(&self.command_tx, func) {
+      Ok(_) => Box::new(rx.from_err::<RedisError>().flatten()),
+      Err(e) => client_utils::future_error(e)
+    }
+  }
+
+  /// Returns all values in the hash stored at key.
+  /// Returns an empty vector if the list is empty.
+  ///
+  /// https://redis.io/commands/hvals
+  pub fn hvals<K: Into<RedisKey>> (&self, key: K) -> Box<Future<Item=Vec<RedisValue>, Error=RedisError>> {
+    let (tx, rx) = oneshot_channel();
+    let key = key.into();
+
+    let func: CommandFn = SendBoxFnOnce::new(move |client: RedisClient| {
+      commands::hvals(client, tx, key)
+    });
+
+    match utils::send_command(&self.command_tx, func) {
+      Ok(_) => Box::new(rx.from_err::<RedisError>().flatten()),
+      Err(e) => client_utils::future_error(e)
+    }
+  }
+
+  /// Returns all field names in the hash stored at key.
+  /// Returns an empty vec if the list is empty.
+  /// Null fields are converted to "nil".
+  ///
+  /// https://redis.io/commands/hkeys
+  pub fn hkeys<K: Into<RedisKey>> (&self, key: K) -> Box<Future<Item=Vec<String>, Error=RedisError>> {
+    let (tx, rx) = oneshot_channel();
+    let key = key.into();
+
+    let func: CommandFn = SendBoxFnOnce::new(move |client: RedisClient| {
+      commands::hkeys(client, tx, key)
     });
 
     match utils::send_command(&self.command_tx, func) {

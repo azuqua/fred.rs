@@ -7,6 +7,8 @@ use futures::sync::oneshot::{
   Sender as OneshotSender
 };
 
+use std::collections::HashMap;
+
 use boxfnonce::SendBoxFnOnce;
 
 use ::error::*;
@@ -90,3 +92,56 @@ pub fn hdel(client: RedisClient, tx: OneshotSender<Result<usize, RedisError>>, k
   }))
 }
 
+pub fn hlen(client: RedisClient, tx: OneshotSender<Result<usize, RedisError>>, key: RedisKey) -> CommandFnResp {
+  Box::new(client.hlen(key).then(move |result| {
+    utils::send_normal_result(tx, result)
+  }))
+}
+
+pub fn hmget(client: RedisClient, tx: OneshotSender<Result<Vec<RedisValue>, RedisError>>, key: RedisKey, fields: Vec<RedisKey>) -> CommandFnResp {
+  Box::new(client.hmget(key, fields).then(move |result| {
+    utils::send_normal_result(tx, result)
+  }))
+}
+
+pub fn hmset(client: RedisClient, tx: OneshotSender<Result<String, RedisError>>, key: RedisKey, values: HashMap<RedisKey, RedisValue>) -> CommandFnResp {
+  Box::new(client.hmset(key, values).then(move |result| {
+    utils::send_normal_result(tx, result)
+  }))
+}
+
+pub fn hvals(client: RedisClient, tx: OneshotSender<Result<Vec<RedisValue>, RedisError>>, key: RedisKey) -> CommandFnResp {
+  Box::new(client.hvals(key).then(move |result| {
+    utils::send_normal_result(tx, result)
+  }))
+}
+
+pub fn hkeys(client: RedisClient, tx: OneshotSender<Result<Vec<String>, RedisError>>, key: RedisKey) -> CommandFnResp {
+  Box::new(client.hkeys(key).then(move |result| {
+    utils::send_normal_result(tx, result)
+  }))
+}
+
+pub fn hsetnx(client: RedisClient, tx: OneshotSender<Result<usize, RedisError>>, key: RedisKey, field: RedisKey, value: RedisValue) -> CommandFnResp {
+  Box::new(client.hsetnx(key, field, value).then(move |result| {
+    utils::send_normal_result(tx, result)
+  }))
+}
+
+pub fn hstrlen(client: RedisClient, tx: OneshotSender<Result<usize, RedisError>>, key: RedisKey, field: RedisKey) -> CommandFnResp {
+  Box::new(client.hstrlen(key, field).then(move |result| {
+    utils::send_normal_result(tx, result)
+  }))
+}
+
+pub fn incrby(client: RedisClient, tx: OneshotSender<Result<i64, RedisError>>, key: RedisKey, incr: i64) -> CommandFnResp {
+  Box::new(client.incrby(key, incr).then(move |result| {
+    utils::send_normal_result(tx, result)
+  }))
+}
+
+pub fn incrbyfloat(client: RedisClient, tx: OneshotSender<Result<f64, RedisError>>, key: RedisKey, incr: f64) -> CommandFnResp {
+  Box::new(client.incrbyfloat(key, incr).then(move |result| {
+    utils::send_normal_result(tx, result)
+  }))
+}
