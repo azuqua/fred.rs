@@ -61,6 +61,7 @@ use futures::stream::{
 
 use std::rc::Rc;
 use std::cell::RefCell;
+use std::collections::VecDeque;
 
 /// A future that resolves when the connection to the Redis server closes.
 pub type ConnectionFuture = Box<Future<Item=Option<RedisError>, Error=RedisError>>;
@@ -75,12 +76,12 @@ fn init_clustered(
   handle: Handle,
   config: Rc<RefCell<RedisConfig>>,
   state: Arc<RwLock<ClientState>>,
-  error_tx: Rc<RefCell<Option<UnboundedSender<RedisError>>>>,
-  message_tx: Rc<RefCell<Option<UnboundedSender<(String, RedisValue)>>>>,
+  error_tx: Rc<RefCell<VecDeque<UnboundedSender<RedisError>>>>,
+  message_tx: Rc<RefCell<VecDeque<UnboundedSender<(String, RedisValue)>>>>,
   command_tx: Rc<RefCell<Option<UnboundedSender<RedisCommand>>>>,
-  connect_tx: Rc<RefCell<Vec<OneshotSender<Result<RedisClient, RedisError>>>>>,
-  reconnect_tx: Rc<RefCell<Option<UnboundedSender<RedisClient>>>>,
-  remote_tx: Rc<RefCell<Vec<OneshotSender<Result<(), RedisError>>>>>,
+  connect_tx: Rc<RefCell<VecDeque<OneshotSender<Result<RedisClient, RedisError>>>>>,
+  reconnect_tx: Rc<RefCell<VecDeque<UnboundedSender<RedisClient>>>>,
+  remote_tx: Rc<RefCell<VecDeque<OneshotSender<Result<(), RedisError>>>>>,
 )
   -> ConnectionFuture
 {
@@ -157,8 +158,8 @@ fn init_clustered(
         let connection_ft = utils::create_connection_ft(commands_ft, multiplexer_ft, mult_state.clone());
 
         utils::set_command_tx(&mult_command_tx, tx);
-        utils::emit_connect(&mult_connect_tx, mult_remote_tx, mult_client.clone());
-        let _ = utils::emit_reconnect(&mult_reconnect_tx, mult_client);
+        utils::emit_connect(&mult_connect_tx, mult_remote_tx, &mult_client);
+        let _ = utils::emit_reconnect(&mult_reconnect_tx, &mult_client);
         client_utils::set_client_state(&mult_state, ClientState::Connected);
 
         connection_ft.then(move |result| {
@@ -181,7 +182,7 @@ fn init_clustered(
               Ok(Loop::Continue((client, handle, config, state, error_tx, message_tx, command_tx, connect_tx, reconnect_tx, remote_tx)))
             },
             _ => {
-              utils::emit_connect_error(&connect_tx, remote_tx, e.clone());
+              utils::emit_connect_error(&connect_tx, remote_tx, &e);
 
               Ok(Loop::Break(Some(e)))
             }
@@ -197,12 +198,12 @@ fn init_centralized(
   handle: &Handle,
   config: Rc<RefCell<RedisConfig>>,
   state: Arc<RwLock<ClientState>>,
-  error_tx: Rc<RefCell<Option<UnboundedSender<RedisError>>>>,
-  message_tx: Rc<RefCell<Option<UnboundedSender<(String, RedisValue)>>>>,
+  error_tx: Rc<RefCell<VecDeque<UnboundedSender<RedisError>>>>,
+  message_tx: Rc<RefCell<VecDeque<UnboundedSender<(String, RedisValue)>>>>,
   command_tx: Rc<RefCell<Option<UnboundedSender<RedisCommand>>>>,
-  connect_tx: Rc<RefCell<Vec<OneshotSender<Result<RedisClient, RedisError>>>>>,
-  reconnect_tx: Rc<RefCell<Option<UnboundedSender<RedisClient>>>>,
-  remote_tx: Rc<RefCell<Vec<OneshotSender<Result<(), RedisError>>>>>,
+  connect_tx: Rc<RefCell<VecDeque<OneshotSender<Result<RedisClient, RedisError>>>>>,
+  reconnect_tx: Rc<RefCell<VecDeque<UnboundedSender<RedisClient>>>>,
+  remote_tx: Rc<RefCell<VecDeque<OneshotSender<Result<(), RedisError>>>>>,
 )
   -> ConnectionFuture
 {
@@ -244,8 +245,8 @@ fn init_centralized(
     debug!("Redis client successfully connected.");
 
     utils::set_command_tx(&command_tx, tx);
-    utils::emit_connect(&connect_tx, remote_tx, client.clone());
-    let _ = utils::emit_reconnect(&reconnect_tx, client);
+    utils::emit_connect(&connect_tx, remote_tx, &client);
+    let _ = utils::emit_reconnect(&reconnect_tx, &client);
     client_utils::set_client_state(&state, ClientState::Connected);
 
     // resolve the outer future when the socket is connected and authenticated
@@ -256,7 +257,7 @@ fn init_centralized(
     debug!("Centralized connection future closed with result {:?}.", result);
 
     if let Err(ref e) = result {
-      utils::emit_connect_error(&error_connect_tx, error_remote_tx, e.clone());
+      utils::emit_connect_error(&error_connect_tx, error_remote_tx, &e);
     }
 
     result
@@ -268,12 +269,12 @@ pub fn init(
   handle: &Handle,
   config: Rc<RefCell<RedisConfig>>,
   state: Arc<RwLock<ClientState>>,
-  error_tx: Rc<RefCell<Option<UnboundedSender<RedisError>>>>,
-  message_tx: Rc<RefCell<Option<UnboundedSender<(String, RedisValue)>>>>,
+  error_tx: Rc<RefCell<VecDeque<UnboundedSender<RedisError>>>>,
+  message_tx: Rc<RefCell<VecDeque<UnboundedSender<(String, RedisValue)>>>>,
   command_tx: Rc<RefCell<Option<UnboundedSender<RedisCommand>>>>,
-  connect_tx: Rc<RefCell<Vec<OneshotSender<Result<RedisClient, RedisError>>>>>,
-  reconnect_tx: Rc<RefCell<Option<UnboundedSender<RedisClient>>>>,
-  remote_tx: Rc<RefCell<Vec<OneshotSender<Result<(), RedisError>>>>>,
+  connect_tx: Rc<RefCell<VecDeque<OneshotSender<Result<RedisClient, RedisError>>>>>,
+  reconnect_tx: Rc<RefCell<VecDeque<UnboundedSender<RedisClient>>>>,
+  remote_tx: Rc<RefCell<VecDeque<OneshotSender<Result<(), RedisError>>>>>,
 ) -> ConnectionFuture
 {
   let is_clustered = {
@@ -298,12 +299,12 @@ pub fn init_with_policy(
   config: Rc<RefCell<RedisConfig>>,
   state: Arc<RwLock<ClientState>>,
   closed: Arc<RwLock<bool>>,
-  error_tx: Rc<RefCell<Option<UnboundedSender<RedisError>>>>,
-  message_tx: Rc<RefCell<Option<UnboundedSender<(String, RedisValue)>>>>,
+  error_tx: Rc<RefCell<VecDeque<UnboundedSender<RedisError>>>>,
+  message_tx: Rc<RefCell<VecDeque<UnboundedSender<(String, RedisValue)>>>>,
   command_tx: Rc<RefCell<Option<UnboundedSender<RedisCommand>>>>,
-  reconnect_tx: Rc<RefCell<Option<UnboundedSender<RedisClient>>>>,
-  connect_tx: Rc<RefCell<Vec<OneshotSender<Result<RedisClient, RedisError>>>>>,
-  remote_tx: Rc<RefCell<Vec<OneshotSender<Result<(), RedisError>>>>>,
+  reconnect_tx: Rc<RefCell<VecDeque<UnboundedSender<RedisClient>>>>,
+  connect_tx: Rc<RefCell<VecDeque<OneshotSender<Result<RedisClient, RedisError>>>>>,
+  remote_tx: Rc<RefCell<VecDeque<OneshotSender<Result<(), RedisError>>>>>,
   policy: ReconnectPolicy,
 ) -> Box<Future<Item=(), Error=RedisError>> {
 
@@ -334,6 +335,7 @@ pub fn init_with_policy(
       let connect_tx_copy = connect_tx.clone();
       let message_tx_copy = message_tx.clone();
       let closed_copy = closed.clone();
+      let remote_tx_copy = remote_tx.clone();
 
       let is_clustered = {
         let config_ref = _config.borrow();
@@ -352,8 +354,8 @@ pub fn init_with_policy(
       };
 
       Box::new(connection_ft.then(move |result| {
-        utils::reconnect(handle, timer, policy, state_copy, closed_copy,error_tx_copy,
-         message_tx_copy, command_tx_copy, reconnect_tx_copy, connect_tx_copy, result)
+        utils::reconnect(handle, timer, policy, state_copy, closed_copy,error_tx_copy, message_tx_copy,
+         command_tx_copy, reconnect_tx_copy, connect_tx_copy, remote_tx_copy, result)
       }))
     })
     .map(|_: ()| ())

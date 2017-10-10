@@ -26,6 +26,12 @@ pub type ConnectSender = OneshotSender<Result<(), RedisError>>;
 // Make sure everything that is owned by these functions is moved into the client's function, or is
 // explicitly dropped before the function finishes. See the issue above for why this is the case.
 
+pub fn select(client: RedisClient, tx: OneshotSender<Result<(), RedisError>>, db: u8) -> CommandFnResp {
+  Box::new(client.select(db).then(move |result| {
+    utils::send_empty_result(tx, result)
+  }))
+}
+
 pub fn subscribe(client: RedisClient, tx: OneshotSender<Result<usize, RedisError>>, channel: String) -> CommandFnResp {
   Box::new(client.subscribe(channel).then(move |result| {
     utils::send_normal_result(tx, result)

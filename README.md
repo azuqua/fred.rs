@@ -4,7 +4,7 @@ Fred
 [![Build Status](https://travis-ci.org/azuqua/fred.rs.svg?branch=master)](https://travis-ci.org/azuqua/fred.rs)
 [![Crates.io](https://img.shields.io/crates/v/fred.svg)](https://crates.io/crates/fred)
 
-[Documentation](https://azuqua.github.io/fred.rs/fred/index.html)
+[Documentation](https://docs.rs/fred/*/fred/)
 
 A Redis client for Rust based on [Futures](https://github.com/alexcrichton/futures-rs) and [Tokio](https://tokio.rs/) that supports PubSub commands, clustered Redis deployments, and more.
 
@@ -99,6 +99,13 @@ In order to simplify error handling and usage patterns this module caches the st
 
 This module uses [pretty_env_logger](https://github.com/seanmonstar/pretty-env-logger) for logging. To enable logs use the environment
 variable `RUST_LOG` with a value of `trace`, `debug`, `error`, or `info`. See the documentation for [env_logger](http://rust-lang-nursery.github.io/log/env_logger/) for more information. 
+
+## Features
+
+| Name | Default | Description                                                     |
+|------|---------|-----------------------------------------------------------------|
+| sync |    x    | Enable the `Send` and `Sync` wrappers.                          |
+| fuzz |         | Expose the protocol utils as public functions for fuzz testing. |
 
 ## Tests
 

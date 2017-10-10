@@ -9,10 +9,10 @@ use std::ops::{Deref, DerefMut};
 use std::fmt;
 use std::hash::Hash;
 
+use futures::future;
 use futures::Future;
 use futures::sync::oneshot::{
   channel as oneshot_channel,
-  Sender as OneshotSender
 };
 use futures::sync::mpsc::{
   UnboundedSender,
@@ -25,7 +25,10 @@ use futures::sink::Sink;
 
 use boxfnonce::SendBoxFnOnce;
 
-use std::collections::HashMap;
+use std::collections::{
+  HashMap,
+  VecDeque
+};
 
 use ::error::*;
 use ::types::*;
@@ -65,18 +68,15 @@ use super::commands::{
 /// this kind of usage.
 ///
 /// See `examples/sync_borrowed.rs` for usage examples.
+#[derive(Clone)]
 pub struct RedisClientRemote {
   command_tx: Arc<RwLock<Option<UnboundedSender<CommandFn>>>>,
-  connect_tx: Arc<RwLock<Vec<ConnectSender>>>
-}
-
-impl Clone for RedisClientRemote {
-  fn clone(&self) -> Self {
-    RedisClientRemote {
-      command_tx: self.command_tx.clone(),
-      connect_tx: self.connect_tx.clone()
-    }
-  }
+  // buffers for holding on_connect, on_error, and on_message mpsc senders created
+  // before the underlying client is ready. upon calling init() these will be
+  // drained and moved into the underlying client.
+  connect_tx: Arc<RwLock<VecDeque<ConnectSender>>>,
+  error_tx: Arc<RwLock<VecDeque<UnboundedSender<RedisError>>>>,
+  message_tx: Arc<RwLock<VecDeque<UnboundedSender<(String, RedisValue)>>>>
 }
 
 impl fmt::Debug for RedisClientRemote {
@@ -91,7 +91,9 @@ impl RedisClientRemote {
   pub fn new() -> RedisClientRemote {
     RedisClientRemote {
       command_tx: Arc::new(RwLock::new(None)),
-      connect_tx: Arc::new(RwLock::new(Vec::new()))
+      connect_tx: Arc::new(RwLock::new(VecDeque::new())),
+      error_tx: Arc::new(RwLock::new(VecDeque::new())),
+      message_tx: Arc::new(RwLock::new(VecDeque::new()))
     }
   }
 
@@ -107,19 +109,20 @@ impl RedisClientRemote {
 
   /// Read the underlying `connect_tx` senders. Used internally to convert to an owned remote client.
   #[doc(hidden)]
-  pub fn read_connect_tx(&self) -> Arc<RwLock<Vec<OneshotSender<Result<(), RedisError>>>>> {
-    self.connect_tx.clone()
+  pub fn read_connect_tx(&self) -> &Arc<RwLock<VecDeque<ConnectSender>>> {
+    &self.connect_tx
   }
 
-  /// Set the underlying `connect_tx` senders. Used internally by the owned variant of the remote wrapper.
+  /// Read the underlying `error_tx` senders. Used internally to convert to an owned remote client.
   #[doc(hidden)]
-  pub fn set_connect_tx(&self, mut senders: Vec<OneshotSender<Result<(), RedisError>>>) {
-    let mut connect_tx_guard = self.connect_tx.write();
-    let mut connect_tx_ref = connect_tx_guard.deref_mut();
+  pub fn read_error_tx(&self) -> &Arc<RwLock<VecDeque<UnboundedSender<RedisError>>>> {
+    &self.error_tx
+  }
 
-    for tx in senders.drain(..) {
-      connect_tx_ref.push(tx);
-    }
+  /// Read the underlying `message_tx` senders. Used internally to convert to an owned remote client.
+  #[doc(hidden)]
+  pub fn read_message_tx(&self) -> &Arc<RwLock<VecDeque<UnboundedSender<(String, RedisValue)>>>> {
+    &self.message_tx
   }
 
   /// Initialize the remote interface with an existing `RedisClient`. This must be called on the same
@@ -156,7 +159,7 @@ impl RedisClientRemote {
     })
     .map(|(_, client)| client);
 
-    utils::register_connect_callbacks(&self.command_tx, &self.connect_tx);
+    utils::register_callbacks(&self.command_tx, &self.connect_tx, &self.error_tx, &self.message_tx);
 
     Box::new(commands_ft)
   }
@@ -193,9 +196,89 @@ impl RedisClientRemote {
     }else{
       let mut connect_tx_guard = self.connect_tx.write();
       let mut connect_tx_refs = connect_tx_guard.deref_mut();
-      connect_tx_refs.push(tx);
+      connect_tx_refs.push_back(tx);
 
       out
+    }
+  }
+
+  /// Listen for protocol and connection errors. This stream can be used to more intelligently handle errors that may
+  /// not appear in the request-response cycle, and so cannot be handled by response futures.
+  ///
+  /// Similar to `on_message`, this function does not need to be called again if the connection goes down.
+  pub fn on_error(&self) -> Box<Stream<Item=RedisError, Error=RedisError>> {
+    let is_initialized = {
+      let command_tx_guard = self.command_tx.read();
+      command_tx_guard.deref().is_some()
+    };
+
+    let (tx, rx) = unbounded();
+    let out = Box::new(rx.from_err::<RedisError>());
+
+    if is_initialized {
+      let func: CommandFn = SendBoxFnOnce::from(move |client: RedisClient| {
+        utils::transfer_sender(client.errors_cloned(), tx);
+        client_utils::future_ok(Some(client))
+      });
+
+      match utils::send_command(&self.command_tx, func) {
+        Ok(_) => out,
+        Err(e) => Box::new(future::err(e).into_stream())
+      }
+    }else{
+      let mut error_tx_guard = self.error_tx.write();
+      let mut error_tx_ref = error_tx_guard.deref_mut();
+      error_tx_ref.push_back(tx);
+
+      out
+    }
+  }
+
+  /// Listen for `(channel, message)` tuples on the PubSub interface.
+  ///
+  /// If the connection to the Redis server goes down for any reason this function does *not* need to be called again.
+  /// Messages will start appearing on the original stream after `subscribe` is called again.
+  pub fn on_message(&self) -> Box<Stream<Item=(String, RedisValue), Error=RedisError>> {
+    let is_initialized = {
+      let command_tx_guard = self.command_tx.read();
+      command_tx_guard.deref().is_some()
+    };
+
+    let (tx, rx) = unbounded();
+    let out = Box::new(rx.from_err::<RedisError>());
+
+    if is_initialized {
+      let func: CommandFn = SendBoxFnOnce::from(move |client: RedisClient| {
+        utils::transfer_sender(client.messages_cloned(), tx);
+        client_utils::future_ok(Some(client))
+      });
+
+      match utils::send_command(&self.command_tx, func) {
+        Ok(_) => out,
+        Err(e) => Box::new(future::err(e).into_stream())
+      }
+    }else{
+      let mut message_tx_guard = self.message_tx.write();
+      let mut message_tx_ref = message_tx_guard.deref_mut();
+      message_tx_ref.push_back(tx);
+
+      out
+    }
+  }
+
+  /// Select the database this client should use.
+  ///
+  /// https://redis.io/commands/select
+  pub fn select(&self, db: u8) -> Box<Future<Item=(), Error=RedisError>> {
+    let (tx, rx) = oneshot_channel();
+
+    let func: CommandFn = SendBoxFnOnce::from(move |client: RedisClient| {
+      commands::select(client, tx, db)
+    });
+
+    match utils::send_command(&self.command_tx, func) {
+      Ok(_) => Box::new(rx.from_err::<RedisError>().flatten()),
+      Err(e) => client_utils::future_error(e)
     }
   }
 

@@ -65,59 +65,52 @@ use std::net::{
 
 use std::rc::Rc;
 use std::cell::RefCell;
+use std::collections::VecDeque;
 
 use super::super::RedisClient;
 use super::multiplexer::Multiplexer;
 
 pub const OK: &'static str = "OK";
 
-pub fn close_error_tx(error_tx: &Rc<RefCell<Option<UnboundedSender<RedisError>>>>) {
+pub fn close_error_tx(error_tx: &Rc<RefCell<VecDeque<UnboundedSender<RedisError>>>>) {
   let mut error_tx_ref = error_tx.borrow_mut();
-  
-  if let Some(mut error_tx) = error_tx_ref.take() {
+
+  for mut error_tx in error_tx_ref.drain(..) {
     debug!("Closing error tx.");
 
     let _ = error_tx.close();
   }
 }
 
-pub fn close_reconnect_tx(reconnect_tx: &Rc<RefCell<Option<UnboundedSender<RedisClient>>>>) {
+pub fn close_reconnect_tx(reconnect_tx: &Rc<RefCell<VecDeque<UnboundedSender<RedisClient>>>>) {
   let mut reconnect_tx_ref = reconnect_tx.borrow_mut();
-  
-  if let Some(mut reconnect_tx) = reconnect_tx_ref.take() {
+
+  for mut reconnect_tx in reconnect_tx_ref.drain(..) {
     debug!("Closing reconnect tx.");
 
     let _ = reconnect_tx.close();
   }
 }
 
-pub fn close_messages_tx(messages_tx: &Rc<RefCell<Option<UnboundedSender<(String, RedisValue)>>>>) {
+pub fn close_messages_tx(messages_tx: &Rc<RefCell<VecDeque<UnboundedSender<(String, RedisValue)>>>>) {
   let mut messages_tx_ref = messages_tx.borrow_mut();
-  
-  if let Some(mut messages_tx) = messages_tx_ref.take() {
+
+  for mut messages_tx in messages_tx_ref.drain(..) {
     debug!("Closing messages tx.");
 
     let _ = messages_tx.close();
   }
 }
 
-pub fn close_connect_tx(connect_tx: &Rc<RefCell<Vec<OneshotSender<Result<RedisClient, RedisError>>>>>, remote_tx: &Rc<RefCell<Vec<OneshotSender<Result<(), RedisError>>>>>) {
+pub fn close_connect_tx(connect_tx: &Rc<RefCell<VecDeque<OneshotSender<Result<RedisClient, RedisError>>>>>, remote_tx: &Rc<RefCell<VecDeque<OneshotSender<Result<(), RedisError>>>>>) {
   debug!("Closing connection tx.");
 
   {
     let mut connect_tx_refs = connect_tx.borrow_mut();
     if connect_tx_refs.len() > 0 {
-      let len = connect_tx_refs.len() - 1; // don't use the last one
-
-      for tx in connect_tx_refs.drain(0..len) {
+      for tx in connect_tx_refs.drain(..) {
         let _ = tx.send(Err(RedisError::new_canceled()));
       }
-
-      let last = match connect_tx_refs.pop() {
-        Some(last) => last,
-        None => return
-      };
-      let _ = last.send(Err(RedisError::new_canceled()));
     }
   }
   {
@@ -128,57 +121,45 @@ pub fn close_connect_tx(connect_tx: &Rc<RefCell<Vec<OneshotSender<Result<RedisCl
   }
 }
 
-pub fn emit_error(tx: &Rc<RefCell<Option<UnboundedSender<RedisError>>>>, error: RedisError) -> Result<(), RedisError> {
-  let tx_ref = tx.borrow();
+pub fn emit_error(tx: &Rc<RefCell<VecDeque<UnboundedSender<RedisError>>>>, error: &RedisError) {
+  let mut tx_ref = tx.borrow_mut();
 
-  match *tx_ref {
-    Some(ref tx) => {
-      debug!("Emitting error.");
+  let new_tx = tx_ref.drain(..).filter(|tx| {
+    debug!("Emitting error.");
 
-      match tx.unbounded_send(error) {
-        Ok(_) => Ok(()),
-        Err(e) => Err(e.into())
-      }
-    },
-    None => return Ok(())
-  }
+    match tx.unbounded_send(error.clone()) {
+      Ok(_) => true,
+      Err(_) => false
+    }
+  })
+  .collect();
+
+  *tx_ref = new_tx;
 }
 
-pub fn emit_reconnect(reconnect_tx: &Rc<RefCell<Option<UnboundedSender<RedisClient>>>>, client: RedisClient) -> Result<(), RedisError> {
-  let tx_ref = reconnect_tx.borrow();
+pub fn emit_reconnect(reconnect_tx: &Rc<RefCell<VecDeque<UnboundedSender<RedisClient>>>>, client: &RedisClient) {
+  let mut tx_ref = reconnect_tx.borrow_mut();
 
-  match *tx_ref {
-    Some(ref tx) => {
-      debug!("Emitting reconnect.");
+  let new_tx = tx_ref.drain(..).filter(|tx| {
+    debug!("Emitting reconnect.");
 
-      match tx.unbounded_send(client) {
-        Ok(_) => Ok(()),
-        Err(e) => Err(RedisError::new(
-          RedisErrorKind::Unknown, format!("Could not emit reconnect. {:?}", e)
-        ))
-      }
-    },
-    None => return Ok(())
-  }
+    match tx.unbounded_send(client.clone()) {
+      Ok(_) => true,
+      Err(_) => false
+    }
+  })
+  .collect();
+
+  *tx_ref = new_tx;
 }
 
-pub fn emit_connect(connect_tx: &Rc<RefCell<Vec<OneshotSender<Result<RedisClient, RedisError>>>>>, remote_tx: Rc<RefCell<Vec<OneshotSender<Result<(), RedisError>>>>>, client: RedisClient) {
+pub fn emit_connect(connect_tx: &Rc<RefCell<VecDeque<OneshotSender<Result<RedisClient, RedisError>>>>>, remote_tx: Rc<RefCell<VecDeque<OneshotSender<Result<(), RedisError>>>>>, client: &RedisClient) {
   debug!("Emitting connect.");
 
   {
     let mut connect_tx_refs = connect_tx.borrow_mut();
-    if connect_tx_refs.len() > 0 {
-      let len = connect_tx_refs.len() - 1; // don't use the last one
-
-      for tx in connect_tx_refs.drain(0..len) {
-        let _ = tx.send(Ok(client.clone()));
-      }
-
-      let last = match connect_tx_refs.pop() {
-        Some(last) => last,
-        None => return
-      };
-      let _ = last.send(Ok(client));
+    for tx in connect_tx_refs.drain(..) {
+      let _ = tx.send(Ok(client.clone()));
     }
   }
   {
@@ -189,7 +170,7 @@ pub fn emit_connect(connect_tx: &Rc<RefCell<Vec<OneshotSender<Result<RedisClient
   }
 }
 
-pub fn emit_connect_error(connect_tx: &Rc<RefCell<Vec<OneshotSender<Result<RedisClient, RedisError>>>>>, remote_tx: Rc<RefCell<Vec<OneshotSender<Result<(), RedisError>>>>>, err: RedisError) {
+pub fn emit_connect_error(connect_tx: &Rc<RefCell<VecDeque<OneshotSender<Result<RedisClient, RedisError>>>>>, remote_tx: Rc<RefCell<VecDeque<OneshotSender<Result<(), RedisError>>>>>, err: &RedisError) {
   debug!("Emitting connect error.");
 
   {
@@ -200,21 +181,9 @@ pub fn emit_connect_error(connect_tx: &Rc<RefCell<Vec<OneshotSender<Result<Redis
   }
   {
     let mut connect_tx_refs = connect_tx.borrow_mut();
-    if connect_tx_refs.len() < 1 {
-      return;
-    }
-
-    let len = connect_tx_refs.len() - 1; // don't use the last one
-
-    for tx in connect_tx_refs.drain(0..len) {
+    for tx in connect_tx_refs.drain(..) {
       let _ = tx.send(Err(err.clone()));
     }
-
-    let last = match connect_tx_refs.pop() {
-      Some(last) => last,
-      None => return
-    };
-    let _ = last.send(Err(err));
   }
 }
 
@@ -285,12 +254,13 @@ pub fn tuple_to_addr_str(host: &str, port: u16) -> String {
   format!("{}:{}", host, port)
 }
 
-pub fn take_message_sender(messages: &Rc<RefCell<Option<UnboundedSender<(String, RedisValue)>>>>) -> Option<UnboundedSender<(String, RedisValue)>> {
+pub fn take_message_sender(messages: &Rc<RefCell<VecDeque<UnboundedSender<(String, RedisValue)>>>>) -> VecDeque<UnboundedSender<(String, RedisValue)>> {
   let mut messages_ref = messages.borrow_mut();
-  messages_ref.take()
+  let taken = messages_ref.drain(..).collect();
+  taken
 }
 
-pub fn set_message_sender(messages: &Rc<RefCell<Option<UnboundedSender<(String, RedisValue)>>>>, sender: Option<UnboundedSender<(String, RedisValue)>>) {
+pub fn set_message_sender(messages: &Rc<RefCell<VecDeque<UnboundedSender<(String, RedisValue)>>>>, sender: VecDeque<UnboundedSender<(String, RedisValue)>>) {
   let mut messages_ref = messages.borrow_mut();
   *messages_ref = sender;
 }
@@ -428,11 +398,39 @@ pub fn process_frame(multiplexer: &Rc<Multiplexer>, frame: Frame) {
       Err(_) => return
     };
 
+    let mut to_remove = VecDeque::new();
     {
       let message_tx_ref = multiplexer.message_tx.borrow();
 
-      if let Some(ref tx) = *message_tx_ref {
-        let _ = tx.unbounded_send((channel, message));
+      // try to do this such that the channel and message only cloned len() times, not len() + 1
+      // while also checking for closed receivers during iteration
+      let to_send = message_tx_ref.len() - 1;
+
+      for idx in 0..to_send {
+        // send clones
+        let tx = match message_tx_ref.get(idx) {
+          Some(t) => t,
+          None => continue
+        };
+
+        if let Err(_) = tx.unbounded_send((channel.clone(), message.clone())) {
+          to_remove.push_back(idx);
+        }
+      }
+
+      // send original values
+      if let Some(ref tx) = message_tx_ref.get(to_send) {
+        if let Err(_) = tx.unbounded_send((channel, message)) {
+          to_remove.push_back(to_send);
+        }
+      }
+    }
+    // remove any senders where the receiver was closed
+    if to_remove.len() > 0 {
+      let mut message_tx_ref = multiplexer.message_tx.borrow_mut();
+
+      for idx in to_remove {
+        let _ = message_tx_ref.remove(idx);
       }
     }
   }else{
@@ -465,7 +463,7 @@ pub fn create_multiplexer_ft(multiplexer: Rc<Multiplexer>, state: Arc<RwLock<Cli
 
 pub fn create_commands_ft(
   rx: UnboundedReceiver<RedisCommand>,
-  error_tx: Rc<RefCell<Option<UnboundedSender<RedisError>>>>,
+  error_tx: Rc<RefCell<VecDeque<UnboundedSender<RedisError>>>>,
   multiplexer: Rc<Multiplexer>,
   stream_state: Arc<RwLock<ClientState>>
 ) -> Box<Future<Item=(), Error=RedisError>>
@@ -676,11 +674,12 @@ pub fn reconnect(
   mut policy: ReconnectPolicy,
   state: Arc<RwLock<ClientState>>,
   closed: Arc<RwLock<bool>>,
-  error_tx: Rc<RefCell<Option<UnboundedSender<RedisError>>>>,
-  message_tx: Rc<RefCell<Option<UnboundedSender<(String, RedisValue)>>>>,
+  error_tx: Rc<RefCell<VecDeque<UnboundedSender<RedisError>>>>,
+  message_tx: Rc<RefCell<VecDeque<UnboundedSender<(String, RedisValue)>>>>,
   command_tx: Rc<RefCell<Option<UnboundedSender<RedisCommand>>>>,
-  reconnect_tx: Rc<RefCell<Option<UnboundedSender<RedisClient>>>>,
-  connect_tx: Rc<RefCell<Vec<OneshotSender<Result<RedisClient, RedisError>>>>>,
+  reconnect_tx: Rc<RefCell<VecDeque<UnboundedSender<RedisClient>>>>,
+  connect_tx: Rc<RefCell<VecDeque<OneshotSender<Result<RedisClient, RedisError>>>>>,
+  remote_tx: Rc<RefCell<VecDeque<OneshotSender<Result<(), RedisError>>>>>,
   mut result: Result<Option<RedisError>, RedisError>
 ) -> Box<Future<Item=Loop<(), (Handle, Timer, ReconnectPolicy)>, Error=RedisError>> {
 
@@ -701,7 +700,7 @@ pub fn reconnect(
       if let Some(err) = err {
         // socket was closed unintentionally
         debug!("Redis client closed abruptly.");
-        let _ = emit_error(&error_tx, err.clone());
+        emit_error(&error_tx, &err);
 
         let delay = match policy.next_delay() {
           Some(delay) => delay,
@@ -728,13 +727,14 @@ pub fn reconnect(
 
         close_error_tx(&error_tx);
         close_reconnect_tx(&reconnect_tx);
+        close_connect_tx(&connect_tx, &remote_tx);
         close_messages_tx(&message_tx);
 
         client_utils::future_ok(Loop::Break(()))
       }
     },
     Err(e) => {
-      let _ = emit_error(&error_tx, e);
+      emit_error(&error_tx, &e);
 
       let delay = match policy.next_delay() {
         Some(delay) => delay,
