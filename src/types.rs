@@ -575,7 +575,7 @@ impl RedisValue {
     }
   }
 
-  /// Read and return the inner `String` if the value is a `RedisValue::String`.
+  /// Read and return the inner `String` if the value is a string or integer.
   pub fn into_string(self) -> Option<String> {
     match self {
       RedisValue::String(s) => Some(s),

@@ -9,10 +9,6 @@ extern crate tokio_timer;
 extern crate tokio_core;
 extern crate futures;
 
-#[macro_use]
-extern crate log;
-extern crate pretty_env_logger;
-
 use fred::RedisClient;
 use fred::types::*;
 use fred::error::*;
@@ -34,8 +30,6 @@ use std::time::Duration;
 const MESSAGE_COUNT: u32 = 5;
 
 fn main() {
-  pretty_env_logger::init().unwrap();
-
   let publisher_config = RedisConfig::default();
   let subscriber_config = RedisConfig::default();
 
