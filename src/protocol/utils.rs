@@ -63,7 +63,7 @@ mod readers {
     pop_with_error
   };
 
-  pub fn read_prefix_len(cursor: &mut Cursor<&mut BytesMut>) -> Result<isize, RedisError> {
+  pub fn read_prefix_len(cursor: &mut Cursor<BytesMut>) -> Result<isize, RedisError> {
     let mut len_buf = Vec::new();
     let _ = cursor.read_until(LF as u8, &mut len_buf)?;
 
@@ -74,7 +74,7 @@ mod readers {
     Ok(len_str.parse::<isize>()?)
   }
 
-  pub fn read_to_crlf(cursor: &mut Cursor<&mut BytesMut>) -> Result<Vec<u8>, RedisError> {
+  pub fn read_to_crlf(cursor: &mut Cursor<BytesMut>) -> Result<Vec<u8>, RedisError> {
     let mut payload = Vec::new();
     cursor.read_until(LF as u8, &mut payload)?;
 
@@ -85,7 +85,7 @@ mod readers {
     Ok(payload)
   }
 
-  pub fn read_exact(cursor: &mut Cursor<&mut BytesMut>, len: u64, buf: &mut Vec<u8>) -> Result<usize, RedisError> {
+  pub fn read_exact(cursor: &mut Cursor<BytesMut>, len: u64, buf: &mut Vec<u8>) -> Result<usize, RedisError> {
     let mut take = cursor.take(len);
     Ok(take.read_to_end(buf)?)
   }
@@ -282,7 +282,7 @@ pub fn pop_with_error<T>(d: &mut Vec<T>, expected: char) -> Result<T, RedisError
   }
 }
 
-pub fn pop_trailing_crlf(d: &mut Cursor<&mut BytesMut>) -> Result<(), RedisError> {
+pub fn pop_trailing_crlf(d: &mut Cursor<BytesMut>) -> Result<(), RedisError> {
   if d.remaining() < 2 {
     return Err(RedisError::new(
       RedisErrorKind::Unknown, "Missing final CRLF."
@@ -414,14 +414,16 @@ pub fn check_expected_size(expected: usize, max: &Option<usize>) -> Result<(), R
   }
 }
 
+// TODO change this to remove the copy into buf
+// do the same thing, but clone the mut bytes at start so any split_off calls only affect the clone
+
 /// Takes in a working buffer of previous bytes, a new set of bytes, and a max_size option.
 /// Returns an option with the parsed frame and its size in bytes, including crlf padding and the kind/type byte.
-pub fn bytes_to_frames(buf: &mut BytesMut, mut bytes: BytesMut, max_size: &Option<usize>) -> Result<Option<(Frame, usize)>, RedisError> {
-  buf.reserve(bytes.len());
-  buf.put(bytes);
-
+pub fn bytes_to_frames(buf: &mut BytesMut, max_size: &Option<usize>) -> Result<Option<(Frame, usize)>, RedisError> {
   let full_len = buf.len();
-  let mut cursor = Cursor::new(buf);
+  // operate on a clone of the bytes so split_off calls dont affect the original buffer
+  let mut bytes = buf.clone();
+  let mut cursor = Cursor::new(bytes);
 
   if cursor.remaining() < 1 {
     return Err(RedisError::new(
@@ -468,7 +470,6 @@ pub fn bytes_to_frames(buf: &mut BytesMut, mut bytes: BytesMut, max_size: &Optio
         // cursor now points at the first value's type byte
         let mut position = cursor.position() as usize;
         let buf = cursor.into_inner();
-        let empty = BytesMut::new();
 
         let mut frames = Vec::with_capacity(expected_len as usize);
         let mut unfinished = false;
@@ -482,7 +483,7 @@ pub fn bytes_to_frames(buf: &mut BytesMut, mut bytes: BytesMut, max_size: &Optio
           // this just increments a few ref counts
           let mut next_bytes = buf.clone().split_off(position);
 
-          match bytes_to_frames(&mut next_bytes, empty.clone(), max_size)? {
+          match bytes_to_frames(&mut next_bytes, max_size)? {
             Some((f, size)) => {
               frames.push(f);
               position = position + size;
@@ -498,7 +499,6 @@ pub fn bytes_to_frames(buf: &mut BytesMut, mut bytes: BytesMut, max_size: &Optio
         if unfinished || parsed != expected_len {
           None
         }else{
-          let _ = buf.take();
           Some((Frame::Array(frames), full_len))
         }
       }else{
@@ -624,11 +624,9 @@ mod tests {
   #[test]
   fn should_decode_llen_res_example() {
     let expected = Some((Frame::Integer(48293), 8));
+    let mut bytes: BytesMut = ":48293\r\n".into();
 
-    let mut empty = BytesMut::new();
-    let bytes: BytesMut = ":48293\r\n".into();
-
-    let actual = bytes_to_frames(&mut empty, bytes, &None).unwrap();
+    let actual = bytes_to_frames(&mut bytes, &None).unwrap();
 
     assert_eq!(actual, expected);
   }
@@ -657,11 +655,9 @@ mod tests {
   #[test]
   fn should_decode_incr_req_example() {
     let expected = Some((Frame::Integer(666), 6));
+    let mut bytes: BytesMut = ":666\r\n".into();
 
-    let mut empty = BytesMut::new();
-    let bytes: BytesMut = ":666\r\n".into();
-
-    let actual = bytes_to_frames(&mut empty, bytes, &None).unwrap();
+    let actual = bytes_to_frames(&mut bytes, &None).unwrap();
 
     assert_eq!(actual, expected);
   }
@@ -795,11 +791,9 @@ e7d1eecce10fd6bb5eb35b9f99a514335d9ba9ca 127.0.0.1:30001 myself,master - 0 0 1 c
   #[test]
   fn should_decode_simple_string_test() {
     let expected = Some((Frame::SimpleString("string".to_owned()), 9));
+    let mut bytes: BytesMut = "+string\r\n".into();
 
-    let mut empty = BytesMut::new();
-    let bytes: BytesMut = "+string\r\n".into();
-
-    let actual = bytes_to_frames(&mut empty, bytes, &None).unwrap();
+    let actual = bytes_to_frames(&mut bytes, &None).unwrap();
 
     assert_eq!(actual, expected);
   }
@@ -808,11 +802,9 @@ e7d1eecce10fd6bb5eb35b9f99a514335d9ba9ca 127.0.0.1:30001 myself,master - 0 0 1 c
   fn should_decode_bulk_string_test() {
     let string1 = vec!['f' as u8 ,'o' as u8, 'o' as u8];
     let expected = Some((Frame::BulkString(string1), 9));
-
-    let mut empty = BytesMut::new();
     let mut bytes: BytesMut = "$3\r\nfoo\r\n".into();
 
-    let actual = bytes_to_frames(&mut empty, bytes, &None).unwrap();
+    let actual = bytes_to_frames(&mut bytes, &None).unwrap();
 
     assert_eq!(actual, expected);
   }
@@ -825,10 +817,9 @@ e7d1eecce10fd6bb5eb35b9f99a514335d9ba9ca 127.0.0.1:30001 myself,master - 0 0 1 c
 
     let expected = Some((Frame::Array(frame_vec), 16));
 
-    let mut empty = BytesMut::new();
     let mut bytes: BytesMut = "*2\r\n+Foo\r\n+Bar\r\n".into();
 
-    let actual = bytes_to_frames(&mut empty, bytes, &None).unwrap();
+    let actual = bytes_to_frames(&mut bytes, &None).unwrap();
 
     assert_eq!(actual, expected);
   }
@@ -864,11 +855,9 @@ e7d1eecce10fd6bb5eb35b9f99a514335d9ba9ca 127.0.0.1:30001 myself,master - 0 0 1 c
     frame_vec.push(Frame::BulkString(string2));
 
     let expected = Some((Frame::Array(frame_vec), 22));
-
-    let mut empty = BytesMut::new();
     let mut bytes: BytesMut = "*2\r\n$3\r\nfoo\r\n$3\r\nbar\r\n".into();
 
-    let actual = bytes_to_frames(&mut empty, bytes, &None).unwrap();
+    let actual = bytes_to_frames(&mut bytes, &None).unwrap();
 
     assert_eq!(actual, expected);
   }
@@ -888,9 +877,8 @@ e7d1eecce10fd6bb5eb35b9f99a514335d9ba9ca 127.0.0.1:30001 myself,master - 0 0 1 c
         255 as u8
       ];
 
-      let mut empty = BytesMut::new();
-      let bytes = BytesMut::from(b);
-      let _ = bytes_to_frames(&mut empty, bytes, &None);
+      let mut bytes = BytesMut::from(b);
+      let _ = bytes_to_frames(&mut bytes, &None);
     }
 
     #[test]
@@ -917,10 +905,8 @@ e7d1eecce10fd6bb5eb35b9f99a514335d9ba9ca 127.0.0.1:30001 myself,master - 0 0 1 c
         53 as u8
       ];
 
-      let mut empty = BytesMut::new();
-      let bytes = BytesMut::from(b);
-
-      let _ = bytes_to_frames(&mut empty, bytes, &max);
+      let mut bytes = BytesMut::from(b);
+      let _ = bytes_to_frames(&mut bytes, &max);
     }
 
     #[test]
@@ -934,10 +920,8 @@ e7d1eecce10fd6bb5eb35b9f99a514335d9ba9ca 127.0.0.1:30001 myself,master - 0 0 1 c
         32 as u8
       ];
 
-      let mut empty = BytesMut::new();
-      let bytes = BytesMut::from(b);
-
-      let _ = bytes_to_frames(&mut empty, bytes, &None);
+      let mut bytes = BytesMut::from(b);
+      let _ = bytes_to_frames(&mut bytes, &None);
     }
 
     #[test]
@@ -968,10 +952,8 @@ e7d1eecce10fd6bb5eb35b9f99a514335d9ba9ca 127.0.0.1:30001 myself,master - 0 0 1 c
         52 as u8
       ];
 
-      let mut empty = BytesMut::new();
-      let bytes = BytesMut::from(b);
-
-      let _ = bytes_to_frames(&mut empty, bytes, &max);
+      let mut bytes = BytesMut::from(b);
+      let _ = bytes_to_frames(&mut bytes, &max);
     }
 
   }
