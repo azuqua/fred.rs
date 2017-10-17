@@ -164,6 +164,16 @@ impl RedisClientRemote {
     Box::new(commands_ft)
   }
 
+  /// Flush and close the Sender channel this instance receives messages through.
+  pub fn close(&mut self) {
+    let mut tx_guard = self.command_tx.write();
+    let mut tx_ref = tx_guard.deref_mut();
+
+    if let Some(ref mut tx) = *tx_ref {
+      tx.close();
+    }
+  }
+
   /// Returns a future that resolves when the underlying client connects to the server. This
   /// function can act as a convenient way of notifying a separate thread when the client has
   /// connected to the server and can begin processing commands.

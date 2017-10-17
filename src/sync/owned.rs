@@ -131,6 +131,16 @@ impl RedisClientRemote {
     borrowed.init(client)
   }
 
+  /// Flush and close the Sender channel this instance receives messages through.
+  pub fn close(&mut self) {
+    let mut borr_guard = self.borrowed.write();
+    let mut borr_ref = borr_guard.deref_mut();
+    match *borr_ref {
+      Some(ref mut borr) => borr.close(),
+      None => {}
+    };
+  }
+
   /// Returns a future that resolves when the underlying client connects to the server. This
   /// function can act as a convenient way of notifying a separate thread when the client has
   /// connected to the server and can begin processing commands.
