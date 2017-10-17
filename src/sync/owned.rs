@@ -133,13 +133,10 @@ impl RedisClientRemote {
 
   /// Flush and close the Sender channel this instance receives messages through.
   pub fn close(&mut self) {
-    let mut tx_guard = self.command_tx.write();
-    let mut tx_ref = tx_guard.deref_mut();
-
-    match *tx_ref {
-      Some(ref mut tx) => {
-        tx.close();
-      },
+    let mut borr_guard = self.borrowed.write();
+    let mut borr_ref = borr_guard.deref_mut();
+    match *borr_ref {
+      Some(ref mut borr) => borr.close(),
       None => {}
     };
   }
