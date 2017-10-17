@@ -169,12 +169,9 @@ impl RedisClientRemote {
     let mut tx_guard = self.command_tx.write();
     let mut tx_ref = tx_guard.deref_mut();
 
-    match *tx_ref {
-      Some(ref mut tx) => {
-        tx.close();
-      },
-      None => {}
-    };
+    if let Some(ref mut tx) = *tx_ref {
+      tx.close();
+    }
   }
 
   /// Returns a future that resolves when the underlying client connects to the server. This
