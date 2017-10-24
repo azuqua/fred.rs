@@ -368,6 +368,18 @@ impl RedisClientRemote {
     })
   }
 
+  /// Returns all fields and values of the hash stored at key. In the returned value, every field name is followed by its value
+  /// Returns an empty hashmap if hash is empty.
+  ///
+  /// https://redis.io/commands/hgetall
+  pub fn hgetall<K: Into<RedisKey>>(self, key: K) -> Box<Future<Item=(Self, HashMap<String, RedisValue>), Error=RedisError>> {
+    utils::run_borrowed(self, move |_self, borrowed| {
+      Box::new(borrowed.hgetall(key).and_then(move |resp| {
+        Ok((_self, resp))
+      }))
+    })
+  }
+
   /// Sets field in the hash stored at key to value. If key does not exist, a new key holding a hash is created.
   /// If field already exists in the hash, it is overwritten.
   /// Note: Return value of 1 means new field was created and set. Return of 0 means field already exists and was overwritten.

@@ -170,7 +170,7 @@ impl RedisClientRemote {
     let mut tx_ref = tx_guard.deref_mut();
 
     if let Some(ref mut tx) = *tx_ref {
-      tx.close();
+      let _ = tx.close();
     }
   }
 
@@ -480,6 +480,25 @@ impl RedisClientRemote {
 
     let func: CommandFn = SendBoxFnOnce::new(move |client: RedisClient| {
       commands::hget(client, tx, key, field)
+    });
+
+    match utils::send_command(&self.command_tx, func) {
+      Ok(_) => Box::new(rx.from_err::<RedisError>().flatten()),
+      Err(e) => client_utils::future_error(e)
+    }
+  }
+
+
+  /// Returns all fields and values of the hash stored at key. In the returned value, every field name is followed by its value
+  /// Returns an empty hashmap if hash is empty.
+  ///
+  /// https://redis.io/commands/hgetall
+  pub fn hgetall<K: Into<RedisKey>>(&self, key: K) -> Box<Future<Item=HashMap<String, RedisValue>, Error=RedisError>> {
+    let (tx, rx) = oneshot_channel();
+    let key = key.into();
+
+    let func: CommandFn = SendBoxFnOnce::new(move |client: RedisClient| {
+      commands::hgetall(client, tx, key)
     });
 
     match utils::send_command(&self.command_tx, func) {

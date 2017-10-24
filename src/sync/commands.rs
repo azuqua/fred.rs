@@ -86,6 +86,12 @@ pub fn hget(client: RedisClient, tx: OneshotSender<Result<Option<RedisValue>, Re
   }))
 }
 
+pub fn hgetall(client: RedisClient, tx: OneshotSender<Result<HashMap<String, RedisValue>, RedisError>>, key: RedisKey) -> CommandFnResp {
+  Box::new(client.hgetall(key).then(move |result| {
+    utils::send_normal_result(tx, result)
+  }))
+}
+
 pub fn hset(client: RedisClient, tx: OneshotSender<Result<usize, RedisError>>, key: RedisKey, field: RedisKey, value: RedisValue) -> CommandFnResp {
   Box::new(client.hset(key, field, value).then(move |result| {
     utils::send_normal_result(tx, result)
