@@ -2,7 +2,8 @@
 authors = [
   "Alec Embke <aembke@gmail.com>",
   "Howard Lin <linnyflow@gmail.com>",
-  "Evan Milton <evan@azuqua.com>"
+  "Evan Milton <evan@azuqua.com>",
+  "Kevin Wilson <kevinwilson541@gmail.com>"
 ]
 name = "fred"
 version = "0.0.4"
