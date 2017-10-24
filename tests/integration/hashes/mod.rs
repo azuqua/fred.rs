@@ -41,6 +41,26 @@ pub fn should_set_and_get_simple_key(client: RedisClient) -> Box<Future<Item=(),
   }))
 }
 
+pub fn should_set_and_get_all_simple_key(client: RedisClient) -> Box<Future<Item=(), Error=RedisError>> {
+  Box::new(client.hset("foo", "bar", "baz").and_then(|(client, _)| {
+    client.hgetall("foo")
+  })
+  .and_then(|(client, mut val)| {
+    assert_eq!(val.len(), 1);
+    assert!(val.contains_key("bar".into()));
+    assert_eq!(val.remove("bar".into()).unwrap().into_string().unwrap(), "baz");
+    client.hdel("foo", "bar")
+  })
+  .and_then(|(client, count)| {
+    assert_eq!(count, 1);
+    client.hgetall("foo")
+  })
+  .and_then(|(client, val)| {
+    assert_eq!(val.len(), 0);
+    Ok(())
+  }))
+}
+
 pub fn should_check_hexists(client: RedisClient) -> Box<Future<Item=(), Error=RedisError>> {
   Box::new(client.hset("foo", "bar", "baz").and_then(|(client, count)| {
     client.hexists("foo", "bar")

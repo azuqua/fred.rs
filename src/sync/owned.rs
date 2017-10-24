@@ -131,6 +131,16 @@ impl RedisClientRemote {
     borrowed.init(client)
   }
 
+  /// Flush and close the Sender channel this instance receives messages through.
+  pub fn close(&mut self) {
+    let mut borr_guard = self.borrowed.write();
+    let mut borr_ref = borr_guard.deref_mut();
+    match *borr_ref {
+      Some(ref mut borr) => borr.close(),
+      None => {}
+    };
+  }
+
   /// Returns a future that resolves when the underlying client connects to the server. This
   /// function can act as a convenient way of notifying a separate thread when the client has
   /// connected to the server and can begin processing commands.
@@ -353,6 +363,18 @@ impl RedisClientRemote {
   pub fn hget<F: Into<RedisKey>, K: Into<RedisKey>>(self, key: K, field: F) -> Box<Future<Item=(Self, Option<RedisValue>), Error=RedisError>> {
     utils::run_borrowed(self, move |_self, borrowed| {
       Box::new(borrowed.hget(key, field).and_then(move |resp| {
+        Ok((_self, resp))
+      }))
+    })
+  }
+
+  /// Returns all fields and values of the hash stored at key. In the returned value, every field name is followed by its value
+  /// Returns an empty hashmap if hash is empty.
+  ///
+  /// https://redis.io/commands/hgetall
+  pub fn hgetall<K: Into<RedisKey>>(self, key: K) -> Box<Future<Item=(Self, HashMap<String, RedisValue>), Error=RedisError>> {
+    utils::run_borrowed(self, move |_self, borrowed| {
+      Box::new(borrowed.hgetall(key).and_then(move |resp| {
         Ok((_self, resp))
       }))
     })
