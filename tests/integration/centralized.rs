@@ -128,6 +128,14 @@ pub mod hashes {
   }
 
   #[test]
+  fn it_should_set_and_get_all_simple_key() {
+    let config = RedisConfig::default();
+    utils::setup_test_client(config, |client| {
+      hashes_tests::should_set_and_get_all_simple_key(client)
+    });
+  }
+
+  #[test]
   fn it_should_check_hexists() {
     let config = RedisConfig::default();
     utils::setup_test_client(config, |client| {
