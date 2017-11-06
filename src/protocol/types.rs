@@ -824,7 +824,7 @@ impl ClusterKeyCache {
 }
 
 /// Alias for a sender to notify the caller that a response was received.
-pub type ResponseSender = Option<OneshotSender<Frame>>;
+pub type ResponseSender = Option<OneshotSender<Result<Frame, RedisError>>>;
 /// Whether or not to refresh the cluster cache.
 pub type RefreshCache = bool;
 
@@ -832,9 +832,7 @@ pub struct RedisCommand {
   pub kind: RedisCommandKind, 
   pub args: Vec<RedisValue>,
   /// Sender for notifying the caller that a response was received.
-  pub tx: ResponseSender,
-  /// Sender for notifying the multiplexer that a response was received.
-  pub m_tx: Option<OneshotSender<RefreshCache>>
+  pub tx: ResponseSender
 }
 
 impl fmt::Debug for RedisCommand {
@@ -849,8 +847,7 @@ impl RedisCommand {
     RedisCommand {
       kind: kind,
       args: args,
-      tx: tx,
-      m_tx: None
+      tx: tx
     }
   }
   

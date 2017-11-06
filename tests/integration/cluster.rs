@@ -117,6 +117,20 @@ pub mod keys {
     })
   }
 
+  #[test]
+  fn it_should_set_random_keys_with_fqdn_addresses() {
+    let hosts: Vec<(String, u16)> = vec![
+      ("localhost".to_owned(), 30001),
+      ("localhost".to_owned(), 30002),
+      ("localhost".to_owned(), 30003),
+    ];
+    let config = RedisConfig::new_clustered(hosts, None);
+
+    utils::setup_test_client(config, |client| {
+      keys_tests::should_set_and_get_random_keys(client)
+    })
+  }
+
 }
 
 

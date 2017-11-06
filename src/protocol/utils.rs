@@ -608,8 +608,7 @@ mod tests {
       args: vec![
         "mylist".into()
       ],
-      tx: None,
-      m_tx: None
+      tx: None
     };
     let expected = "*2\r\n$4\r\nLLEN\r\n$6\r\nmylist\r\n";
 
@@ -634,7 +633,6 @@ mod tests {
   #[test]
   fn should_encode_incr_req_example() {
     let mut args: RedisCommand = RedisCommand {
-      m_tx: None,
       kind: RedisCommandKind::Incr,
       args: vec![
         "mykey".into()
@@ -665,7 +663,6 @@ mod tests {
   #[test]
   fn should_encode_bitcount_req_example() {
     let mut args: RedisCommand = RedisCommand {
-      m_tx: None,
       kind: RedisCommandKind::BitCount,
       args: vec![
         "mykey".into()
@@ -827,7 +824,6 @@ e7d1eecce10fd6bb5eb35b9f99a514335d9ba9ca 127.0.0.1:30001 myself,master - 0 0 1 c
   #[test]
   fn should_encode_array_bulk_string_test() {
     let mut args: RedisCommand = RedisCommand {
-      m_tx: None,
       kind: RedisCommandKind::Watch,
       args: vec![
         "HONOR!".into(),
