@@ -184,16 +184,20 @@ impl Default for RedisConfig {
 
 impl RedisConfig {
 
-  pub fn new_centralized(host: String, port: u16, key: Option<String>) -> RedisConfig {
+  pub fn new_centralized<S: Into<String>>(host: S, port: u16, key: Option<String>) -> RedisConfig {
     RedisConfig::Centralized {
-      host: host,
+      host: host.into(),
       port: port,
       key: key,
       max_value_size: None
     }
   }
 
-  pub fn new_clustered(hosts: Vec<(String, u16)>, key: Option<String>) -> RedisConfig {
+  pub fn new_clustered<S: Into<String>>(mut hosts: Vec<(S, u16)>, key: Option<String>) -> RedisConfig {
+    let hosts = hosts.drain(..)
+      .map(|(s, p)| (s.into(), p))
+      .collect();
+
     RedisConfig::Clustered {
       hosts: hosts,
       key: key,

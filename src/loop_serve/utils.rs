@@ -442,7 +442,7 @@ pub fn process_frame(multiplexer: &Rc<Multiplexer>, frame: Frame) {
       Some(s) => s,
       None => return
     };
-    let _ = last_request.send(frame);
+    let _ = last_request.send(Ok(frame));
   }
 }
 
@@ -485,12 +485,28 @@ pub fn create_commands_ft(
       Box::new(Either::A(future::err(())
         .map(|_: ()| (multiplexer, error_tx))))
     }else{
-      // create a second oneshot channel for notifying when to move on to the next command
-      let (m_tx, m_rx) = oneshot_channel();
-      command.m_tx = Some(m_tx);
+      let resp_tx = command.tx.take();
 
-      Box::new(Either::B(multiplexer.write_command(command).and_then(|_| {
-        m_rx.then(|_| Ok(multiplexer))
+      Box::new(Either::B(multiplexer.write_command(command).then(move |result| {
+        match result {
+          Ok(_) => {
+            // create a second oneshot channel for notifying when to move on to the next command
+            let (m_tx, m_rx) = oneshot_channel();
+
+            multiplexer.set_last_request(resp_tx);
+            multiplexer.set_last_caller(Some(m_tx));
+
+            Box::new(m_rx.then(|_| Ok(multiplexer)))
+          },
+          Err(e) => {
+            // send the error and move on right away
+            if let Some(tx) = resp_tx {
+              let _ = tx.send(Err(e));
+            }
+
+            client_utils::future_ok(multiplexer)
+          }
+        }
       })
       .map_err(|_| ())
       .map(|multiplexer| (multiplexer, error_tx))))
@@ -601,6 +617,7 @@ pub fn create_all_transports(config: Rc<RefCell<RedisConfig>>, handle: Handle, h
         RedisErrorKind::Unknown, format!("Could not resolve hostname {}.", addr_str)
       ))
     };
+    let ip_str = format!("{}:{}", addr.ip(), addr.port());
 
     let key = key.clone();
     let codec = {
@@ -617,7 +634,7 @@ pub fn create_all_transports(config: Rc<RefCell<RedisConfig>>, handle: Handle, h
         authenticate(transport, key)
       })
       .and_then(move |transport: RedisTransport| {
-        transports.push((addr_str, transport));
+        transports.push((ip_str, transport));
         Ok(transports)
       })
       .from_err::<RedisError>())

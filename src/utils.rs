@@ -2,8 +2,6 @@
 
 use futures::future;
 use futures::sync::oneshot::{
-  Sender as OneshotSender,
-  Receiver as OneshotReceiver,
   channel as oneshot_channel
 };
 use futures::sync::mpsc::{
@@ -190,14 +188,13 @@ pub fn request_response<F>(
   where F: FnOnce() -> Result<(RedisCommandKind, Vec<RedisValue>), RedisError>
 {
   let _ = fry!(check_connected(state));
-
-  let (tx, rx): (OneshotSender<Frame>, OneshotReceiver<Frame>) = oneshot_channel();
   let (kind, args) = fry!(func());
 
+  let (tx, rx) = oneshot_channel();
   let command = RedisCommand::new(kind, args, Some(tx));
 
   match send_command(command_tx, command) {
-    Ok(_) => Box::new(rx.map_err(|e| e.into())),
+    Ok(_) => Box::new(rx.from_err::<RedisError>().flatten()),
     Err(e) => Box::new(future::err(e))
   }
 }
