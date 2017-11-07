@@ -193,8 +193,8 @@ impl Sinks {
           };
 
           let slot = protocol_utils::redis_crc16(&key);
-
           trace!("Mapped key to slot: {:?} -> {:?}", key, slot);
+
           match cluster_cache_ref.get_server(slot) {
             Some(s) => s,
             None => return client_utils::future_error(RedisError::new(
@@ -458,8 +458,6 @@ impl Multiplexer {
     };
 
     let frame = fry!(request.to_frame());
-    self.set_last_request(request.tx.take());
-    self.set_last_caller(request.m_tx.take());
 
     if request.kind == RedisCommandKind::Quit {
       self.sinks.quit(frame)
