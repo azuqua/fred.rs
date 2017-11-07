@@ -33,6 +33,7 @@ use fred::error::{
   RedisErrorKind,
   RedisError
 };
+
 use fred::types::*;
 use fred::RedisClient;
 

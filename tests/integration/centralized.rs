@@ -114,6 +114,15 @@ pub mod keys {
     })
   }
 
+  #[test]
+  fn it_should_set_random_keys_with_fqdn_addresses() {
+    let config = RedisConfig::new_centralized("localhost", 6379, None);
+
+    utils::setup_test_client(config, |client| {
+      keys_tests::should_set_and_get_random_keys(client)
+    })
+  }
+
 }
 
 pub mod hashes {
