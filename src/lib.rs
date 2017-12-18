@@ -35,26 +35,26 @@
 //!
 //!     client.select(0)
 //!   })
-//!     .and_then(|client| {
-//!       println!("Selected database.");
+//!   .and_then(|client| {
+//!     println!("Selected database.");
 //!
-//!       client.info(None)
-//!     })
-//!     .and_then(|(client, info)| {
-//!       println!("Redis server info: {}", info);
+//!     client.info(None)
+//!   })
+//!   .and_then(|(client, info)| {
+//!     println!("Redis server info: {}", info);
 //!
-//!       client.get("foo")
-//!     })
-//!     .and_then(|(client, result)| {
-//!       println!("Got foo: {:?}", result);
+//!     client.get("foo")
+//!   })
+//!   .and_then(|(client, result)| {
+//!     println!("Got foo: {:?}", result);
 //!
-//!       client.set("foo", "bar", Some(Expiration::PX(1000)), Some(SetOptions::NX))
-//!     })
-//!     .and_then(|(client, result)| {
-//!       println!("Set 'bar' at 'foo'? {}.", result);
+//!     client.set("foo", "bar", Some(Expiration::PX(1000)), Some(SetOptions::NX))
+//!   })
+//!   .and_then(|(client, result)| {
+//!     println!("Set 'bar' at 'foo'? {}.", result);
 //!
-//!       client.quit()
-//!     });
+//!     client.quit()
+//!   });
 //!
 //!   let (reason, client) = match core.run(connection.join(commands)) {
 //!     Ok((r, c)) => (r, c),

@@ -506,9 +506,6 @@ pub fn check_expected_size(expected: usize, max: &Option<usize>) -> Result<(), R
   out
 }
 
-// TODO change this to remove the copy into buf
-// do the same thing, but clone the mut bytes at start so any split_off calls only affect the clone
-
 /// Takes in a working buffer of previous bytes, a new set of bytes, and a max_size option.
 /// Returns an option with the parsed frame and its size in bytes, including crlf padding and the kind/type byte.
 pub fn bytes_to_frames(buf: &mut BytesMut, max_size: &Option<usize>) -> Result<Option<(Frame, usize)>, RedisError> {
