@@ -626,13 +626,17 @@ impl Frame {
   }
 
   pub fn is_pubsub_message(&self) -> bool {
-    if let Frame::Array(ref frames) = *self {
+    flame_start!("redis:is_pubsub_message");
+    let res = if let Frame::Array(ref frames) = *self {
       frames.len() == 3 
         && frames[0].kind() == FrameKind::BulkString 
         && frames[0].to_string().unwrap_or(String::new()) == "message" 
     }else{
       false
-    }
+    };
+
+    flame_end!("redis:is_pubsub_message");
+    res
   }
 
   pub fn kind(&self) -> FrameKind {
@@ -651,7 +655,8 @@ impl Frame {
 
   // mostly used for ClusterNodes command
   pub fn to_string(&self) -> Option<String> {
-    match *self {
+    flame_start!("redis:to_string");
+    let res = match *self {
       Frame::SimpleString(ref s) => Some(s.clone()),
       Frame::BulkString(ref b) => {
         match String::from_utf8(b.to_vec()) {
@@ -660,16 +665,23 @@ impl Frame {
         }
       },
       _ => None
-    }
+    };
+
+    flame_end!("redis:to_string");
+    res
   }
 
   pub fn into_results(self) -> Result<Vec<RedisValue>, RedisError> {
-    match self {
+    flame_start!("redis:into_results");
+
+    let res = match self {
       Frame::SimpleString(s) => Ok(vec![s.into()]),
       Frame::Integer(i) => Ok(vec![i.into()]),
       Frame::BulkString(b) => {
-        let s = String::from_utf8(b)?;
-        Ok(vec![s.into()])
+        match String::from_utf8(b) {
+          Ok(s) => Ok(vec![s.into()]),
+          Err(e) => Err(e.into())
+        }
       },
       Frame::Array(mut frames) => {
         let mut out = Vec::with_capacity(frames.len());
@@ -698,17 +710,31 @@ impl Frame {
       _ => Err(RedisError::new(
         RedisErrorKind::ProtocolError, "Invalid frame."
       ))
-    }
+    };
+
+    flame_end!("redis:into_results");
+    res
   }
 
   pub fn into_single_result(self) -> Result<RedisValue, RedisError> {
-    let mut results = self.into_results()?;
+    flame_start!("redis:into_single_result");
+
+    let mut results = match self.into_results() {
+      Ok(r) => r,
+      Err(e) => {
+        flame_end!("redis:into_single_result");
+        return Err(e);
+      }
+    };
 
     if results.len() != 1 {
+      flame_end!("redis:into_single_result");
       return Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid results.")) 
     }
 
-    Ok(results.pop().unwrap())
+    let out = results.pop().unwrap();
+    flame_end!("redis:into_single_result");
+    Ok(out)
   }
 
 }
@@ -854,6 +880,7 @@ impl RedisCommand {
   // Convert to a single frame with an array of bulk strings (or null).
   // This consumes the arguments array
   pub fn to_frame(&mut self) -> Result<Frame, RedisError> {
+    flame_start!("redis:to_frame");
     let mut bulk_strings: Vec<Frame> = Vec::with_capacity(self.args.len() + 1);
 
     let cmd = self.kind.to_string().as_bytes();
@@ -882,6 +909,7 @@ impl RedisCommand {
       bulk_strings.push(frame);
     }
 
+    flame_end!("redis:to_frame");
     Ok(Frame::Array(bulk_strings))
   }
 
@@ -934,7 +962,11 @@ impl Encoder for RedisCodec {
   type Error = RedisError;
 
   fn encode(&mut self, mut msg: Frame, buf: &mut BytesMut) -> Result<(), RedisError> {
-    protocol_utils::frames_to_bytes(&mut msg, buf)
+    flame_start!("redis:encode");
+    let res = protocol_utils::frames_to_bytes(&mut msg, buf);
+    flame_end!("redis:encode");
+
+    res
   }
 
 }
@@ -944,14 +976,16 @@ impl Decoder for RedisCodec {
   type Error = RedisError;
 
   fn decode(&mut self, buf: &mut BytesMut) -> Result<Option<Frame>, RedisError> {
+    flame_start!("redis:decode");
     trace!("Recv {:?} bytes.", buf.len());
 
     if buf.len() < 1 || !protocol_utils::ends_with_crlf(buf) {
+      flame_end!("redis:decode");
       return Ok(None)
     }
 
     let result = protocol_utils::bytes_to_frames(buf, &self.max_size);
-    match result {
+    let res = match result {
       Ok(inner) => match inner {
         Some((frame, size)) => {
           trace!("Parsed {:?} bytes.", size);
@@ -965,7 +999,10 @@ impl Decoder for RedisCodec {
         buf.clear();
         Err(e)
       }
-    }
+    };
+
+    flame_end!("redis:decode");
+    res
   }
 
 }

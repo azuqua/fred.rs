@@ -44,20 +44,25 @@ pub fn client_state_error(expected: ClientState, actual: &ClientState) -> RedisE
 }
 
 pub fn check_client_state(expected: ClientState, actual: &Arc<RwLock<ClientState>>) -> Result<(), RedisError> {
+  flame_start!("redis:check_client_state");
   let state_guard = actual.read();
   let state_ref = state_guard.deref();
 
   if *state_ref != expected {
+    flame_end!("redis:check_client_state");
     Err(client_state_error(expected, state_ref))
   }else{
+    flame_end!("redis:check_client_state");
     Ok(())
   }
 }
 
 pub fn set_client_state(state: &Arc<RwLock<ClientState>>, new_state: ClientState) {
+  flame_start!("redis:set_client_state");
   let mut state_guard = state.write();
   let mut state_ref = state_guard.deref_mut();
   *state_ref = new_state;
+  flame_end!("redis:set_client_state");
 }
 
 pub fn check_connected(state: &Arc<RwLock<ClientState>>) -> Result<(), RedisError> {
@@ -86,11 +91,13 @@ pub fn future_ok<T: 'static>(d: T) -> Box<Future<Item=T, Error=RedisError>> {
 }
 
 pub fn reset_reconnect_attempts(reconnect: &Rc<RefCell<Option<ReconnectPolicy>>>) {
+  flame_start!("redis:reset_reconnect_attempts");
   let mut reconnect_ref = reconnect.borrow_mut();
 
   if let Some(ref mut reconnect) = *reconnect_ref {
     reconnect.reset_attempts();
   }
+  flame_end!("redis:reset_reconnect_attempts");
 }
 
 pub fn u64_to_i64(u: u64) -> i64 {
@@ -125,28 +132,36 @@ pub fn read_closed_flag(closed: &Arc<RwLock<bool>>) -> bool {
 }
 
 pub fn set_closed_flag(closed: &Arc<RwLock<bool>>, flag: bool) {
+  flame_start!("redis:set_closed_flag");
   let mut closed_guard = closed.write();
   let mut closed_ref = closed_guard.deref_mut();
   *closed_ref = flag;
+  flame_end!("redis:set_closed_flag");
 }
 
 // called by connect() and connect_with_policy(), and verifies the client isn't already waiting to attempt a reconnect.
 pub fn check_and_set_closed_flag(closed: &Arc<RwLock<bool>>, flag: bool) -> Result<(), RedisError> {
+  flame_start!("redis:check_and_set_closed_flag");
   let mut closed_guard = closed.write();
   let mut closed_ref = closed_guard.deref_mut();
 
-  if *closed_ref != false {
+  let res = if *closed_ref != false {
     Err(RedisError::new(
       RedisErrorKind::Unknown, "Cannot connect to Redis server while waiting to reconnect."
     ))
   }else{
     *closed_ref = flag;
     Ok(())
-  }
+  };
+  flame_end!("redis:check_and_set_closed_flag");
+
+  res
 }
 
 pub fn send_command(command_tx: &Rc<RefCell<Option<UnboundedSender<RedisCommand>>>>, command: RedisCommand) -> Result<(), RedisError> {
-  if command.kind == RedisCommandKind::Quit {
+  flame_start!("redis:send_command");
+
+  let res = if command.kind == RedisCommandKind::Quit {
     let mut command_ref = command_tx.borrow_mut();
 
     let command_opt = command_ref.take();
@@ -157,7 +172,7 @@ pub fn send_command(command_tx: &Rc<RefCell<Option<UnboundedSender<RedisCommand>
         })
       },
       None => {
-        return Err(RedisError::new(
+        Err(RedisError::new(
           RedisErrorKind::InvalidCommand, "Client is not connected."
         ))
       }
@@ -172,12 +187,15 @@ pub fn send_command(command_tx: &Rc<RefCell<Option<UnboundedSender<RedisCommand>
         })
       }
       None => {
-        return Err(RedisError::new(
+        Err(RedisError::new(
           RedisErrorKind::InvalidCommand, "Client is not connected."
         ))
       }
     }
-  }
+  };
+
+  flame_end!("redis:send_command");
+  res
 }
 
 pub fn request_response<F>(
@@ -187,14 +205,19 @@ pub fn request_response<F>(
 ) -> Box<Future<Item=Frame, Error=RedisError>>
   where F: FnOnce() -> Result<(RedisCommandKind, Vec<RedisValue>), RedisError>
 {
+  flame_start!("redis:request_response");
+
   let _ = fry!(check_connected(state));
   let (kind, args) = fry!(func());
 
   let (tx, rx) = oneshot_channel();
   let command = RedisCommand::new(kind, args, Some(tx));
 
-  match send_command(command_tx, command) {
+  let res = match send_command(command_tx, command) {
     Ok(_) => Box::new(rx.from_err::<RedisError>().flatten()),
-    Err(e) => Box::new(future::err(e))
-  }
+    Err(e) => future_error(e)
+  };
+
+  flame_end!("redis:request_response");
+  res
 }

@@ -79,9 +79,15 @@ extern crate crc16;
 #[cfg(feature="sync")]
 extern crate boxfnonce;
 
+#[cfg(feature="enable-flame")]
+extern crate flame;
+
 #[macro_use]
 extern crate log;
 extern crate pretty_env_logger;
+
+#[macro_use]
+mod _flame;
 
 #[macro_use]
 mod utils;
@@ -598,11 +604,14 @@ impl RedisClient {
   ///
   /// https://redis.io/commands/get
   pub fn get<K: Into<RedisKey>>(self, key: K) -> Box<Future<Item=(Self, Option<RedisValue>), Error=RedisError>> {
+    flame_start!("redis:get:1");
     let key = key.into();
 
+    flame_end!("redis:get:1");
     Box::new(utils::request_response(&self.command_tx, &self.state, move || {
       Ok((RedisCommandKind::Get, vec![key.into()]))
     }).and_then(|frame| {
+      flame_start!("redis:get:2");
       let resp = frame.into_single_result()?;
 
       let resp = if resp.kind() == RedisValueKind::Null {
@@ -611,6 +620,7 @@ impl RedisClient {
         Some(resp)
       };
 
+      flame_end!("redis:get:2");
       Ok((self, resp))
     }))
   }
@@ -620,9 +630,12 @@ impl RedisClient {
   ///
   /// https://redis.io/commands/set
   pub fn set<K: Into<RedisKey>, V: Into<RedisValue>>(self, key: K, value: V, expire: Option<Expiration>, options: Option<SetOptions>) -> Box<Future<Item=(Self, bool), Error=RedisError>> {
+    flame_start!("redis:set:1");
     let (key, value) = (key.into(), value.into());
 
+    flame_end!("redis:set:1");
     Box::new(utils::request_response(&self.command_tx, &self.state, move || {
+      flame_start!("redis:set:2");
       let mut args = vec![key.into(), value.into()];
 
       if let Some(expire) = expire {
@@ -634,10 +647,13 @@ impl RedisClient {
         args.push(options.to_string().into());
       }
 
+      flame_end!("redis:set:2");
       Ok((RedisCommandKind::Set, args))
     }).and_then(|frame| {
+      flame_start!("redis:set:3");
       let resp = frame.into_single_result()?;
 
+      flame_end!("redis:set:3");
       Ok((self, resp.kind() != RedisValueKind::Null))
     }))
   }
@@ -820,22 +836,29 @@ impl RedisClient {
   ///
   /// https://redis.io/commands/del
   pub fn del<K: Into<MultipleKeys>>(self, keys: K) -> Box<Future<Item=(Self, usize), Error=RedisError>> {
+    flame_start!("redis:del:1");
     let mut keys = keys.into().inner();
     let args: Vec<RedisValue> = keys.drain(..).map(|k| {
       k.into()
     }).collect();
 
+    flame_end!("redis:del:1");
     Box::new(utils::request_response(&self.command_tx, &self.state, move || {
       Ok((RedisCommandKind::Del, args))
     }).and_then(|frame| {
+      flame_start!("redis:del:2");
+
       let resp = frame.into_single_result()?;
 
-      match resp {
+      let res = match resp {
         RedisValue::Integer(num) => Ok((self, num as usize)),
         _ => Err(RedisError::new(
           RedisErrorKind::ProtocolError, "Invalid DEL response."
         ))
-      }
+      };
+
+      flame_end!("redis:del:2");
+      res
     }))
   }
 
@@ -1047,10 +1070,15 @@ impl RedisClient {
   ///
   /// https://redis.io/commands/hdel
   pub fn hdel<F: Into<MultipleKeys>, K: Into<RedisKey>> (self, key: K, fields: F) -> Box<Future<Item=(Self, usize), Error=RedisError>> {
+    flame_start!("redis:hdel:1");
+
     let key = key.into();
     let mut fields = fields.into().inner();
 
+    flame_end!("redis:hdel:1");
     Box::new(utils::request_response(&self.command_tx, &self.state, move || {
+      flame_start!("redis:hdel:2");
+
       let mut args: Vec<RedisValue> = Vec::with_capacity(fields.len() + 1);
       args.push(key.into());
 
@@ -1058,16 +1086,21 @@ impl RedisClient {
         args.push(field.into());
       }
 
+      flame_end!("redis:hdel:2");
       Ok((RedisCommandKind::HDel, args))
     }).and_then(|frame| {
+      flame_start!("redis:hdel:3");
       let resp = frame.into_single_result()?;
 
-      match resp {
+      let res = match resp {
         RedisValue::Integer(num) => Ok((self, num as usize)),
         _ => Err(RedisError::new(
           RedisErrorKind::ProtocolError, "Invalid HDEL response."
         ))
-      }
+      };
+
+      flame_end!("redis:hdel:3");
+      res
     }))
   }
 
@@ -1104,20 +1137,27 @@ impl RedisClient {
   ///
   /// https://redis.io/commands/hget
   pub fn hget<F: Into<RedisKey>, K: Into<RedisKey>> (self, key: K, field: F) -> Box<Future<Item=(Self, Option<RedisValue>), Error=RedisError>> {
+    flame_start!("redis:hget:1");
     let key = key.into();
     let field = field.into();
 
+    flame_end!("redis:hget:1");
     Box::new(utils::request_response(&self.command_tx, &self.state, move || {
       let args: Vec<RedisValue> = vec![key.into(), field.into()];
 
       Ok((RedisCommandKind::HGet, args))
     }).and_then(|frame| {
+      flame_start!("redis:hget:2");
+
       let resp = frame.into_single_result()?;
 
-      match resp {
+      let res = match resp {
         RedisValue::Null => Ok((self, None)),
         _ => Ok((self, Some(resp)))
-      }
+      };
+
+      flame_end!("redis:hget:2");
+      res
     }))
   }
 
@@ -1321,22 +1361,32 @@ impl RedisClient {
   ///
   /// https://redis.io/commands/hset
   pub fn hset<K: Into<RedisKey>, F: Into<RedisKey>, V: Into<RedisValue>> (self, key: K, field: F, value: V) -> Box<Future<Item=(Self, usize), Error=RedisError>> {
+    flame_start!("redis:hset:1");
+
     let key = key.into();
     let field = field.into();
 
+    flame_end!("redis:hset:1");
     Box::new(utils::request_response(&self.command_tx, &self.state, move || {
+      flame_start!("redis:hset:2");
+
       let args: Vec<RedisValue> = vec![key.into(), field.into(), value.into()];
 
+      flame_end!("redis:hset:2");
       Ok((RedisCommandKind::HSet, args))
     }).and_then(|frame| {
+      flame_start!("redis:hset:3");
       let resp = frame.into_single_result()?;
 
-      match resp {
+      let res = match resp {
         RedisValue::Integer(num) => Ok((self, num as usize)),
         _ => Err(RedisError::new(
           RedisErrorKind::Unknown , "Invalid HSET response."
         ))
-      }
+      };
+
+      flame_end!("redis:hset:3");
+      res
     }))
   }
 
@@ -1411,14 +1461,18 @@ impl RedisClient {
     Box::new(utils::request_response(&self.command_tx, &self.state, move || {
       Ok((RedisCommandKind::Incr, vec![key.into()]))
     }).and_then(|frame| {
+      flame_start!("redis:incr:1");
       let resp = frame.into_single_result()?;
 
-      match resp {
+      let res = match resp {
         RedisValue::Integer(num) => Ok((self, num as i64)),
         _ => Err(RedisError::new(
           RedisErrorKind::InvalidArgument, "Invalid INCR response."
         ))
-      }
+      };
+
+      flame_end!("redis:incr:1");
+      res
     }))
   }
 
