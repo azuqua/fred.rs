@@ -148,38 +148,53 @@ impl Sinks {
   }
 
   pub fn write_command(&self, key: Option<String>, frame: Frame, no_cluster: bool) -> Box<Future<Item=(), Error=RedisError>> {
+
     match *self {
       Sinks::Centralized(ref sink) => {
+        flame_start!("redis:write_command:1");
         let owned_sink = {
           let mut sink_ref = sink.borrow_mut();
 
           match sink_ref.take() {
             Some(s) => s,
-            None => return client_utils::future_error(RedisError::new(
-              RedisErrorKind::Unknown, "Redis socket not found."
-            ))
+            None => {
+              flame_end!("redis:write_command:1");
+              return client_utils::future_error(RedisError::new(
+                RedisErrorKind::Unknown, "Redis socket not found."
+              ))
+            }
           }
         };
 
         let sink_copy = sink.clone();
+        flame_end!("redis:write_command:1");
+
         Box::new(owned_sink.send(frame)
           .map_err(|e| e.into())
           .and_then(move |sink| {
+            flame_start!("redis:write_command:2");
+
             let mut sink_ref = sink_copy.borrow_mut();
             *sink_ref = Some(sink);
 
+            flame_end!("redis:write_command:2");
             Ok(())
           }))
       },
       Sinks::Clustered { ref sinks, ref cluster_cache } => {
+        flame_start!("redis:write_command:3");
+
         let node = if no_cluster {
           let cluster_cache_ref = cluster_cache.borrow();
 
           match cluster_cache_ref.random_slot() {
             Some(s) => s,
-            None => return client_utils::future_error(RedisError::new(
-              RedisErrorKind::Unknown, "Could not find a valid Redis node for command."
-            ))
+            None => {
+              flame_end!("redis:write_command:3");
+              return client_utils::future_error(RedisError::new(
+                RedisErrorKind::Unknown, "Could not find a valid Redis node for command."
+              ))
+            }
           }
         }else{
           let cluster_cache_ref = cluster_cache.borrow();
@@ -187,9 +202,12 @@ impl Sinks {
           // hash the key to find the right redis node
           let key = match key {
             Some(k) => k,
-            None => return client_utils::future_error(RedisError::new(
-              RedisErrorKind::Unknown, "Invalid command. (Missing key)."
-            ))
+            None => {
+              flame_end!("redis:write_command:3");
+              return client_utils::future_error(RedisError::new(
+                RedisErrorKind::Unknown, "Invalid command. (Missing key)."
+              ))
+            }
           };
 
           let slot = protocol_utils::redis_crc16(&key);
@@ -197,9 +215,12 @@ impl Sinks {
 
           match cluster_cache_ref.get_server(slot) {
             Some(s) => s,
-            None => return client_utils::future_error(RedisError::new(
-              RedisErrorKind::Unknown, "Invalid cluster state. Could not find Redis node for request."
-            ))
+            None => {
+              flame_end!("redis:write_command:3");
+              return client_utils::future_error(RedisError::new(
+                RedisErrorKind::Unknown, "Invalid cluster state. Could not find Redis node for request."
+              ))
+            }
           }
         };
 
@@ -210,18 +231,25 @@ impl Sinks {
           
           match sinks_ref.remove(&node.server) {
             Some(s) => s,
-            None => return client_utils::future_error(RedisError::new(
-              RedisErrorKind::Unknown, "Could not find Redis socket for cluster node."
-            ))
+            None => {
+              flame_end!("redis:write_command:3");
+              return client_utils::future_error(RedisError::new(
+                RedisErrorKind::Unknown, "Could not find Redis socket for cluster node."
+              ))
+            }
           }
         };
 
         let sinks = sinks.clone();
+        flame_end!("redis:write_command:3");
+
         Box::new(owned_sink.send(frame)
           .map_err(|e| e.into())
           .and_then(move |sink| {
+            flame_start!("redis:write_command:4");
             let mut sinks_ref = sinks.borrow_mut();
             sinks_ref.insert(node.server.clone(), sink);
+            flame_end!("redis:write_command:4");
 
             Ok(())
           }))
@@ -430,9 +458,10 @@ impl Multiplexer {
     };
 
     Box::new(frame_stream.fold(multiplexer, |multiplexer, frame: Frame| {
+      flame_start!("redis:listen_frame");
       trace!("Multiplexer stream recv frame.");
 
-      if frame.kind() == FrameKind::Moved || frame.kind() == FrameKind::Ask {
+      let res = if frame.kind() == FrameKind::Moved || frame.kind() == FrameKind::Ask {
         // pause commands to refresh the cached cluster state
         let _ = multiplexer.close_commands();
 
@@ -442,12 +471,16 @@ impl Multiplexer {
       }else{
         utils::process_frame(&multiplexer, frame);
         Ok::<Rc<Multiplexer>, RedisError>(multiplexer)
-      }
+      };
+
+      flame_end!("redis:listen_frame");
+      res
     }))
   }
 
   /// Send a command to the Redis server(s).
   pub fn write_command(&self, mut request: RedisCommand) -> Box<Future<Item=(), Error=RedisError>> {
+    flame_start!("redis:write_command");
     trace!("Multiplexer sending command {:?}", request.kind);
 
     let no_cluster = request.no_cluster();
@@ -457,13 +490,22 @@ impl Multiplexer {
       None
     };
 
-    let frame = fry!(request.to_frame());
+    let frame = match request.to_frame() {
+      Ok(f) => f,
+      Err(e) => {
+        flame_end!("redis:write_command");
+        return client_utils::future_error(e);
+      }
+    };
 
-    if request.kind == RedisCommandKind::Quit {
+    let res = if request.kind == RedisCommandKind::Quit {
       self.sinks.quit(frame)
     }else{
       self.sinks.write_command(key, frame, no_cluster)
-    }
+    };
+
+    flame_end!("redis:write_command");
+    res
   }
 
 }

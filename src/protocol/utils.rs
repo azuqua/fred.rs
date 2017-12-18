@@ -64,6 +64,8 @@ mod readers {
   };
 
   pub fn read_prefix_len(cursor: &mut Cursor<BytesMut>) -> Result<isize, RedisError> {
+    flame_start!("redis:read_prefix_len");
+
     let mut len_buf = Vec::new();
     let _ = cursor.read_until(LF as u8, &mut len_buf)?;
 
@@ -71,10 +73,14 @@ mod readers {
     pop_with_error(&mut len_buf, CR)?;
 
     let len_str = String::from_utf8(len_buf)?;
-    Ok(len_str.parse::<isize>()?)
+    let out = len_str.parse::<isize>()?;
+
+    flame_end!("redis:read_prefix_len");
+    Ok(out)
   }
 
   pub fn read_to_crlf(cursor: &mut Cursor<BytesMut>) -> Result<Vec<u8>, RedisError> {
+    flame_start!("redis:read_to_crlf");
     let mut payload = Vec::new();
     cursor.read_until(LF as u8, &mut payload)?;
 
@@ -82,22 +88,32 @@ mod readers {
     pop_with_error(&mut payload, LF)?;
     pop_with_error(&mut payload, CR)?;
 
+    flame_end!("redis:read_to_crlf");
     Ok(payload)
   }
 
   pub fn read_exact(cursor: &mut Cursor<BytesMut>, len: u64, buf: &mut Vec<u8>) -> Result<usize, RedisError> {
+    flame_start!("redis:read_exact");
     let mut take = cursor.take(len);
-    Ok(take.read_to_end(buf)?)
+    let out = take.read_to_end(buf)?;
+
+    flame_end!("redis:read_exact");
+    Ok(out)
   }
 
 }
 
 pub fn crc16_xmodem(key: &str) -> u16 {
-  State::<XMODEM>::calculate(key.as_bytes()) % REDIS_CLUSTER_SLOTS
+  flame_start!("redis:crc16_xmodem");
+  let out = State::<XMODEM>::calculate(key.as_bytes()) % REDIS_CLUSTER_SLOTS;
+  flame_end!("redis:crc16_xmodem");
+
+  out
 }
 
 /// Maps a key to its hash slot.
 pub fn redis_crc16(key: &str) -> u16 {
+  flame_start!("redis:redis_crc16");
   let (mut i, mut j): (Option<usize>, Option<usize>) = (None, None);
 
   for (idx, c) in key.chars().enumerate() {
@@ -108,6 +124,7 @@ pub fn redis_crc16(key: &str) -> u16 {
   }
 
   if i.is_none() || (i.is_some() && i.unwrap() == key.len() - 1) {
+    flame_end!("redis:redis_crc16");
     return crc16_xmodem(key);
   }
 
@@ -120,19 +137,26 @@ pub fn redis_crc16(key: &str) -> u16 {
   }
 
   if j.is_none() {
+    flame_end!("redis:redis_crc16");
     return crc16_xmodem(key);
   }
 
   let j = j.unwrap();
-  if i+j == key.len() || j == 0 {
+  let out = if i+j == key.len() || j == 0 {
     crc16_xmodem(key)
   }else{
     crc16_xmodem(&key[i+1..i+j+1])
-  }
+  };
+
+  flame_end!("redis:redis_crc16");
+  out
 }
 
 pub fn binary_search(slots: &Vec<Rc<SlotRange>>, slot: u16) -> Option<Rc<SlotRange>> {
+  flame_start!("redis:binary_search");
+
   if slot > REDIS_CLUSTER_SLOTS {
+    flame_end!("redis:binary_search");
     return None;
   }
 
@@ -146,10 +170,13 @@ pub fn binary_search(slots: &Vec<Rc<SlotRange>>, slot: u16) -> Option<Rc<SlotRan
     }else if slot > slots[mid].end {
       low = mid + 1;
     }else{
-      return Some(slots[mid].clone());
+      let out = Some(slots[mid].clone());
+      flame_end!("redis:binary_search");
+      return out;
     }
   }
 
+  flame_end!("redis:binary_search");
   None
 }
 
@@ -245,19 +272,25 @@ pub fn parse_cluster_nodes(status: String) -> Result<HashMap<String, Vec<SlotRan
 
 // Extracts the first and rest words of a string and returns them in a tuple.
 fn extract_first_word(s: String) -> (String, String) {
+  flame_start!("redis:extract_first_word");
+
   let mut parts = s.split_whitespace();
   let first = match parts.next() {
     Some(s) => s.to_owned(),
     None => "".to_owned()
   };
   let remaining: Vec<String> = parts.map(|s| s.to_owned()).collect();
+  let out = (first, remaining.join(" "));
+  flame_end!("redis:extract_first_word");
 
-  (first, remaining.join(" "))
+  out
 }
 
 pub fn better_error(resp: String) -> RedisError {
+  flame_start!("redis:better_error");
+
   let (first, rest) = extract_first_word(resp.clone());
-  match first.as_ref(){
+  let out = match first.as_ref(){
     ""          => RedisError::new(RedisErrorKind::Unknown, "No response!"),
     "ERR"       => RedisError::new(RedisErrorKind::Unknown, rest),
     "WRONGTYPE" => RedisError::new(RedisErrorKind::InvalidArgument, rest),
@@ -270,7 +303,10 @@ pub fn better_error(resp: String) -> RedisError {
       }
     }
     _   => RedisError::new(RedisErrorKind::Unknown, resp)
-  }
+  };
+
+  flame_end!("redis:better_error");
+  out
 }
 
 pub fn pop_with_error<T>(d: &mut Vec<T>, expected: char) -> Result<T, RedisError> {
@@ -283,7 +319,10 @@ pub fn pop_with_error<T>(d: &mut Vec<T>, expected: char) -> Result<T, RedisError
 }
 
 pub fn pop_trailing_crlf(d: &mut Cursor<BytesMut>) -> Result<(), RedisError> {
+  flame_start!("redis:pop_trailing_crlf");
+
   if d.remaining() < 2 {
+    flame_end!("redis:pop_trailing_crlf");
     return Err(RedisError::new(
       RedisErrorKind::Unknown, "Missing final CRLF."
     ));
@@ -292,22 +331,29 @@ pub fn pop_trailing_crlf(d: &mut Cursor<BytesMut>) -> Result<(), RedisError> {
   let curr_byte = d.get_u8();
   let next_byte = d.get_u8();
 
-  if curr_byte != CR as u8 || next_byte != LF as u8 {
+  let out = if curr_byte != CR as u8 || next_byte != LF as u8 {
     Err(RedisError::new(
       RedisErrorKind::Unknown, "Missing final CRLF."
     ))
   }else{
     Ok(())
-  }
+  };
+
+  flame_end!("redis:pop_trailing_crlf");
+  out
 }
 
 pub fn write_crlf(bytes: &mut BytesMut) {
+  flame_start!("redis:write_crlf");
   bytes.put_u8(CR as u8);
   bytes.put_u8(LF as u8);
+  flame_end!("redis:write_crlf");
 }
 
 pub fn is_cluster_error(payload: &str) -> Option<Frame> {
-  if payload.starts_with("MOVED") {
+  flame_start!("redis:is_cluster_error");
+
+  let out = if payload.starts_with("MOVED") {
     // only keep the IP here since this will result in the client's cluster state cache being reset anyways
     let parts: Vec<&str> = payload.split(" ").collect();
     Some(Frame::Moved(parts[2].to_owned()))
@@ -316,13 +362,18 @@ pub fn is_cluster_error(payload: &str) -> Option<Frame> {
     Some(Frame::Ask(parts[2].to_owned()))
   }else{
     None
-  }
+  };
+
+  flame_end!("redis:is_cluster_error");
+  out
 }
 
 // sure hope we have enough error messages
 pub fn frame_to_pubsub(frame: Frame) -> Result<(String, RedisValue), RedisError> {
-  if let Frame::Array(mut frames) = frame {
+  flame_start!("redis:frame_to_pubsub");
+  let out = if let Frame::Array(mut frames) = frame {
     if frames.len() != 3 {
+      flame_end!("redis:frame_to_pubsub");
       return Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid pubsub message frames."));
     }
 
@@ -332,18 +383,30 @@ pub fn frame_to_pubsub(frame: Frame) -> Result<(String, RedisValue), RedisError>
 
     let message_type = match message_type.to_string() {
       Some(s) => s,
-      None => return Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid pubsub message type frame."))
+      None => {
+        flame_end!("redis:frame_to_pubsub");
+        return Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid pubsub message type frame."))
+      }
     };
 
     if message_type == "message" {
       let channel = match channel.to_string() {
         Some(c) => c,
-        None => return Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid pubsub channel frame."))
+        None => {
+          flame_end!("redis:frame_to_pubsub");
+          return Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid pubsub channel frame."))
+        }
       };
 
       // the payload is a bulk string on pubsub messages
       if payload.kind() == FrameKind::BulkString {
-        let payload = try!(payload.into_results()).pop();
+        let payload = match payload.into_results() {
+          Ok(mut r) => r.pop(),
+          Err(e) => {
+            flame_end!("redis:frame_to_pubsub");
+            return Err(e);
+          }
+        };
 
         if payload.is_none() {
           Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid pubsub channel payload."))
@@ -358,51 +421,77 @@ pub fn frame_to_pubsub(frame: Frame) -> Result<(String, RedisValue), RedisError>
     }
   }else{
     Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid pubsub message frame."))
-  }
+  };
+
+  flame_end!("redis:frame_to_pubsub");
+  out
 }
 
 pub fn ends_with_crlf(bytes: &BytesMut) -> bool {
+  flame_start!("redis:ends_with_crlf");
+
   match bytes.get(bytes.len() - 1) {
-    Some(b) => if *b != LF as u8 { return false; },
-    None => return false
+    Some(b) => if *b != LF as u8 {
+      flame_end!("redis:ends_with_crlf");
+      return false;
+    },
+    None => {
+      flame_end!("redis:ends_with_crlf");
+      return false
+    }
   };
   match bytes.get(bytes.len() - 2) {
-    Some(b) => if *b != CR as u8 { return false; },
-    None => return false
+    Some(b) => if *b != CR as u8 {
+      flame_end!("redis:ends_with_crlf");
+      return false;
+    },
+    None => {
+      flame_end!("redis:ends_with_crlf");
+      return false
+    }
   };
 
+  flame_end!("redis:ends_with_crlf");
   true
 }
 
 pub fn command_args(kind: &RedisCommandKind) -> Option<Frame> {
+  flame_start!("redis:command_args");
+
   // sure would be nice if `if let` worked with other expressions
   let frame = if kind.is_cluster_command() {
     if let Some(arg) = kind.cluster_args() {
       Frame::BulkString(arg.into_bytes())
     }else{
+      flame_end!("redis:command_args");
       return None;
     }
   }else if kind.is_client_command() {
     if let Some(arg) = kind.client_args() {
       Frame::BulkString(arg.into_bytes())
     }else{
+      flame_end!("redis:command_args");
       return None;
     }
   }else if kind.is_config_command() {
     if let Some(arg) = kind.config_args() {
       Frame::BulkString(arg.into_bytes())
     }else{
+      flame_end!("redis:command_args");
       return None;
     }
   }else{
+    flame_end!("redis:command_args");
     return None;
   };
 
+  flame_end!("redis:command_args");
   Some(frame)
 }
 
 pub fn check_expected_size(expected: usize, max: &Option<usize>) -> Result<(), RedisError> {
-  match *max {
+  flame_start!("redis:check_expected_size");
+  let out = match *max {
     Some(ref max) => if expected <= *max {
       Ok(())
     }else{
@@ -411,21 +500,24 @@ pub fn check_expected_size(expected: usize, max: &Option<usize>) -> Result<(), R
       ))
     },
     None => Ok(())
-  }
-}
+  };
 
-// TODO change this to remove the copy into buf
-// do the same thing, but clone the mut bytes at start so any split_off calls only affect the clone
+  flame_end!("redis:check_expected_size");
+  out
+}
 
 /// Takes in a working buffer of previous bytes, a new set of bytes, and a max_size option.
 /// Returns an option with the parsed frame and its size in bytes, including crlf padding and the kind/type byte.
 pub fn bytes_to_frames(buf: &mut BytesMut, max_size: &Option<usize>) -> Result<Option<(Frame, usize)>, RedisError> {
+  flame_start!("redis:bytes_to_frames");
+
   let full_len = buf.len();
   // operate on a clone of the bytes so split_off calls dont affect the original buffer
   let mut bytes = buf.clone();
   let mut cursor = Cursor::new(bytes);
 
   if cursor.remaining() < 1 {
+    flame_end!("redis:bytes_to_frames");
     return Err(RedisError::new(
       RedisErrorKind::ProtocolError, "Empty frame bytes."
     ));
@@ -434,9 +526,12 @@ pub fn bytes_to_frames(buf: &mut BytesMut, max_size: &Option<usize>) -> Result<O
   let first_byte = cursor.get_u8();
   let data_type = match FrameKind::from_byte(first_byte) {
     Some(d) => d,
-    None => return Err(RedisError::new(
-      RedisErrorKind::ProtocolError, format!("Invalid first byte {}.", first_byte)
-    ))
+    None => {
+      flame_end!("redis:bytes_to_frames");
+      return Err(RedisError::new(
+        RedisErrorKind::ProtocolError, format!("Invalid first byte {}.", first_byte)
+      ))
+    }
   };
 
   let frame = match data_type {
@@ -502,6 +597,7 @@ pub fn bytes_to_frames(buf: &mut BytesMut, max_size: &Option<usize>) -> Result<O
           Some((Frame::Array(frames), full_len))
         }
       }else{
+        flame_end!("redis:bytes_to_frames");
         return Err(RedisError::new(
           RedisErrorKind::ProtocolError, format!("Invalid payload size: {}.", expected_len)
         ))
@@ -537,12 +633,14 @@ pub fn bytes_to_frames(buf: &mut BytesMut, max_size: &Option<usize>) -> Result<O
     ))
   };
 
+  flame_end!("redis:bytes_to_frames");
   Ok(frame)
 }
 
 pub fn frames_to_bytes(frame: &mut Frame, bytes: &mut BytesMut) -> Result<(), RedisError> {
+  flame_start!("redis:frames_to_bytes");
   let frame_byte = frame.kind().to_byte();
- 
+
   match *frame {
     Frame::BulkString(ref mut buf) => {
       let len_str = buf.len().to_string();
@@ -584,11 +682,15 @@ pub fn frames_to_bytes(frame: &mut Frame, bytes: &mut BytesMut) -> Result<(), Re
     },
     // only an array, bulk strings, and null values are allowed on outbound frames
     // the caller is responsible for coercing other types to bulk strings on the way out
-    _ => return Err(RedisError::new(
-      RedisErrorKind::ProtocolError, format!("Invalid outgoing data frame type {:?}.", frame.kind())
-    ))
+    _ => {
+      flame_end!("redis:frames_to_bytes");
+      return Err(RedisError::new(
+        RedisErrorKind::ProtocolError, format!("Invalid outgoing data frame type {:?}.", frame.kind())
+      ))
+    }
   };
 
+  flame_end!("redis:frames_to_bytes");
   Ok(())
 }
 

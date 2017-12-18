@@ -391,11 +391,16 @@ pub fn authenticate(transport: RedisTransport, key: Option<String>) -> Box<Futur
 }
 
 pub fn process_frame(multiplexer: &Rc<Multiplexer>, frame: Frame) {
+  flame_start!("redis:process_frame");
+
   if frame.is_pubsub_message() {
     let (channel, message) = match protocol_utils::frame_to_pubsub(frame) {
       Ok((c, m)) => (c, m),
       // TODO or maybe send to error stream
-      Err(_) => return
+      Err(_) => {
+        flame_end!("redis:process_frame");
+        return;
+      }
     };
 
     let mut to_remove = VecDeque::new();
@@ -440,10 +445,14 @@ pub fn process_frame(multiplexer: &Rc<Multiplexer>, frame: Frame) {
 
     let last_request = match multiplexer.take_last_request() {
       Some(s) => s,
-      None => return
+      None => {
+        flame_end!("redis:process_frame");
+        return
+      }
     };
     let _ = last_request.send(Ok(frame));
   }
+  flame_end!("redis:process_frame");
 }
 
 pub fn create_multiplexer_ft(multiplexer: Rc<Multiplexer>, state: Arc<RwLock<ClientState>>) -> Box<Future<Item=(), Error=RedisError>> {
@@ -471,6 +480,8 @@ pub fn create_commands_ft(
   let state = stream_state.clone();
 
   Box::new(rx.fold((multiplexer, error_tx), move |(multiplexer, error_tx), mut command| {
+    flame_start!("redis:handle_multiplexer_command:1");
+
     debug!("Redis client running command {:?}", command.kind);
 
     if command.kind == RedisCommandKind::_Close {
@@ -482,12 +493,15 @@ pub fn create_commands_ft(
       multiplexer.sinks.close();
       multiplexer.streams.close();
 
+      flame_end!("redis:handle_multiplexer_command:1");
       Box::new(Either::A(future::err(())
         .map(|_: ()| (multiplexer, error_tx))))
     }else{
       let resp_tx = command.tx.take();
 
+      flame_end!("redis:handle_multiplexer_command:1");
       Box::new(Either::B(multiplexer.write_command(command).then(move |result| {
+        flame_start!("redis:handle_multiplexer_command:2");
         match result {
           Ok(_) => {
             // create a second oneshot channel for notifying when to move on to the next command
@@ -496,6 +510,7 @@ pub fn create_commands_ft(
             multiplexer.set_last_request(resp_tx);
             multiplexer.set_last_caller(Some(m_tx));
 
+            flame_end!("redis:handle_multiplexer_command:2");
             Box::new(m_rx.then(|_| Ok(multiplexer)))
           },
           Err(e) => {
@@ -504,6 +519,7 @@ pub fn create_commands_ft(
               let _ = tx.send(Err(e));
             }
 
+            flame_end!("redis:handle_multiplexer_command:2");
             client_utils::future_ok(multiplexer)
           }
         }
@@ -513,7 +529,9 @@ pub fn create_commands_ft(
     }
   })
   .then(move |result| {
-    match result {
+    flame_start!("redis:handle_multiplexer_command:3");
+
+    let res = match result {
       Ok((multiplexer, _)) => {
         debug!("Command stream closing after quit.");
 
@@ -527,7 +545,10 @@ pub fn create_commands_ft(
       },
       // these errors can only be (), so ignore them
       Err(_) => client_utils::future_ok(())
-    }
+    };
+
+    flame_end!("redis:handle_multiplexer_command:3");
+    res
   })
   .from_err::<RedisError>())
 }
