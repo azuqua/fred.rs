@@ -84,6 +84,8 @@ use super::commands::{
 /// See `examples/sync_borrowed.rs` for usage examples.
 #[derive(Clone)]
 pub struct RedisClientRemote {
+  // ew
+  state: Arc<RwLock<Arc<RwLock<ClientState>>>>,
   command_tx: Arc<RwLock<Option<UnboundedSender<CommandFn>>>>,
   // buffers for holding on_connect, on_error, and on_message mpsc senders created
   // before the underlying client is ready. upon calling init() these will be
@@ -94,7 +96,7 @@ pub struct RedisClientRemote {
   /// Latency metrics tracking, enabled with the feature `metrics`.
   latency_stats: Arc<RwLock<Option<Arc<RwLock<LatencyTracker>>>>>,
   /// Payload size metrics, enabled with the feature `metrics`.
-  size_stats: Arc<RwLock<Option<Arc<RwLock<SizeTracker>>>>>
+  size_stats: Arc<RwLock<Option<Arc<RwLock<SizeTracker>>>>>,
 }
 
 impl fmt::Debug for RedisClientRemote {
@@ -108,6 +110,7 @@ impl RedisClientRemote {
   /// Create a new, empty `RedisClientRemote`.
   pub fn new() -> RedisClientRemote {
     RedisClientRemote {
+      state: utils::init_state(),
       command_tx: Arc::new(RwLock::new(None)),
       connect_tx: Arc::new(RwLock::new(VecDeque::new())),
       error_tx: Arc::new(RwLock::new(VecDeque::new())),
@@ -125,6 +128,17 @@ impl RedisClientRemote {
   /// Convert this `borrowed::RedisClientRemote` to an `owned::RedisClientRemote`.
   pub fn into_owned(self) -> owned::RedisClientRemote {
     owned::RedisClientRemote::from_borrowed(self)
+  }
+
+  /// Read the state of the underlying connection.
+  pub fn state(&self) -> ClientState {
+    utils::read_state(&self.state)
+  }
+
+  /// Read a clone of the internal connection state. Used internally by remote wrappers.
+  #[doc(hidden)]
+  pub fn state_cloned(&self) -> Arc<RwLock<Arc<RwLock<ClientState>>>> {
+    self.state.clone()
   }
 
   #[cfg(feature="metrics")]
@@ -216,6 +230,7 @@ impl RedisClientRemote {
 
       *command_ref = Some(tx);
     }
+    utils::replace_state(&self.state, client.state_cloned());
 
     let (latency, size) = client.metrics_trackers_cloned();
     {

@@ -67,6 +67,7 @@ use super::commands::ConnectSender;
 /// See `examples/sync_owned.rs` for usage examples.
 #[derive(Clone)]
 pub struct RedisClientRemote {
+  state: Arc<RwLock<Arc<RwLock<ClientState>>>>,
   // use the borrowed interface under the hood
   borrowed: Arc<RwLock<Option<RedisClientBorrowed>>>,
   // buffers for holding on_connect, on_error, and on_message mpsc senders created
@@ -92,6 +93,7 @@ impl RedisClientRemote {
   /// Create a new, empty RedisClientRemote.
   pub fn new() -> RedisClientRemote {
     RedisClientRemote {
+      state: utils::init_state(),
       borrowed: Arc::new(RwLock::new(None)),
       connect_tx: Arc::new(RwLock::new(VecDeque::new())),
       error_tx: Arc::new(RwLock::new(VecDeque::new())),
@@ -113,6 +115,7 @@ impl RedisClientRemote {
     };
 
     RedisClientRemote {
+      state: client.state_cloned(),
       borrowed: Arc::new(RwLock::new(Some(client))),
       latency_stats: latency,
       size_stats: size,
@@ -137,6 +140,17 @@ impl RedisClientRemote {
   // Read a reference to the underlying borrowed instance.
   pub fn inner_borrowed(&self) -> &Arc<RwLock<Option<RedisClientBorrowed>>> {
     &self.borrowed
+  }
+
+  /// Read the state of the underlying connection.
+  pub fn state(&self) -> ClientState {
+    utils::read_state(&self.state)
+  }
+
+  /// Read a clone of the internal connection state. Used internally by remote wrappers.
+  #[doc(hidden)]
+  pub fn state_cloned(&self) -> Arc<RwLock<Arc<RwLock<ClientState>>>> {
+    self.state.clone()
   }
 
   #[cfg(feature="metrics")]
@@ -192,6 +206,7 @@ impl RedisClientRemote {
   /// This function must run on the same thread that created the `RedisClient`.
   pub fn init(&self, client: RedisClient) -> Box<Future<Item=RedisClient, Error=RedisError>> {
     let borrowed = borrowed::RedisClientRemote::new();
+    utils::replace_state(&self.state, client.state_cloned());
 
     utils::transfer_senders(&self.connect_tx, borrowed.read_connect_tx());
     utils::transfer_senders(&self.error_tx, borrowed.read_error_tx());

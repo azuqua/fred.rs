@@ -249,7 +249,6 @@ pub fn is_clustered(config: &Rc<RefCell<RedisConfig>>) -> bool {
   config_guard.deref().is_clustered()
 }
 
-
 pub fn split(command_tx: &Rc<RefCell<Option<UnboundedSender<RedisCommand>>>>, config: &Rc<RefCell<RedisConfig>>, handle: &Handle)
   -> Box<Future<Item=Vec<(RedisClient, RedisConfig)>, Error=RedisError>>
 {
