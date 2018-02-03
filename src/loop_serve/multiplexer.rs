@@ -1,6 +1,9 @@
 
-
+use std::mem;
 use std::sync::Arc;
+use std::ops::{
+  DerefMut
+};
 
 use super::utils;
 use types::*;
@@ -40,8 +43,13 @@ use std::rc::Rc;
 use std::cell::RefCell;
 
 use std::collections::{
-  HashMap,
-  VecDeque
+  VecDeque,
+  BTreeMap
+};
+
+use ::metrics::{
+  SizeTracker,
+  LatencyTracker
 };
 
 type FrameStream = Box<Stream<Item=Frame, Error=RedisError>>;
@@ -51,7 +59,7 @@ pub enum Sinks {
   Centralized(Rc<RefCell<Option<RedisSink>>>),
   Clustered {
     cluster_cache: Rc<RefCell<ClusterKeyCache>>,
-    sinks: Rc<RefCell<HashMap<String, RedisSink>>>
+    sinks: Rc<RefCell<BTreeMap<String, RedisSink>>>
   }
 }
 
@@ -80,6 +88,46 @@ impl Sinks {
     if let Sinks::Clustered {ref cluster_cache, ..} = *self {
       let mut cache_ref = cluster_cache.borrow_mut();
       *cache_ref = cache;
+    }
+  }
+
+  pub fn centralized_configs(&self, key: Option<String>) -> Result<Vec<RedisConfig>, RedisError> {
+    match *self {
+      Sinks::Clustered {ref sinks, ..} => {
+        let sinks_guard = sinks.borrow();
+
+        let mut configs = Vec::with_capacity(sinks_guard.len());
+        for (ip_str, _) in sinks_guard.iter() {
+          let mut parts: Vec<String> = ip_str.split(":").map(|part| {
+            part.to_owned()
+          }).collect();
+
+          if parts.len() != 2 {
+            return Err(RedisError::new(
+              RedisErrorKind::Unknown, "Invalid host/port in cluster sink cache."
+            ));
+          }
+
+          let port = match parts.pop().unwrap().parse::<u16>() {
+            Ok(p) => p,
+            Err(_) => return Err(RedisError::new(
+              RedisErrorKind::Unknown, "Invalid port in cluster sink cache."
+            ))
+          };
+
+          configs.push(RedisConfig::Centralized {
+            host: parts.pop().unwrap(),
+            port: port,
+            key: key.clone(),
+            max_value_size: None
+          })
+        }
+
+        Ok(configs)
+      },
+      Sinks::Centralized(_) => Err(RedisError::new(
+        RedisErrorKind::Unknown, "Client is not using a clustered deployment."
+      ))
     }
   }
 
@@ -116,8 +164,9 @@ impl Sinks {
         let (sinks_iter, sinks_len) = {
           let mut sinks_ref = sinks.borrow_mut();
           let sinks_len = sinks_ref.len();
+          let old_sinks = mem::replace(sinks_ref.deref_mut(), BTreeMap::new());
 
-          let iter: Vec<Result<(String, RedisSink), RedisError>> = sinks_ref.drain().map(|(server, sink)| {
+          let iter: Vec<Result<(String, RedisSink), RedisError>> = old_sinks.into_iter().map(|(server, sink)| {
             Ok::<(String, RedisSink), RedisError>((server, sink))
           }).collect();
 
@@ -151,14 +200,13 @@ impl Sinks {
 
     match *self {
       Sinks::Centralized(ref sink) => {
-        flame_start!("redis:write_command:1");
+        let _guard = flame_start!("redis:write_command:1");
         let owned_sink = {
           let mut sink_ref = sink.borrow_mut();
 
           match sink_ref.take() {
             Some(s) => s,
             None => {
-              flame_end!("redis:write_command:1");
               return client_utils::future_error(RedisError::new(
                 RedisErrorKind::Unknown, "Redis socket not found."
               ))
@@ -167,22 +215,20 @@ impl Sinks {
         };
 
         let sink_copy = sink.clone();
-        flame_end!("redis:write_command:1");
 
         Box::new(owned_sink.send(frame)
           .map_err(|e| e.into())
           .and_then(move |sink| {
-            flame_start!("redis:write_command:2");
+            let _guard = flame_start!("redis:write_command:2");
 
             let mut sink_ref = sink_copy.borrow_mut();
             *sink_ref = Some(sink);
 
-            flame_end!("redis:write_command:2");
             Ok(())
           }))
       },
       Sinks::Clustered { ref sinks, ref cluster_cache } => {
-        flame_start!("redis:write_command:3");
+        let _guard = flame_start!("redis:write_command:3");
 
         let node = if no_cluster {
           let cluster_cache_ref = cluster_cache.borrow();
@@ -190,7 +236,6 @@ impl Sinks {
           match cluster_cache_ref.random_slot() {
             Some(s) => s,
             None => {
-              flame_end!("redis:write_command:3");
               return client_utils::future_error(RedisError::new(
                 RedisErrorKind::Unknown, "Could not find a valid Redis node for command."
               ))
@@ -203,7 +248,6 @@ impl Sinks {
           let key = match key {
             Some(k) => k,
             None => {
-              flame_end!("redis:write_command:3");
               return client_utils::future_error(RedisError::new(
                 RedisErrorKind::Unknown, "Invalid command. (Missing key)."
               ))
@@ -216,7 +260,6 @@ impl Sinks {
           match cluster_cache_ref.get_server(slot) {
             Some(s) => s,
             None => {
-              flame_end!("redis:write_command:3");
               return client_utils::future_error(RedisError::new(
                 RedisErrorKind::Unknown, "Invalid cluster state. Could not find Redis node for request."
               ))
@@ -232,7 +275,6 @@ impl Sinks {
           match sinks_ref.remove(&node.server) {
             Some(s) => s,
             None => {
-              flame_end!("redis:write_command:3");
               return client_utils::future_error(RedisError::new(
                 RedisErrorKind::Unknown, "Could not find Redis socket for cluster node."
               ))
@@ -241,15 +283,14 @@ impl Sinks {
         };
 
         let sinks = sinks.clone();
-        flame_end!("redis:write_command:3");
 
         Box::new(owned_sink.send(frame)
           .map_err(|e| e.into())
           .and_then(move |sink| {
-            flame_start!("redis:write_command:4");
+            let _guard = flame_start!("redis:write_command:4");
+
             let mut sinks_ref = sinks.borrow_mut();
             sinks_ref.insert(node.server.clone(), sink);
-            flame_end!("redis:write_command:4");
 
             Ok(())
           }))
@@ -340,11 +381,17 @@ pub struct Multiplexer {
 
   // oneshot sender for the actual result to be sent to the caller
   pub last_request: RefCell<ResponseSender>,
+  pub last_request_sent: RefCell<Option<i64>>,
   // oneshot sender for the command stream to be notified when it can start processing the next request
   pub last_caller: RefCell<Option<OneshotSender<RefreshCache>>>,
 
   pub streams: Streams,
-  pub sinks: Sinks
+  pub sinks: Sinks,
+
+  /// Latency metrics tracking, enabled with the feature `metrics`.
+  pub latency_stats: Arc<RwLock<LatencyTracker>>,
+  /// Payload size metrics, enabled with the feature `metrics`.
+  pub size_stats: Arc<RwLock<SizeTracker>>
 }
 
 impl fmt::Debug for Multiplexer {
@@ -355,13 +402,14 @@ impl fmt::Debug for Multiplexer {
 
 impl Multiplexer {
 
-  pub fn new(
-    config: Rc<RefCell<RedisConfig>>,
-    message_tx: Rc<RefCell<VecDeque<UnboundedSender<(String, RedisValue)>>>>,
-    error_tx: Rc<RefCell<VecDeque<UnboundedSender<RedisError>>>>,
-    command_tx: Rc<RefCell<Option<UnboundedSender<RedisCommand>>>>,
-    state: Arc<RwLock<ClientState>>
-  ) -> Rc<Multiplexer>
+  pub fn new(config: Rc<RefCell<RedisConfig>>,
+             message_tx: Rc<RefCell<VecDeque<UnboundedSender<(String, RedisValue)>>>>,
+             error_tx: Rc<RefCell<VecDeque<UnboundedSender<RedisError>>>>,
+             command_tx: Rc<RefCell<Option<UnboundedSender<RedisCommand>>>>,
+             state: Arc<RwLock<ClientState>>,
+             latency: Arc<RwLock<LatencyTracker>>,
+             size: Arc<RwLock<SizeTracker>>)
+    -> Rc<Multiplexer>
   {
 
     let (streams, sinks, clustered) = {
@@ -384,7 +432,7 @@ impl Multiplexer {
             // safe b/c when the first arg is None nothing runs that could return an error.
             // see the `ClusterKeyCache::new()` definition
             cluster_cache: Rc::new(RefCell::new(ClusterKeyCache::new(None).unwrap())),
-            sinks: Rc::new(RefCell::new(HashMap::new()))
+            sinks: Rc::new(RefCell::new(BTreeMap::new()))
           }
         }
       };
@@ -399,10 +447,13 @@ impl Multiplexer {
       command_tx: command_tx,
       state: state,
       last_request: RefCell::new(None),
+      last_request_sent: RefCell::new(None),
       last_caller: RefCell::new(None),
       config: config,
       streams: streams,
-      sinks: sinks
+      sinks: sinks,
+      latency_stats: latency,
+      size_stats: size
     })
   }
 
@@ -438,10 +489,12 @@ impl Multiplexer {
   }
 
   pub fn set_last_request(&self, sender: ResponseSender) {
-    utils::set_last_request(&self.last_request, sender)
+    utils::set_last_request_sent_now(&self.last_request_sent);
+    utils::set_last_request(&self.last_request, sender);
   }
 
   pub fn take_last_request(&self) -> ResponseSender {
+    utils::sample_latency(&self.last_request_sent, &self.latency_stats);
     utils::take_last_request(&self.last_request)
   }
 
@@ -458,7 +511,7 @@ impl Multiplexer {
     };
 
     Box::new(frame_stream.fold(multiplexer, |multiplexer, frame: Frame| {
-      flame_start!("redis:listen_frame");
+      let _guard = flame_start!("redis:listen_frame");
       trace!("Multiplexer stream recv frame.");
 
       let res = if frame.kind() == FrameKind::Moved || frame.kind() == FrameKind::Ask {
@@ -473,14 +526,13 @@ impl Multiplexer {
         Ok::<Rc<Multiplexer>, RedisError>(multiplexer)
       };
 
-      flame_end!("redis:listen_frame");
       res
     }))
   }
 
   /// Send a command to the Redis server(s).
   pub fn write_command(&self, mut request: RedisCommand) -> Box<Future<Item=(), Error=RedisError>> {
-    flame_start!("redis:write_command");
+    let _guard = flame_start!("redis:write_command");
     trace!("Multiplexer sending command {:?}", request.kind);
 
     let no_cluster = request.no_cluster();
@@ -493,7 +545,6 @@ impl Multiplexer {
     let frame = match request.to_frame() {
       Ok(f) => f,
       Err(e) => {
-        flame_end!("redis:write_command");
         return client_utils::future_error(e);
       }
     };
@@ -504,7 +555,6 @@ impl Multiplexer {
       self.sinks.write_command(key, frame, no_cluster)
     };
 
-    flame_end!("redis:write_command");
     res
   }
 

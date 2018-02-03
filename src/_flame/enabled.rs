@@ -1,13 +1,7 @@
 
 
 macro_rules! flame_start(
-  ($($arg:tt)*) => { {
-    ::flame::start($($arg)*)
-  } }
-);
-
-macro_rules! flame_end(
-  ($($arg:tt)*) => { {
-    ::flame::end($($arg)*)
-  } }
+  ($($arg:tt)*) => {
+    ::flame::start_guard($($arg)*)
+  }
 );

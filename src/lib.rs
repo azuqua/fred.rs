@@ -76,6 +76,9 @@ extern crate parking_lot;
 extern crate url;
 extern crate crc16;
 
+#[cfg(feature="metrics")]
+extern crate chrono;
+
 #[cfg(feature="sync")]
 extern crate boxfnonce;
 
@@ -93,6 +96,24 @@ mod _flame;
 mod utils;
 
 mod loop_serve;
+
+#[cfg(feature="metrics")]
+/// Structs for tracking latency and payload size metrics.
+pub mod metrics;
+
+#[cfg(not(feature="metrics"))]
+mod metrics;
+
+use metrics::{
+  SizeTracker,
+  LatencyTracker
+};
+
+#[cfg(feature="metrics")]
+use metrics::{
+  LatencyMetrics,
+  SizeMetrics
+};
 
 /// Error handling.
 pub mod error;
@@ -169,6 +190,7 @@ use std::rc::Rc;
 use std::cell::RefCell;
 
 /// A Redis client.
+#[derive(Clone)]
 pub struct RedisClient {
   // The state of the underlying connection
   state: Arc<RwLock<ClientState>>,
@@ -191,24 +213,10 @@ pub struct RedisClient {
   // requires creating and running another future it is quite tedious to do across threads with the command stream pattern.
   // This field exists to allow remotes to register their own `on_connect` callbacks directly on the client.
   remote_tx: Rc<RefCell<VecDeque<OneshotSender<Result<(), RedisError>>>>>,
-}
-
-impl Clone for RedisClient {
-
-  /// Note: Both the cloned client and the original will refer to the same underlying socket and command stream.
-  fn clone(&self) -> Self {
-    RedisClient {
-      config: self.config.clone(),
-      state: self.state.clone(),
-      error_tx: self.error_tx.clone(),
-      command_tx: self.command_tx.clone(),
-      message_tx: self.message_tx.clone(),
-      reconnect_tx: self.reconnect_tx.clone(),
-      connect_tx: self.connect_tx.clone(),
-      closed: self.closed.clone(),
-      remote_tx: self.remote_tx.clone()
-    }
-  }
+  /// Latency metrics tracking, enabled with the feature `metrics`.
+  latency_stats: Arc<RwLock<LatencyTracker>>,
+  /// Payload size metrics, enabled with the feature `metrics`.
+  size_stats: Arc<RwLock<SizeTracker>>
 }
 
 impl fmt::Debug for RedisClient {
@@ -222,6 +230,8 @@ impl RedisClient {
   /// Create a new `RedisClient` instance.
   pub fn new(config: RedisConfig) -> RedisClient {
     let state = ClientState::Disconnected;
+    let latency = LatencyTracker::default();
+    let size = SizeTracker::default();
 
     RedisClient {
       config: Rc::new(RefCell::new(config)),
@@ -232,7 +242,9 @@ impl RedisClient {
       reconnect_tx: Rc::new(RefCell::new(VecDeque::new())),
       connect_tx: Rc::new(RefCell::new(VecDeque::new())),
       closed: Arc::new(RwLock::new(false)),
-      remote_tx: Rc::new(RefCell::new(VecDeque::new()))
+      remote_tx: Rc::new(RefCell::new(VecDeque::new())),
+      latency_stats: Arc::new(RwLock::new(latency)),
+      size_stats: Arc::new(RwLock::new(size))
     }
   }
 
@@ -290,6 +302,35 @@ impl RedisClient {
   pub fn state(&self) -> ClientState {
     let state_guard = self.state.read();
     state_guard.deref().clone()
+  }
+
+  #[cfg(feature="metrics")]
+  /// Read latency metrics across all commands.
+  pub fn read_latency_metrics(&self) -> LatencyMetrics {
+    metrics::read_latency_stats(&self.latency_stats)
+  }
+
+  #[cfg(feature="metrics")]
+  /// Read and consume latency metrics, resetting their values afterwards.
+  pub fn take_latency_metrics(&self) -> LatencyMetrics {
+    metrics::take_latency_stats(&self.latency_stats)
+  }
+
+  #[cfg(feature="metrics")]
+  /// Read payload size metrics across all commands.
+  pub fn read_size_metrics(&self) -> SizeMetrics {
+    metrics::read_size_stats(&self.size_stats)
+  }
+
+  #[cfg(feature="metrics")]
+  /// Read and consume payload size metrics, resetting their values afterwards.
+  pub fn take_size_metrics(&self) -> SizeMetrics {
+    metrics::take_size_stats(&self.size_stats)
+  }
+
+  #[doc(hidden)]
+  pub fn metrics_trackers_cloned(&self) -> (Arc<RwLock<LatencyTracker>>, Arc<RwLock<SizeTracker>>) {
+    (self.latency_stats.clone(), self.size_stats.clone())
   }
 
   /// Read a clone of the internal connection state. Used internally by remote wrappers.
@@ -439,6 +480,24 @@ impl RedisClient {
     }
 
     Box::new(rx.from_err::<RedisError>())
+  }
+
+  /// Whether or not the client is using a clustered Redis deployment.
+  pub fn is_clustered(&self) -> bool {
+    utils::is_clustered(&self.config)
+  }
+
+  /// Split a clustered redis client into a list of centralized clients for each master node in the cluster.
+  ///
+  /// This is an expensive operation and should not be used frequently, if possible.
+  pub fn split_cluster(&self, handle: &Handle) -> Box<Future<Item=Vec<(RedisClient, RedisConfig)>, Error=RedisError>> {
+    if utils::is_clustered(&self.config) {
+      utils::split(&self.command_tx, &self.config, handle)
+    }else{
+      utils::future_error(RedisError::new(
+        RedisErrorKind::Unknown, "Client is not using a clustered deployment."
+      ))
+    }
   }
 
   /// Select the database this client should use.
@@ -604,14 +663,13 @@ impl RedisClient {
   ///
   /// https://redis.io/commands/get
   pub fn get<K: Into<RedisKey>>(self, key: K) -> Box<Future<Item=(Self, Option<RedisValue>), Error=RedisError>> {
-    flame_start!("redis:get:1");
+    let _guard = flame_start!("redis:get:1");
     let key = key.into();
 
-    flame_end!("redis:get:1");
     Box::new(utils::request_response(&self.command_tx, &self.state, move || {
       Ok((RedisCommandKind::Get, vec![key.into()]))
     }).and_then(|frame| {
-      flame_start!("redis:get:2");
+      let _guard = flame_start!("redis:get:2");
       let resp = frame.into_single_result()?;
 
       let resp = if resp.kind() == RedisValueKind::Null {
@@ -620,7 +678,6 @@ impl RedisClient {
         Some(resp)
       };
 
-      flame_end!("redis:get:2");
       Ok((self, resp))
     }))
   }
@@ -630,12 +687,11 @@ impl RedisClient {
   ///
   /// https://redis.io/commands/set
   pub fn set<K: Into<RedisKey>, V: Into<RedisValue>>(self, key: K, value: V, expire: Option<Expiration>, options: Option<SetOptions>) -> Box<Future<Item=(Self, bool), Error=RedisError>> {
-    flame_start!("redis:set:1");
+    let _guard = flame_start!("redis:set:1");
     let (key, value) = (key.into(), value.into());
 
-    flame_end!("redis:set:1");
     Box::new(utils::request_response(&self.command_tx, &self.state, move || {
-      flame_start!("redis:set:2");
+      let _guard = flame_start!("redis:set:2");
       let mut args = vec![key.into(), value.into()];
 
       if let Some(expire) = expire {
@@ -647,13 +703,11 @@ impl RedisClient {
         args.push(options.to_string().into());
       }
 
-      flame_end!("redis:set:2");
       Ok((RedisCommandKind::Set, args))
     }).and_then(|frame| {
-      flame_start!("redis:set:3");
+      let _guard = flame_start!("redis:set:3");
       let resp = frame.into_single_result()?;
 
-      flame_end!("redis:set:3");
       Ok((self, resp.kind() != RedisValueKind::Null))
     }))
   }
@@ -836,17 +890,16 @@ impl RedisClient {
   ///
   /// https://redis.io/commands/del
   pub fn del<K: Into<MultipleKeys>>(self, keys: K) -> Box<Future<Item=(Self, usize), Error=RedisError>> {
-    flame_start!("redis:del:1");
+    let _guard = flame_start!("redis:del:1");
     let mut keys = keys.into().inner();
     let args: Vec<RedisValue> = keys.drain(..).map(|k| {
       k.into()
     }).collect();
 
-    flame_end!("redis:del:1");
     Box::new(utils::request_response(&self.command_tx, &self.state, move || {
       Ok((RedisCommandKind::Del, args))
     }).and_then(|frame| {
-      flame_start!("redis:del:2");
+      let _guard = flame_start!("redis:del:2");
 
       let resp = frame.into_single_result()?;
 
@@ -857,7 +910,6 @@ impl RedisClient {
         ))
       };
 
-      flame_end!("redis:del:2");
       res
     }))
   }
@@ -1070,14 +1122,13 @@ impl RedisClient {
   ///
   /// https://redis.io/commands/hdel
   pub fn hdel<F: Into<MultipleKeys>, K: Into<RedisKey>> (self, key: K, fields: F) -> Box<Future<Item=(Self, usize), Error=RedisError>> {
-    flame_start!("redis:hdel:1");
+    let _guard = flame_start!("redis:hdel:1");
 
     let key = key.into();
     let mut fields = fields.into().inner();
 
-    flame_end!("redis:hdel:1");
     Box::new(utils::request_response(&self.command_tx, &self.state, move || {
-      flame_start!("redis:hdel:2");
+      let _guard = flame_start!("redis:hdel:2");
 
       let mut args: Vec<RedisValue> = Vec::with_capacity(fields.len() + 1);
       args.push(key.into());
@@ -1086,10 +1137,9 @@ impl RedisClient {
         args.push(field.into());
       }
 
-      flame_end!("redis:hdel:2");
       Ok((RedisCommandKind::HDel, args))
     }).and_then(|frame| {
-      flame_start!("redis:hdel:3");
+      let _guard = flame_start!("redis:hdel:3");
       let resp = frame.into_single_result()?;
 
       let res = match resp {
@@ -1099,7 +1149,6 @@ impl RedisClient {
         ))
       };
 
-      flame_end!("redis:hdel:3");
       res
     }))
   }
@@ -1137,17 +1186,16 @@ impl RedisClient {
   ///
   /// https://redis.io/commands/hget
   pub fn hget<F: Into<RedisKey>, K: Into<RedisKey>> (self, key: K, field: F) -> Box<Future<Item=(Self, Option<RedisValue>), Error=RedisError>> {
-    flame_start!("redis:hget:1");
+    let _guard = flame_start!("redis:hget:1");
     let key = key.into();
     let field = field.into();
 
-    flame_end!("redis:hget:1");
     Box::new(utils::request_response(&self.command_tx, &self.state, move || {
       let args: Vec<RedisValue> = vec![key.into(), field.into()];
 
       Ok((RedisCommandKind::HGet, args))
     }).and_then(|frame| {
-      flame_start!("redis:hget:2");
+      let _guard = flame_start!("redis:hget:2");
 
       let resp = frame.into_single_result()?;
 
@@ -1156,7 +1204,6 @@ impl RedisClient {
         _ => Ok((self, Some(resp)))
       };
 
-      flame_end!("redis:hget:2");
       res
     }))
   }
@@ -1361,21 +1408,19 @@ impl RedisClient {
   ///
   /// https://redis.io/commands/hset
   pub fn hset<K: Into<RedisKey>, F: Into<RedisKey>, V: Into<RedisValue>> (self, key: K, field: F, value: V) -> Box<Future<Item=(Self, usize), Error=RedisError>> {
-    flame_start!("redis:hset:1");
+    let _guard = flame_start!("redis:hset:1");
 
     let key = key.into();
     let field = field.into();
 
-    flame_end!("redis:hset:1");
     Box::new(utils::request_response(&self.command_tx, &self.state, move || {
-      flame_start!("redis:hset:2");
+      let _guard = flame_start!("redis:hset:2");
 
       let args: Vec<RedisValue> = vec![key.into(), field.into(), value.into()];
 
-      flame_end!("redis:hset:2");
       Ok((RedisCommandKind::HSet, args))
     }).and_then(|frame| {
-      flame_start!("redis:hset:3");
+      let _guard = flame_start!("redis:hset:3");
       let resp = frame.into_single_result()?;
 
       let res = match resp {
@@ -1385,7 +1430,6 @@ impl RedisClient {
         ))
       };
 
-      flame_end!("redis:hset:3");
       res
     }))
   }
@@ -1461,7 +1505,7 @@ impl RedisClient {
     Box::new(utils::request_response(&self.command_tx, &self.state, move || {
       Ok((RedisCommandKind::Incr, vec![key.into()]))
     }).and_then(|frame| {
-      flame_start!("redis:incr:1");
+      let _guard = flame_start!("redis:incr:1");
       let resp = frame.into_single_result()?;
 
       let res = match resp {
@@ -1471,7 +1515,6 @@ impl RedisClient {
         ))
       };
 
-      flame_end!("redis:incr:1");
       res
     }))
   }

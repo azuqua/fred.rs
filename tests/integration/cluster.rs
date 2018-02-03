@@ -132,6 +132,15 @@ pub mod keys {
     })
   }
 
+  #[cfg(feature="metrics")]
+  #[test]
+  fn it_should_track_latency_and_size_metrics() {
+    let config = RedisConfig::default_clustered();
+    utils::setup_test_client(config, |client| {
+      keys_tests::should_track_latency_and_size(client)
+    })
+  }
+
 }
 
 

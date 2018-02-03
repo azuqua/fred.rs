@@ -125,9 +125,11 @@ fn init_clustered(
       let mult_remote_tx = remote_tx.clone();
 
       let cluster_config = config.clone();
+      let (latency_stats, size_stats) = client.metrics_trackers_cloned();
+      let init_size_stats = size_stats.clone();
 
-      utils::build_cluster_cache(handle.clone(), &config).and_then(move |cache: ClusterKeyCache| {
-        utils::create_all_transports(cluster_config, cluster_handle, hosts, key).and_then(|result| {
+      utils::build_cluster_cache(handle.clone(), &config, size_stats.clone()).and_then(move |cache: ClusterKeyCache| {
+        utils::create_all_transports(cluster_config, cluster_handle, hosts, key, init_size_stats).and_then(|result| {
           Ok((result, cache))
         })
       })
@@ -139,7 +141,9 @@ fn init_clustered(
           mult_message_tx.clone(),
           mult_error_tx.clone(),
           mult_command_tx.clone(),
-          mult_state.clone()
+          mult_state.clone(),
+          latency_stats,
+          size_stats
         );
         multiplexer.sinks.set_cluster_cache(cache);
 
@@ -221,7 +225,9 @@ fn init_centralized(
 
   let error_connect_tx = connect_tx.clone();
   let error_remote_tx = remote_tx.clone();
-  Box::new(utils::create_transport(&addr, &handle, config.clone(), state.clone()).and_then(move |(redis_sink, redis_stream)| {
+  let (latency_stats, size_stats) = client.metrics_trackers_cloned();
+
+  Box::new(utils::create_transport(&addr, &handle, config.clone(), state.clone(), size_stats.clone()).and_then(move |(redis_sink, redis_stream)| {
     let (tx, rx): (UnboundedSender<RedisCommand>, UnboundedReceiver<RedisCommand>) = unbounded();
 
     let multiplexer = Multiplexer::new(
@@ -229,7 +235,9 @@ fn init_centralized(
       message_tx.clone(),
       error_tx.clone(),
       command_tx.clone(),
-      state.clone()
+      state.clone(),
+      latency_stats,
+      size_stats
     );
 
     multiplexer.sinks.set_centralized_sink(redis_sink);
