@@ -12,7 +12,6 @@ use std::io::{
   ErrorKind as IoErrorKind
 };
 
-use futures::future;
 use futures::Future;
 use futures::sync::oneshot::{
   Sender as OneshotSender,

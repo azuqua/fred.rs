@@ -30,8 +30,7 @@ use ::metrics::{
 use std::sync::Arc;
 use parking_lot::RwLock;
 use std::ops::{
-  DerefMut,
-  Deref
+  DerefMut
 };
 
 pub const CR: char = '\r';
