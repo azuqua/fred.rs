@@ -35,6 +35,20 @@ use ::types::*;
 use ::utils as client_utils;
 use ::RedisClient;
 
+#[cfg(feature="metrics")]
+use ::metrics;
+
+use ::metrics::{
+  SizeTracker,
+  LatencyTracker
+};
+
+#[cfg(feature="metrics")]
+use ::metrics::{
+  LatencyMetrics,
+  SizeMetrics
+};
+
 use super::utils;
 use super::owned;
 use super::commands;
@@ -76,7 +90,11 @@ pub struct RedisClientRemote {
   // drained and moved into the underlying client.
   connect_tx: Arc<RwLock<VecDeque<ConnectSender>>>,
   error_tx: Arc<RwLock<VecDeque<UnboundedSender<RedisError>>>>,
-  message_tx: Arc<RwLock<VecDeque<UnboundedSender<(String, RedisValue)>>>>
+  message_tx: Arc<RwLock<VecDeque<UnboundedSender<(String, RedisValue)>>>>,
+  /// Latency metrics tracking, enabled with the feature `metrics`.
+  latency_stats: Arc<RwLock<Option<Arc<RwLock<LatencyTracker>>>>>,
+  /// Payload size metrics, enabled with the feature `metrics`.
+  size_stats: Arc<RwLock<Option<Arc<RwLock<SizeTracker>>>>>
 }
 
 impl fmt::Debug for RedisClientRemote {
@@ -93,7 +111,9 @@ impl RedisClientRemote {
       command_tx: Arc::new(RwLock::new(None)),
       connect_tx: Arc::new(RwLock::new(VecDeque::new())),
       error_tx: Arc::new(RwLock::new(VecDeque::new())),
-      message_tx: Arc::new(RwLock::new(VecDeque::new()))
+      message_tx: Arc::new(RwLock::new(VecDeque::new())),
+      latency_stats: Arc::new(RwLock::new(None)),
+      size_stats: Arc::new(RwLock::new(None))
     }
   }
 
@@ -105,6 +125,59 @@ impl RedisClientRemote {
   /// Convert this `borrowed::RedisClientRemote` to an `owned::RedisClientRemote`.
   pub fn into_owned(self) -> owned::RedisClientRemote {
     owned::RedisClientRemote::from_borrowed(self)
+  }
+
+  #[cfg(feature="metrics")]
+  /// Read latency metrics across all commands.
+  pub fn read_latency_metrics(&self) -> Option<LatencyMetrics> {
+    let latency_guard = self.latency_stats.read();
+
+    if let Some(ref latency_stats) = *latency_guard.deref() {
+      Some(metrics::read_latency_stats(latency_stats))
+    }else{
+      None
+    }
+  }
+
+  #[cfg(feature="metrics")]
+  /// Read and consume latency metrics, resetting their values afterwards.
+  pub fn take_latency_metrics(&self) -> Option<LatencyMetrics> {
+    let latency_guard = self.latency_stats.read();
+
+    if let Some(ref latency_stats) = *latency_guard.deref() {
+      Some(metrics::take_latency_stats(latency_stats))
+    }else{
+      None
+    }
+  }
+
+  #[cfg(feature="metrics")]
+  /// Read payload size metrics across all commands.
+  pub fn read_size_metrics(&self) -> Option<SizeMetrics> {
+    let size_guard = self.size_stats.read();
+
+    if let Some(ref size_stats) = *size_guard.deref() {
+      Some(metrics::read_size_stats(size_stats))
+    }else{
+      None
+    }
+  }
+
+  #[cfg(feature="metrics")]
+  /// Read and consume payload size metrics, resetting their values afterwards.
+  pub fn take_size_metrics(&self) -> Option<SizeMetrics> {
+    let size_guard = self.size_stats.read();
+
+    if let Some(ref size_stats) = *size_guard.deref() {
+      Some(metrics::take_size_stats(size_stats))
+    }else{
+      None
+    }
+  }
+
+  #[doc(hidden)]
+  pub fn read_metrics_trackers(&self) -> (&Arc<RwLock<Option<Arc<RwLock<LatencyTracker>>>>>, &Arc<RwLock<Option<Arc<RwLock<SizeTracker>>>>>) {
+    (&self.latency_stats, &self.size_stats)
   }
 
   /// Read the underlying `connect_tx` senders. Used internally to convert to an owned remote client.
@@ -142,6 +215,17 @@ impl RedisClientRemote {
       }
 
       *command_ref = Some(tx);
+    }
+
+    let (latency, size) = client.metrics_trackers_cloned();
+    {
+      let mut latency_guard = self.latency_stats.write();
+      let latency_ref = latency_guard.deref_mut();
+      *latency_ref = Some(latency);
+
+      let mut size_guard = self.size_stats.write();
+      let size_ref = size_guard.deref_mut();
+      *size_ref = Some(size);
     }
 
     let commands_ft = rx.from_err::<RedisError>().fold((client.clone(), client), |(backup, client), func| {

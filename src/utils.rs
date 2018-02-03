@@ -7,7 +7,13 @@ use futures::sync::oneshot::{
 use futures::sync::mpsc::{
   UnboundedSender
 };
-use futures::Future;
+use futures::{
+  Future,
+  Stream,
+  stream
+};
+use tokio_timer::Timer;
+use std::time::Duration;
 
 use std::i64;
 use std::f64;
@@ -26,9 +32,13 @@ use error::{
   RedisError,
   RedisErrorKind
 };
+use super::RedisClient;
+use super::utils as client_utils;
+use super::loop_serve::utils as loop_serve_utils;
 
 use std::rc::Rc;
 use std::cell::RefCell;
+use tokio_core::reactor::Handle;
 
 macro_rules! fry {
   ($expr:expr) => (match $expr {
@@ -88,6 +98,18 @@ pub fn future_error<T: 'static>(err: RedisError) -> Box<Future<Item=T, Error=Red
 
 pub fn future_ok<T: 'static>(d: T) -> Box<Future<Item=T, Error=RedisError>> {
   Box::new(future::ok(d))
+}
+
+pub fn future_error_generic<T: 'static, E: 'static>(err: E) -> Box<Future<Item=T, Error=E>> {
+  Box::new(future::err(err))
+}
+
+pub fn future_ok_generic<T: 'static, E: 'static>(d: T) -> Box<Future<Item=T, Error=E>> {
+  Box::new(future::ok(d))
+}
+
+pub fn stream_error<T: 'static>(e: RedisError) -> Box<Stream<Item=T, Error=RedisError>> {
+  Box::new(future::err(e).into_stream())
 }
 
 pub fn reset_reconnect_attempts(reconnect: &Rc<RefCell<Option<ReconnectPolicy>>>) {
@@ -220,4 +242,69 @@ pub fn request_response<F>(
 
   flame_end!("redis:request_response");
   res
+}
+
+pub fn is_clustered(config: &Rc<RefCell<RedisConfig>>) -> bool {
+  let config_guard = config.borrow();
+  config_guard.deref().is_clustered()
+}
+
+
+pub fn split(command_tx: &Rc<RefCell<Option<UnboundedSender<RedisCommand>>>>, config: &Rc<RefCell<RedisConfig>>, handle: &Handle)
+  -> Box<Future<Item=Vec<(RedisClient, RedisConfig)>, Error=RedisError>>
+{
+  let timer = Timer::default();
+  let timeout = Duration::from_millis(10 * 1000);
+
+  let (tx, rx) = oneshot_channel();
+  let split_command = RedisCommandKind::_Split(Some(SplitCommand {
+    tx: Arc::new(RwLock::new(Some(tx))),
+    key: loop_serve_utils::read_auth_key(config)
+  }));
+  let command = RedisCommand::new(split_command, vec![], None);
+
+  if let Err(e) = send_command(command_tx, command) {
+    return client_utils::future_error(e);
+  }
+
+  let handle = handle.clone();
+  Box::new(rx.flatten().and_then(move |configs| {
+    let all_len = configs.len();
+
+    stream::iter_ok(configs.into_iter()).map(move |config| {
+      let client = RedisClient::new(config.clone());
+      let err_client = client.clone();
+
+      let client_ft = client.connect(&handle).map(|_| ()).map_err(|_| ());
+      trace!("Creating split clustered client...");
+      handle.spawn(client_ft);
+
+      let timer_ft = timer.sleep(timeout.clone()).map_err(|_| RedisError::new(
+        RedisErrorKind::Unknown, "Split command timeout connecting."
+      ))
+      .map(|_| None);
+
+      client.on_connect()
+        .map(move |client| Some((client, config)))
+        .select(timer_ft)
+        .map_err(|(e, _)| e)
+        .and_then(move |(opt, _)| match opt {
+          Some((client, config)) => Ok((client, config)),
+          None => Err(RedisError::new(
+            RedisErrorKind::Unknown, "Split command timeout connecting."
+          ))
+        })
+        .then(move |result| {
+          match result {
+            Ok(out) => client_utils::future_ok(out),
+            Err(e) => Box::new(err_client.quit().then(move |_| Err(e)))
+          }
+        })
+    })
+    .buffer_unordered(all_len)
+    .fold(Vec::with_capacity(all_len), |mut memo, (client, config)| {
+      memo.push((client, config));
+      Ok::<_, RedisError>(memo)
+    })
+  }))
 }

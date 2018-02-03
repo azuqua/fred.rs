@@ -27,7 +27,6 @@ use futures::stream::{
   Stream
 };
 use futures::sink::Sink;
-use futures::future::Either;
 use futures::future::{
   Loop
 };
@@ -69,6 +68,12 @@ use std::collections::VecDeque;
 
 use super::super::RedisClient;
 use super::multiplexer::Multiplexer;
+
+use ::metrics;
+use ::metrics::{
+  SizeTracker,
+  LatencyTracker
+};
 
 pub const OK: &'static str = "OK";
 
@@ -275,6 +280,26 @@ pub fn set_last_request(last_request: &RefCell<ResponseSender>, request: Respons
   *request_ref = request;
 }
 
+pub fn set_last_request_sent_now(sent: &RefCell<Option<i64>>) {
+  let mut sent_ref = sent.borrow_mut();
+  *sent_ref = metrics::now_utc_ms();
+}
+
+pub fn sample_latency(sent: &RefCell<Option<i64>>, tracker: &Arc<RwLock<LatencyTracker>>) {
+  let mut sent_ref = sent.borrow_mut();
+  let sent = match sent_ref.take() {
+    Some(i) => i,
+    None => return
+  };
+  let now = match metrics::now_utc_ms() {
+    Some(i) => i,
+    None => return
+  };
+
+  trace!("Sampled latency of {} ms.", now - sent);
+  metrics::sample_latency(tracker, now - sent);
+}
+
 pub fn take_last_caller(last_caller: &RefCell<Option<OneshotSender<RefreshCache>>>) -> Option<OneshotSender<RefreshCache>> {
   let mut caller_ref = last_caller.borrow_mut();
   caller_ref.take()
@@ -300,12 +325,13 @@ pub fn create_transport(
   handle: &Handle,
   config: Rc<RefCell<RedisConfig>>,
   state: Arc<RwLock<ClientState>>,
+  size_stats: Arc<RwLock<SizeTracker>>
 ) -> Box<Future<Item=(RedisSink, RedisStream), Error=RedisError>>
 {
   debug!("Creating redis transport to {:?}", &addr);
   let codec = {
     let config_ref = config.borrow();
-    RedisCodec::new(config_ref.get_max_size())
+    RedisCodec::new(config_ref.get_max_size(), size_stats)
   };
 
   Box::new(TcpStream::connect(&addr, handle)
@@ -494,13 +520,34 @@ pub fn create_commands_ft(
       multiplexer.streams.close();
 
       flame_end!("redis:handle_multiplexer_command:1");
-      Box::new(Either::A(future::err(())
-        .map(|_: ()| (multiplexer, error_tx))))
+      //Box::new(Either::A(future::err(())
+      //  .map(|_: ()| (multiplexer, error_tx))))
+
+      client_utils::future_error_generic(())
+    }else if command.kind.is_split() {
+      let (resp_tx, key) = match command.kind.take_split() {
+        Ok(mut i) => i.take(),
+        Err(e) => {
+          error!("Invalid split command: {:?}", e);
+          return client_utils::future_ok_generic((multiplexer, error_tx));
+        }
+      };
+
+      if resp_tx.is_none() {
+        error!("Invalid split command missing response sender.");
+        return client_utils::future_ok_generic((multiplexer, error_tx));
+      }
+      let resp_tx = resp_tx.unwrap();
+
+      let res = multiplexer.sinks.centralized_configs(key);
+      let _ = resp_tx.send(res);
+
+      client_utils::future_ok_generic((multiplexer, error_tx))
     }else{
       let resp_tx = command.tx.take();
 
       flame_end!("redis:handle_multiplexer_command:1");
-      Box::new(Either::B(multiplexer.write_command(command).then(move |result| {
+      Box::new(multiplexer.write_command(command).then(move |result| {
         flame_start!("redis:handle_multiplexer_command:2");
         match result {
           Ok(_) => {
@@ -525,7 +572,7 @@ pub fn create_commands_ft(
         }
       })
       .map_err(|_| ())
-      .map(|multiplexer| (multiplexer, error_tx))))
+      .map(|multiplexer| (multiplexer, error_tx)))
     }
   })
   .then(move |result| {
@@ -573,7 +620,7 @@ pub fn create_connection_ft(command_ft: Box<Future<Item=(), Error=RedisError>>, 
 }
 
 #[allow(deprecated)]
-pub fn create_initial_transport(handle: Handle, config: Rc<RefCell<RedisConfig>>) -> Box<Future<Item=Option<RedisTransport>, Error=RedisError>> {
+pub fn create_initial_transport(handle: Handle, config: Rc<RefCell<RedisConfig>>, size_stats: Arc<RwLock<SizeTracker>>) -> Box<Future<Item=Option<RedisTransport>, Error=RedisError>> {
   let hosts = fry!(read_clustered_hosts(&config));
   let found: Option<RedisTransport> = None;
 
@@ -598,7 +645,7 @@ pub fn create_initial_transport(handle: Handle, config: Rc<RefCell<RedisConfig>>
       let key = read_auth_key(&config);
       let codec = {
         let config_ref = config.borrow();
-        RedisCodec::new(config_ref.get_max_size())
+        RedisCodec::new(config_ref.get_max_size(), size_stats.clone())
       };
 
       debug!("Creating clustered redis transport to {:?}", &addr);
@@ -621,7 +668,7 @@ pub fn create_initial_transport(handle: Handle, config: Rc<RefCell<RedisConfig>>
 }
 
 #[allow(deprecated)]
-pub fn create_all_transports(config: Rc<RefCell<RedisConfig>>, handle: Handle, hosts: Vec<(String, u16)>, key: Option<String>) -> Box<Future<Item=Vec<(String, RedisTransport)>, Error=RedisError>> {
+pub fn create_all_transports(config: Rc<RefCell<RedisConfig>>, handle: Handle, hosts: Vec<(String, u16)>, key: Option<String>, size_stats: Arc<RwLock<SizeTracker>>) -> Box<Future<Item=Vec<(String, RedisTransport)>, Error=RedisError>> {
   let transports: Vec<(String, RedisTransport)> = Vec::with_capacity(hosts.len());
 
   Box::new(stream::iter(hosts.into_iter().map(Ok)).fold(transports, move |mut transports, (host, port)| {
@@ -643,7 +690,7 @@ pub fn create_all_transports(config: Rc<RefCell<RedisConfig>>, handle: Handle, h
     let key = key.clone();
     let codec = {
       let config_ref = config.borrow();
-      RedisCodec::new(config_ref.get_max_size())
+      RedisCodec::new(config_ref.get_max_size(), size_stats.clone())
     };
 
     debug!("Creating clustered transport to {:?}", addr);
@@ -662,8 +709,8 @@ pub fn create_all_transports(config: Rc<RefCell<RedisConfig>>, handle: Handle, h
   }))
 }
 
-pub fn build_cluster_cache(handle: Handle, config: &Rc<RefCell<RedisConfig>>) -> Box<Future<Item=ClusterKeyCache, Error=RedisError>> {
-  Box::new(create_initial_transport(handle, config.clone()).and_then(|transport| {
+pub fn build_cluster_cache(handle: Handle, config: &Rc<RefCell<RedisConfig>>, size_stats: Arc<RwLock<SizeTracker>>) -> Box<Future<Item=ClusterKeyCache, Error=RedisError>> {
+  Box::new(create_initial_transport(handle, config.clone(), size_stats).and_then(|transport| {
     let transport = match transport {
       Some(t) => t,
       None => return client_utils::future_error(RedisError::new(

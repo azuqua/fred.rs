@@ -23,11 +23,52 @@ use super::super::error::{
   RedisErrorKind
 };
 
+use ::metrics;
+use ::metrics::{
+  SizeTracker
+};
+use std::sync::Arc;
+use parking_lot::RwLock;
+use std::ops::{
+  DerefMut,
+  Deref
+};
+
 pub const CR: char = '\r';
 pub const LF: char = '\n';
 pub const NULL: &'static str = "$-1\r\n";
 
 pub const REDIS_CLUSTER_SLOTS: u16 = 16384;
+
+#[derive(Clone)]
+pub struct SplitCommand {
+  pub tx: Arc<RwLock<Option<OneshotSender<Result<Vec<RedisConfig>, RedisError>>>>>,
+  pub key: Option<String>
+}
+
+impl SplitCommand {
+
+  pub fn take(&mut self) -> (Option<OneshotSender<Result<Vec<RedisConfig>, RedisError>>>, Option<String>) {
+    let mut tx_guard = self.tx.write();
+    (tx_guard.deref_mut().take(), self.key.take())
+  }
+
+}
+
+impl fmt::Debug for SplitCommand {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    write!(f, "[SplitCommand]")
+  }
+}
+
+impl PartialEq for SplitCommand {
+  fn eq(&self, other: &SplitCommand) -> bool {
+    self.key == other.key
+  }
+}
+
+impl Eq for SplitCommand {}
+
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RedisCommandKind {
@@ -224,10 +265,33 @@ pub enum RedisCommandKind {
   #[doc(hidden)]
   _OnMessage,
   #[doc(hidden)]
-  _Close
+  _Close,
+  #[doc(hidden)]
+  _Split(Option<SplitCommand>)
 }
 
 impl RedisCommandKind {
+
+  pub fn is_split(&self) -> bool {
+    match *self {
+      RedisCommandKind::_Split(_) => true,
+      _ => false
+    }
+  }
+
+  pub fn take_split(&mut self) -> Result<SplitCommand, RedisError> {
+    match *self {
+      RedisCommandKind::_Split(ref mut inner) => match inner.take() {
+        Some(inner) => Ok(inner),
+        None => Err(RedisError::new(
+          RedisErrorKind::Unknown, "Missing split command options."
+        ))
+      },
+      _ => Err(RedisError::new(
+        RedisErrorKind::Unknown, "Invalid split command kind."
+      ))
+    }
+  }
 
   fn to_string(&self) -> &'static str {
     match *self {
@@ -422,7 +486,8 @@ impl RedisCommandKind {
       RedisCommandKind::Hscan                           => "HSCAN",
       RedisCommandKind::Zscan                           => "ZSCAN",
       RedisCommandKind::_Close
-        | RedisCommandKind::_OnMessage                  => panic!("unreachable")
+        | RedisCommandKind::_OnMessage
+        | RedisCommandKind::_Split(_)                   => panic!("unreachable")
     }
   }
 
@@ -944,15 +1009,14 @@ impl RedisCommand {
 }
 
 pub struct RedisCodec {
-  pub max_size: Option<usize>
+  pub max_size: Option<usize>,
+  pub size_stats: Arc<RwLock<SizeTracker>>
 }
 
 impl RedisCodec {
 
-  pub fn new(max_size: Option<usize>) -> RedisCodec {
-    RedisCodec {
-      max_size: max_size
-    }
+  pub fn new(max_size: Option<usize>, size_stats: Arc<RwLock<SizeTracker>>) -> RedisCodec {
+    RedisCodec { max_size, size_stats, }
   }
 
 }
@@ -962,10 +1026,10 @@ impl Encoder for RedisCodec {
   type Error = RedisError;
 
   fn encode(&mut self, mut msg: Frame, buf: &mut BytesMut) -> Result<(), RedisError> {
-    flame_start!("redis:encode");
+    let _guard = flame_start!("redis:encode");
     let res = protocol_utils::frames_to_bytes(&mut msg, buf);
-    flame_end!("redis:encode");
 
+    metrics::sample_size(&self.size_stats, buf.len() as u64);
     res
   }
 
@@ -976,11 +1040,10 @@ impl Decoder for RedisCodec {
   type Error = RedisError;
 
   fn decode(&mut self, buf: &mut BytesMut) -> Result<Option<Frame>, RedisError> {
-    flame_start!("redis:decode");
+    let _guard = flame_start!("redis:decode");
     trace!("Recv {:?} bytes.", buf.len());
 
     if buf.len() < 1 || !protocol_utils::ends_with_crlf(buf) {
-      flame_end!("redis:decode");
       return Ok(None)
     }
 
@@ -989,6 +1052,7 @@ impl Decoder for RedisCodec {
       Ok(inner) => match inner {
         Some((frame, size)) => {
           trace!("Parsed {:?} bytes.", size);
+          metrics::sample_size(&self.size_stats, size as u64);
 
           buf.clear();
           Ok(Some(frame))
@@ -1001,7 +1065,6 @@ impl Decoder for RedisCodec {
       }
     };
 
-    flame_end!("redis:decode");
     res
   }
 

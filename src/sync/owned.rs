@@ -33,6 +33,20 @@ use ::error::*;
 use ::types::*;
 use ::RedisClient;
 
+#[cfg(feature="metrics")]
+use ::metrics;
+
+use ::metrics::{
+  SizeTracker,
+  LatencyTracker
+};
+
+#[cfg(feature="metrics")]
+use ::metrics::{
+  LatencyMetrics,
+  SizeMetrics
+};
+
 use super::utils;
 use super::borrowed;
 use super::borrowed::RedisClientRemote as RedisClientBorrowed;
@@ -60,7 +74,11 @@ pub struct RedisClientRemote {
   // drained and moved into the underlying client.
   connect_tx: Arc<RwLock<VecDeque<ConnectSender>>>,
   error_tx: Arc<RwLock<VecDeque<UnboundedSender<RedisError>>>>,
-  message_tx: Arc<RwLock<VecDeque<UnboundedSender<(String, RedisValue)>>>>
+  message_tx: Arc<RwLock<VecDeque<UnboundedSender<(String, RedisValue)>>>>,
+  /// Latency metrics tracking, enabled with the feature `metrics`.
+  latency_stats: Arc<RwLock<Option<Arc<RwLock<LatencyTracker>>>>>,
+  /// Payload size metrics, enabled with the feature `metrics`.
+  size_stats: Arc<RwLock<Option<Arc<RwLock<SizeTracker>>>>>
 }
 
 impl fmt::Debug for RedisClientRemote {
@@ -77,7 +95,9 @@ impl RedisClientRemote {
       borrowed: Arc::new(RwLock::new(None)),
       connect_tx: Arc::new(RwLock::new(VecDeque::new())),
       error_tx: Arc::new(RwLock::new(VecDeque::new())),
-      message_tx: Arc::new(RwLock::new(VecDeque::new()))
+      message_tx: Arc::new(RwLock::new(VecDeque::new())),
+      latency_stats: Arc::new(RwLock::new(None)),
+      size_stats: Arc::new(RwLock::new(None))
     }
   }
 
@@ -87,8 +107,15 @@ impl RedisClientRemote {
     let error_tx = client.read_error_tx().clone();
     let message_tx = client.read_message_tx().clone();
 
+    let (latency, size) = {
+      let (latency, size) = client.read_metrics_trackers();
+      (latency.clone(), size.clone())
+    };
+
     RedisClientRemote {
       borrowed: Arc::new(RwLock::new(Some(client))),
+      latency_stats: latency,
+      size_stats: size,
       connect_tx: connect_tx,
       error_tx: error_tx,
       message_tx: message_tx
@@ -112,6 +139,54 @@ impl RedisClientRemote {
     &self.borrowed
   }
 
+  #[cfg(feature="metrics")]
+  /// Read latency metrics across all commands.
+  pub fn read_latency_metrics(&self) -> Option<LatencyMetrics> {
+    let latency_guard = self.latency_stats.read();
+
+    if let Some(ref latency_stats) = *latency_guard.deref() {
+      Some(metrics::read_latency_stats(latency_stats))
+    }else{
+      None
+    }
+  }
+
+  #[cfg(feature="metrics")]
+  /// Read and consume latency metrics, resetting their values afterwards.
+  pub fn take_latency_metrics(&self) -> Option<LatencyMetrics> {
+    let latency_guard = self.latency_stats.read();
+
+    if let Some(ref latency_stats) = *latency_guard.deref() {
+      Some(metrics::take_latency_stats(latency_stats))
+    }else{
+      None
+    }
+  }
+
+  #[cfg(feature="metrics")]
+  /// Read payload size metrics across all commands.
+  pub fn read_size_metrics(&self) -> Option<SizeMetrics> {
+    let size_guard = self.size_stats.read();
+
+    if let Some(ref size_stats) = *size_guard.deref() {
+      Some(metrics::read_size_stats(size_stats))
+    }else{
+      None
+    }
+  }
+
+  #[cfg(feature="metrics")]
+  /// Read and consume payload size metrics, resetting their values afterwards.
+  pub fn take_size_metrics(&self) -> Option<SizeMetrics> {
+    let size_guard = self.size_stats.read();
+
+    if let Some(ref size_stats) = *size_guard.deref() {
+      Some(metrics::take_size_stats(size_stats))
+    }else{
+      None
+    }
+  }
+
   /// Initialize the remote interface.
   ///
   /// This function must run on the same thread that created the `RedisClient`.
@@ -124,8 +199,20 @@ impl RedisClientRemote {
 
     {
       let mut borrowed_guard = self.borrowed.write();
-      let mut borrowed_ref = borrowed_guard.deref_mut();
+      let borrowed_ref = borrowed_guard.deref_mut();
       *borrowed_ref = Some(borrowed.clone());
+    }
+
+    {
+      let (latency, size) = client.metrics_trackers_cloned();
+
+      let mut latency_guard = self.latency_stats.write();
+      let latency_ref = latency_guard.deref_mut();
+      *latency_ref = Some(latency);
+
+      let mut size_guard = self.size_stats.write();
+      let size_ref = size_guard.deref_mut();
+      *size_ref = Some(size);
     }
 
     borrowed.init(client)

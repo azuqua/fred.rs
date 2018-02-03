@@ -99,3 +99,31 @@ pub fn should_set_and_get_random_keys(client: RedisClient) -> Box<Future<Item=()
   })
   .map(|_| ()))
 }
+
+#[cfg(feature="metrics")]
+pub fn should_track_latency_and_size(client: RedisClient) -> Box<Future<Item=(), Error=RedisError>> {
+  Box::new(client.set("foo", "bar", None, None).and_then(|(client, _)| {
+    let latency_stats = client.read_latency_metrics();
+    let size_stats = client.read_size_metrics();
+
+    println!("after 1 {:?}, {:?}", latency_stats, size_stats);
+
+    assert!(latency_stats.samples >= 1);
+    assert!(size_stats.samples >= 1);
+    assert!(size_stats.avg > 0_f64);
+
+    client.del("foo")
+  })
+  .and_then(|(client, _)| {
+    let latency_stats = client.read_latency_metrics();
+    let size_stats = client.read_size_metrics();
+
+    println!("after 2 {:?}, {:?}", latency_stats, size_stats);
+
+    assert!(latency_stats.samples >= 2);
+    assert!(size_stats.samples >= 2);
+    assert!(size_stats.avg > 0_f64);
+
+    Ok(())
+  }))
+}

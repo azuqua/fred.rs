@@ -12,7 +12,8 @@ use futures::{
   IntoFuture,
   Future,
   BoxFuture,
-  Stream
+  Stream,
+  stream
 };
 use futures::sync::oneshot::{
   Sender as OneshotSender,
@@ -60,8 +61,19 @@ pub fn setup_test_client<F: FnOnce(RedisClient) -> TestFuture>(config: RedisConf
   let connection = client.connect(&handle);
 
   let clone = client.clone();
-  let commands = client.on_connect().and_then(|client| {
-    client.flushall(false)
+  let commands = client.on_connect().and_then(move |client| {
+    if client.is_clustered() {
+      Box::new(client.split_cluster(&handle).and_then(move |clients| {
+        stream::iter_ok(clients.into_iter()).map(|(_client, _) | {
+          _client.clone().flushall(false).then(move |_| _client.quit())
+        })
+        .buffer_unordered(6)
+        .fold((), |_, _| Ok::<_, RedisError>(()))
+        .map(move |_| (client, "OK".to_owned()))
+      }))
+    }else{
+      client.flushall(false)
+    }
   })
   .and_then(|(client, _)| {
     func(client)

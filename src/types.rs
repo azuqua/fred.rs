@@ -260,6 +260,14 @@ impl RedisConfig {
     }
   }
 
+  /// Check if the config is for a clustered Redis deployment.
+  pub fn is_clustered(&self) -> bool {
+    match *self {
+      RedisConfig::Centralized {..} => false,
+      RedisConfig::Clustered {..} => true
+    }
+  }
+
 }
 
 /// Options for the `set` command.
