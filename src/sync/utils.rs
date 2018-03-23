@@ -26,12 +26,33 @@ use super::commands::{
 };
 
 use ::RedisClient;
-use ::types::RedisValue;
+use ::types::{
+  RedisValue,
+  ClientState
+};
 use super::borrowed::RedisClientRemote as RedisClientBorrowed;
 use super::owned::RedisClientRemote as RedisClientOwned;
 
 use std::rc::Rc;
 use std::cell::RefCell;
+
+/// Replace the inner state with the new state, returning the old state
+pub fn replace_state(old_state: &Arc<RwLock<Arc<RwLock<ClientState>>>>, new_state: Arc<RwLock<ClientState>>) {
+  let mut state_guard = old_state.write();
+  let mut state_ref = state_guard.deref_mut();
+  *state_ref = new_state;
+}
+
+pub fn init_state() -> Arc<RwLock<Arc<RwLock<ClientState>>>> {
+  Arc::new(RwLock::new(Arc::new(RwLock::new(ClientState::Disconnected))))
+}
+
+pub fn read_state(state: &Arc<RwLock<Arc<RwLock<ClientState>>>>) -> ClientState {
+  let state_guard = state.read();
+  let state_ref = state_guard.deref();
+  let inner_guard = state_ref.read();
+  inner_guard.deref().clone()
+}
 
 pub fn transfer_senders<T>(src: &Arc<RwLock<VecDeque<T>>>, dest: &Arc<RwLock<VecDeque<T>>>) {
   flame_start!("redis:transfer_senders");
