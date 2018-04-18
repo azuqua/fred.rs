@@ -338,7 +338,7 @@ pub fn write_crlf(bytes: &mut BytesMut) {
 pub fn is_cluster_error(payload: &str) -> Option<Frame> {
   let _guard = flame_start!("redis:is_cluster_error");
 
-  let out = if payload.starts_with("MOVED") {
+  if payload.starts_with("MOVED") {
     // only keep the IP here since this will result in the client's cluster state cache being reset anyways
     let parts: Vec<&str> = payload.split(" ").collect();
     Some(Frame::Moved(parts[2].to_owned()))
@@ -347,9 +347,7 @@ pub fn is_cluster_error(payload: &str) -> Option<Frame> {
     Some(Frame::Ask(parts[2].to_owned()))
   }else{
     None
-  };
-
-  out
+  }
 }
 
 // sure hope we have enough error messages

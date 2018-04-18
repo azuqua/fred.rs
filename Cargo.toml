@@ -57,6 +57,7 @@ sync = []
 fuzz = []
 enable-flame = []
 metrics = []
+mock = []
 
 [profile.bench]
 codegen-units = 1

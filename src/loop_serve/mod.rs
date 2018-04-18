@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+#![allow(unused_imports)]
 
 pub mod utils;
 
@@ -272,6 +273,7 @@ fn init_centralized(
   }))
 }
 
+#[cfg(not(feature="mock"))]
 pub fn init(
   client: RedisClient,
   handle: &Handle,
@@ -301,6 +303,7 @@ pub fn init(
   }
 }
 
+#[cfg(not(feature="mock"))]
 pub fn init_with_policy(
   client: RedisClient,
   handle: &Handle,
@@ -370,3 +373,9 @@ pub fn init_with_policy(
   })
   .from_err::<RedisError>())
 }
+
+#[cfg(feature="mock")]
+pub use mocks::init;
+#[cfg(feature="mock")]
+pub use mocks::init_with_policy;
+
