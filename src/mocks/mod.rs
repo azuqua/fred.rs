@@ -24,6 +24,7 @@ use ::protocol::types::{
 };
 
 use ::utils as client_utils;
+use ::loop_serve::utils as loop_utils;
 
 use futures::future::{
   loop_fn,
@@ -45,6 +46,7 @@ use tokio_core::reactor::{
   Handle
 };
 use tokio_timer::Timer;
+use std::time::Duration;
 
 use parking_lot::{
   RwLock
@@ -72,14 +74,15 @@ pub fn init_with_policy(client: RedisClient,
   -> Box<Future<Item=(), Error=RedisError>>
 {
 
+  client_utils::set_client_state(&state, ClientState::Connected);
+  let (tx, rx) = unbounded();
+  let expiration_tx = tx.clone();
 
+  loop_utils::set_command_tx(&command_tx, tx);
+  loop_utils::emit_connect(&connect_tx, remote_tx, &client);
+  let _ = loop_utils::emit_reconnect(&reconnect_tx, &client);
 
-
-
-
-
-
-  unimplemented!()
+  utils::create_command_ft(rx, expiration_tx)
 }
 
 pub fn init(client: RedisClient,
@@ -95,9 +98,13 @@ pub fn init(client: RedisClient,
   -> ConnectionFuture
 {
 
+  let policy = ReconnectPolicy::Constant {
+    attempts: 0,
+    max_attempts: 0,
+    delay: 1000
+  };
+  let closed = Arc::new(RwLock::new(false));
 
-
-
-
-  unimplemented!()
+  Box::new(init_with_policy(client, handle, config, state, closed, error_tx, message_tx, command_tx, reconnect_tx, connect_tx, remote_tx, policy)
+    .map(|_| None))
 }

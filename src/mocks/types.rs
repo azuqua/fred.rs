@@ -46,10 +46,10 @@ use futures::{
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExpireLog {
-  /// Timestamp of when to
+  /// Timestamp of when to clean up.
   pub after: i64,
   /// Timestamp of set operation, reference to the key. This is set by the library.
-  internal: Option<(i64, Rc<RedisKey>)>
+  pub internal: Option<(i64, Rc<RedisKey>)>
 }
 
 impl ExpireLog {
@@ -262,10 +262,10 @@ impl Expirations {
 pub struct DataSet {
   pub keys: BTreeSet<Rc<RedisKey>>,
   pub key_types: BTreeMap<Rc<RedisKey>, KeyType>,
-  pub data: BTreeMap<Rc<RedisKey>, KeyType>,
+  pub data: BTreeMap<Rc<RedisKey>, RedisValue>,
   pub maps: BTreeMap<Rc<RedisKey>, BTreeMap<Rc<RedisKey>, RedisValue>>,
   pub sets: BTreeMap<Rc<RedisKey>, BTreeSet<RedisKey>>,
-  pub expirations: Expirations,
+  pub expirations: Rc<RefCell<Expirations>>,
   // TODO lists, etc
 }
 
@@ -278,18 +278,10 @@ impl Default for DataSet {
       data: BTreeMap::new(),
       maps: BTreeMap::new(),
       sets: BTreeMap::new(),
-      expirations: Expirations::new()
+      expirations: Rc::new(RefCell::new(Expirations::new()))
     }
   }
 
 }
-
-
-
-
-
-
-
-
 
 
