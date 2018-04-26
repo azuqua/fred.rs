@@ -100,7 +100,7 @@ pub fn should_set_and_get_random_keys(client: RedisClient) -> Box<Future<Item=()
   .map(|_| ()))
 }
 
-#[cfg(feature="metrics")]
+#[cfg(all(feature="metrics", not(feature="mock")))]
 pub fn should_track_latency_and_size(client: RedisClient) -> Box<Future<Item=(), Error=RedisError>> {
   Box::new(client.set("foo", "bar", None, None).and_then(|(client, _)| {
     let latency_stats = client.read_latency_metrics();
