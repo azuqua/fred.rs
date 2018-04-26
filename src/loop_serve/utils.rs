@@ -519,8 +519,6 @@ pub fn create_commands_ft(
       multiplexer.streams.close();
 
       flame_end!("redis:handle_multiplexer_command:1");
-      //Box::new(Either::A(future::err(())
-      //  .map(|_: ()| (multiplexer, error_tx))))
 
       client_utils::future_error_generic(())
     }else if command.kind.is_split() {

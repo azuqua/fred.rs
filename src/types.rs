@@ -21,6 +21,12 @@ pub use loop_serve::{
   ConnectionFuture
 };
 
+use std::cmp::{
+  Ordering,
+  Ord,
+  PartialOrd
+};
+
 pub static ASYNC: &'static str = "ASYNC";
 
 /// Options for the [info](https://redis.io/commands/info) command.
@@ -322,7 +328,7 @@ pub enum ClientState {
 /// A key in Redis.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RedisKey {
-  key: String
+  pub key: String
 }
 
 impl RedisKey {
@@ -343,6 +349,18 @@ impl RedisKey {
     mem::replace(&mut self.key, String::new())
   }
 
+}
+
+impl Ord for RedisKey {
+  fn cmp(&self, other: &RedisKey) -> Ordering {
+    self.key.cmp(&other.key)
+  }
+}
+
+impl PartialOrd for RedisKey {
+  fn partial_cmp(&self, other: &RedisKey) -> Option<Ordering> {
+    Some(self.key.cmp(&other.key))
+  }
 }
 
 impl From<String> for RedisKey {

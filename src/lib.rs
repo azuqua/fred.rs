@@ -189,6 +189,9 @@ use std::fmt;
 use std::rc::Rc;
 use std::cell::RefCell;
 
+#[cfg(feature="mock")]
+mod mocks;
+
 /// A Redis client.
 #[derive(Clone)]
 pub struct RedisClient {

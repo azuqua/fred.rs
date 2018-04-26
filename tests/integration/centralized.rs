@@ -123,7 +123,7 @@ pub mod keys {
     })
   }
 
-  #[cfg(feature="metrics")]
+  #[cfg(all(feature="metrics", not(feature="mock")))]
   #[test]
   fn it_should_track_latency_and_size_metrics() {
     let config = RedisConfig::default();
