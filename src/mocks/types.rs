@@ -46,7 +46,7 @@ use futures::{
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExpireLog {
-  /// Timestamp of when to clean up.
+  /// Timestamp of when to clean up, in ms.
   pub after: i64,
   /// Timestamp of set operation, reference to the key. This is set by the library.
   pub internal: Option<(i64, Rc<RedisKey>)>

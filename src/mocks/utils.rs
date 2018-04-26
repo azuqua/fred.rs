@@ -28,7 +28,9 @@ use std::cell::RefCell;
 use ::error::*;
 use ::protocol::types::{
   RedisCommand,
-  RedisCommandKind
+  RedisCommandKind,
+  Frame,
+  SplitCommand
 };
 
 use super::types::*;
@@ -81,7 +83,57 @@ pub fn clear_expirations(expirations: &Rc<RefCell<Expirations>>) {
 
 // milliseconds since epoch
 pub fn now() -> i64 {
-  (chrono::Utc::now()).timestamp()
+  let time = chrono::Utc::now();
+  time.timestamp() * 1000 + (time.timestamp_subsec_millis() as i64)
+}
+
+pub fn ok() -> Result<Frame, RedisError> {
+  Ok(Frame::SimpleString("OK".into()))
+}
+
+pub fn null() -> Result<Frame, RedisError> {
+  Ok(Frame::Null)
+}
+
+pub fn to_int(s: &str) -> Result<i64, RedisError> {
+  s.parse::<i64>().map_err(|e| {
+    RedisError::new(
+      RedisErrorKind::InvalidArgument, "Invalid argument, expected number."
+    )
+  })
+}
+
+pub fn get_key(data: &DataSet, key: String) -> Rc<RedisKey> {
+  let key: RedisKey = key.into();
+
+  match data.keys.get(&key) {
+    Some(k) => k.clone(),
+    None => Rc::new(key.into())
+  }
+}
+
+pub fn should_set(data: &DataSet, key: &Rc<RedisKey>, kind: SetOptions) -> bool {
+  match kind {
+    SetOptions::XX => data.keys.contains(key),
+    SetOptions::NX => !data.keys.contains(key)
+  }
+}
+
+pub fn handle_split(options: Option<SplitCommand>) -> Result<Frame, RedisError> {
+  let tx = match options {
+    Some(mut o) => match o.take() {
+      (Some(tx), _) => tx,
+      _ => return Err(RedisError::new(
+        RedisErrorKind::Unknown, "Invalid split command options."
+      ))
+    },
+    None => return Err(RedisError::new(
+      RedisErrorKind::Unknown, "Invalid split command options."
+    ))
+  };
+
+  let _ = tx.send(Ok(vec![RedisConfig::default()]));
+  null()
 }
 
 pub fn create_command_ft(rx: UnboundedReceiver<RedisCommand>, tx: UnboundedSender<RedisCommand>) -> Box<Future<Item=(), Error=RedisError>> {
@@ -91,19 +143,36 @@ pub fn create_command_ft(rx: UnboundedReceiver<RedisCommand>, tx: UnboundedSende
   let command_ft = rx.from_err::<RedisError>().fold(state, |mut state, mut command: RedisCommand| {
     let tx = command.tx.take();
 
-    let res = match command.kind {
-      RedisCommandKind::Get    => commands::get(&mut state, command.args),
-      RedisCommandKind::Set    => commands::set(&mut state, command.args),
-      RedisCommandKind::Del    => commands::del(&mut state, command.args),
-      RedisCommandKind::Expire => commands::expire(&mut state, command.args),
-      RedisCommandKind::HGet   => commands::hget(&mut state, command.args),
-      RedisCommandKind::HSet   => commands::hset(&mut state, command.args),
-      RedisCommandKind::HDel   => commands::hdel(&mut state, command.args),
-      RedisCommandKind::Select => commands::select(&mut state, command.args),
-      RedisCommandKind::Auth   => commands::auth(&mut state, command.args),
+    trace!("Processing mock redis command: {:?}", command.kind);
 
+    let res = match command.kind {
+      RedisCommandKind::Get     => commands::get(&mut state, command.args),
+      RedisCommandKind::Set     => commands::set(&mut state, command.args),
+      RedisCommandKind::Del     => commands::del(&mut state, command.args),
+      RedisCommandKind::Expire  => commands::expire(&mut state, command.args),
+      RedisCommandKind::HGet    => commands::hget(&mut state, command.args),
+      RedisCommandKind::HSet    => commands::hset(&mut state, command.args),
+      RedisCommandKind::HDel    => commands::hdel(&mut state, command.args),
+      RedisCommandKind::HExists => commands::hexists(&mut state, command.args),
+      RedisCommandKind::HGetAll => commands::hgetall(&mut state, command.args),
+      RedisCommandKind::Select  => commands::select(&mut state, command.args),
+      RedisCommandKind::Auth    => commands::auth(&mut state, command.args),
+      RedisCommandKind::Incr    => commands::incr(&mut state, command.args),
+      RedisCommandKind::IncrBy  => commands::incrby(&mut state, command.args),
+      RedisCommandKind::Decr    => commands::decr(&mut state, command.args),
+      RedisCommandKind::DecrBy  => commands::decrby(&mut state, command.args),
+      RedisCommandKind::Ping    => commands::ping(&mut state, command.args),
+      RedisCommandKind::Info    => commands::info(&mut state, command.args),
+
+      RedisCommandKind::_Split(mut split) => handle_split(split.take()),
       RedisCommandKind::FlushAll => commands::flushall(&mut state, command.args),
-      RedisCommandKind::Quit => return Err(RedisError::new_canceled()),
+      RedisCommandKind::Quit => {
+        if let Some(tx) = tx {
+          let _ = tx.send(null());
+        }
+
+        return Err(RedisError::new_canceled())
+      },
       _ => commands::log_unimplemented()
     };
 
@@ -113,12 +182,22 @@ pub fn create_command_ft(rx: UnboundedReceiver<RedisCommand>, tx: UnboundedSende
 
     Ok(state)
   })
-  .map(|_| ());
+  .then(|result| {
+    match result {
+      Ok(_) => Ok(()),
+      Err(e) => match *e.kind() {
+        RedisErrorKind::Canceled => Ok(()),
+        _ => Err(e)
+      }
+    }
+  });
 
   let timer = Timer::default();
   let dur = Duration::from_millis(1000);
 
   let timer_ft = timer.interval(dur).from_err::<RedisError>().for_each(move |_| {
+    trace!("Starting to scan for expired keys.");
+
     let expired = {
       let mut expiration_ref = expirations.borrow_mut();
 
@@ -133,6 +212,8 @@ pub fn create_command_ft(rx: UnboundedReceiver<RedisCommand>, tx: UnboundedSende
 
     Ok(())
   });
+
+  trace!("Creating mock redis command stream...");
 
   Box::new(command_ft.select(timer_ft).map(|_| ()).map_err(|(e, _)| e))
 }

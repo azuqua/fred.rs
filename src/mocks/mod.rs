@@ -73,6 +73,7 @@ pub fn init_with_policy(client: RedisClient,
                         policy: ReconnectPolicy)
   -> Box<Future<Item=(), Error=RedisError>>
 {
+  trace!("Initializing mock redis connection with fake policy.");
 
   client_utils::set_client_state(&state, ClientState::Connected);
   let (tx, rx) = unbounded();
@@ -97,6 +98,7 @@ pub fn init(client: RedisClient,
             remote_tx: Rc<RefCell<VecDeque<OneshotSender<Result<(), RedisError>>>>>)
   -> ConnectionFuture
 {
+  trace!("Initializing mock redis connection.");
 
   let policy = ReconnectPolicy::Constant {
     attempts: 0,
