@@ -622,6 +622,18 @@ pub fn ping(data: &mut DataSet, mut args: Vec<RedisValue>) -> Result<Frame, Redi
   Ok(Frame::SimpleString("PONG".into()))
 }
 
+pub fn subscribe(data: &mut DataSet, mut args: Vec<RedisValue>) -> Result<Frame, RedisError> {
+  Ok(Frame::Array(vec![Frame::Integer(1)]))
+}
+
+pub fn unsubscribe(data: &mut DataSet, mut args: Vec<RedisValue>) -> Result<Frame, RedisError> {
+  Ok(Frame::Array(vec![Frame::Integer(0)]))
+}
+
+pub fn publish(data: &mut DataSet, mut args: Vec<RedisValue>) -> Result<Frame, RedisError> {
+  Ok(Frame::Integer(1))
+}
+
 pub fn flushall(data: &mut DataSet, mut args: Vec<RedisValue>) -> Result<Frame, RedisError> {
   data.data.clear();
   data.maps.clear();
