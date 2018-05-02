@@ -472,6 +472,26 @@ pub fn check_expected_size(expected: usize, max: &Option<usize>) -> Result<(), R
   out
 }
 
+#[cfg(not(feature="ignore-auth-error"))]
+fn check_auth_error(frame: Frame) -> Frame {
+  frame
+}
+
+// https://i.imgur.com/RjpUxK4.png
+#[cfg(feature="ignore-auth-error")]
+fn check_auth_error(frame: Frame) -> Frame {
+  let is_auth_error = match frame {
+    Frame::Error(ref s) => s == "ERR Client sent AUTH, but no password is set",
+    _ => false
+  };
+
+  if is_auth_error {
+    Frame::SimpleString("OK".into())
+  }else{
+    frame
+  }
+}
+
 /// Takes in a working buffer of previous bytes, a new set of bytes, and a max_size option.
 /// Returns an option with the parsed frame and its size in bytes, including crlf padding and the kind/type byte.
 pub fn bytes_to_frames(buf: &mut BytesMut, max_size: &Option<usize>) -> Result<Option<(Frame, usize)>, RedisError> {
@@ -596,7 +616,7 @@ pub fn bytes_to_frames(buf: &mut BytesMut, max_size: &Option<usize>) -> Result<O
     ))
   };
 
-  Ok(frame)
+  Ok(frame.map(|(f, s)| (check_auth_error(f), s)))
 }
 
 pub fn frames_to_bytes(frame: &mut Frame, bytes: &mut BytesMut) -> Result<(), RedisError> {
