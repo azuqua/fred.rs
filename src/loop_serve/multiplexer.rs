@@ -119,7 +119,8 @@ impl Sinks {
             host: parts.pop().unwrap(),
             port: port,
             key: key.clone(),
-            max_value_size: None
+            max_value_size: None,
+            tls: false
           })
         }
 

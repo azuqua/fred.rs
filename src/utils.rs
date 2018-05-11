@@ -244,15 +244,17 @@ pub fn split(command_tx: &Rc<RefCell<Option<UnboundedSender<RedisCommand>>>>, co
   if let Err(e) = send_command(command_tx, command) {
     return client_utils::future_error(e);
   }
+  let tls_flag = config.borrow().tls();
 
   let handle = handle.clone();
   Box::new(rx.flatten().and_then(move |configs| {
     let all_len = configs.len();
 
-    stream::iter_ok(configs.into_iter()).map(move |config| {
+    stream::iter_ok(configs.into_iter()).map(move |mut config| {
+      config.set_tls(tls_flag);
+
       let client = RedisClient::new(config.clone());
       let err_client = client.clone();
-
       let client_ft = client.connect(&handle).map(|_| ()).map_err(|_| ());
 
       trace!("Creating split clustered client...");
