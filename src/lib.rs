@@ -89,6 +89,12 @@ extern crate flame;
 extern crate log;
 extern crate pretty_env_logger;
 
+#[cfg(feature="enable-tls")]
+extern crate native_tls;
+#[cfg(feature="enable-tls")]
+extern crate tokio_tls;
+
+
 #[macro_use]
 mod _flame;
 
