@@ -169,9 +169,7 @@ pub enum RedisConfig {
     /// An optional authentication key to use after connecting.
     key: Option<String>,
     /// The maximum number of bytes that can be allocated for a value, or `None` for no limit.
-    max_value_size: Option<usize>,
-    /// Whether or not to enable TLS, for use with ElastiCache or similar. This will only take effect if the `enable-tls` feature is enabled.
-    tls: bool
+    max_value_size: Option<usize>
   },
   Clustered {
     /// A vector of (Host, Port) tuples for nodes in the cluster. Only a subset of nodes in the cluster need to be provided here,
@@ -180,9 +178,7 @@ pub enum RedisConfig {
     /// An optional authentication key to use after connecting.
     key: Option<String>,
     /// The maximum number of bytes that can be allocated for a value, or `None` for no limit.
-    max_value_size: Option<usize>,
-    /// Whether or not to enable TLS, for use with ElastiCache or similar. This will only take effect if the `enable-tls` feature is enabled.
-    tls: bool
+    max_value_size: Option<usize>
   }
 }
 
@@ -199,8 +195,7 @@ impl RedisConfig {
       host: host.into(),
       port: port,
       key: key,
-      max_value_size: None,
-      tls: false
+      max_value_size: None
     }
   }
 
@@ -212,8 +207,7 @@ impl RedisConfig {
     RedisConfig::Clustered {
       hosts: hosts,
       key: key,
-      max_value_size: None,
-      tls: false
+      max_value_size: None
     }
   }
 
@@ -223,8 +217,7 @@ impl RedisConfig {
       host: "127.0.0.1".to_owned(),
       port: 6379,
       key: None,
-      max_value_size: None,
-      tls: false
+      max_value_size: None
     }
   }
 
@@ -237,8 +230,7 @@ impl RedisConfig {
         ("127.0.0.1".to_owned(), 30003),
       ],
       key: None,
-      max_value_size: None,
-      tls: false
+      max_value_size: None
     }
   }
 
@@ -279,22 +271,6 @@ impl RedisConfig {
     match *self {
       RedisConfig::Centralized {..} => false,
       RedisConfig::Clustered {..} => true
-    }
-  }
-
-  /// Whether or not the config supports TLS.
-  pub fn tls(&self) -> bool {
-    match *self {
-      RedisConfig::Centralized {ref tls,..} => *tls,
-      RedisConfig::Clustered {ref tls,..} => *tls
-    }
-  }
-
-  /// Change the TLS flag .
-  pub fn set_tls(&mut self, flag: bool) {
-    match *self {
-      RedisConfig::Centralized {ref mut tls,..} => { *tls = flag },
-      RedisConfig::Clustered {ref mut tls,..} => { *tls = flag }
     }
   }
 
