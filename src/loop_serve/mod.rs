@@ -64,10 +64,18 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use std::collections::VecDeque;
 
+#[cfg(feature="enable-tls")]
+use tokio_tls::TlsStream;
+
 /// A future that resolves when the connection to the Redis server closes.
 pub type ConnectionFuture = Box<Future<Item=Option<RedisError>, Error=RedisError>>;
 
+#[cfg(not(feature="enable-tls"))]
 pub type RedisTransport = Framed<TcpStream, RedisCodec>;
+
+#[cfg(feature="enable-tls")]
+pub type RedisTransport = Framed<TlsStream<TcpStream>, RedisCodec>;
+
 pub type RedisSink = SplitSink<RedisTransport>;
 pub type RedisStream = SplitStream<RedisTransport>;
 pub type SplitTransport = (RedisSink, RedisStream);
