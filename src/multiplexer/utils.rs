@@ -39,8 +39,6 @@ use tokio_core::reactor::{
 };
 
 use tokio_core::net::TcpStream;
-use tokio_io::{AsyncRead};
-
 use tokio_timer::Timer;
 
 use std::sync::Arc;
@@ -48,13 +46,6 @@ use std::time::Duration;
 
 use ::types::*;
 use ::protocol::types::*;
-
-use super::{
-  RedisTransport,
-  RedisSink,
-  RedisStream,
-  SplitTransport
-};
 
 use std::net::{
   SocketAddr,
@@ -84,6 +75,13 @@ use ::metrics::{
   SizeTracker,
   LatencyTracker
 };
+
+use futures::stream::{
+  SplitSink,
+  SplitStream
+};
+use tokio_io::codec::Framed;
+use tokio_io::{AsyncRead,AsyncWrite};
 
 pub const OK: &'static str = "OK";
 
@@ -330,14 +328,25 @@ pub fn set_command_tx(command_tx: &Rc<RefCell<Option<UnboundedSender<RedisComman
   *command_tx_ref = Some(tx);
 }
 
+#[cfg(not(feature="enable-tls"))]
+pub fn create_transport_tls(addr: &SocketAddr,
+                            handle: &Handle,
+                            config: Rc<RefCell<RedisConfig>>,
+                            state: Arc<RwLock<ClientState>>,
+                            size_stats: Arc<RwLock<SizeTracker>>)
+  -> Box<Future<Item=(SplitSink<Framed<TcpStream, RedisCodec>>, SplitStream<Framed<TcpStream, RedisCodec>>), Error=RedisError>>
+{
+  create_transport(addr, handle, config, state, size_stats)
+}
+
 #[cfg(feature="enable-tls")]
-pub fn create_transport(
+pub fn create_transport_tls(
   addr: &SocketAddr,
   handle: &Handle,
   config: Rc<RefCell<RedisConfig>>,
   state: Arc<RwLock<ClientState>>,
   size_stats: Arc<RwLock<SizeTracker>>
-) -> Box<Future<Item=(RedisSink, RedisStream), Error=RedisError>>
+) -> Box<Future<Item=(SplitSink<Framed<TlsStream<TcpStream>, RedisCodec>>, SplitStream<Framed<TlsStream<TcpStream>, RedisCodec>>), Error=RedisError>>
 {
   debug!("Creating redis transport to {:?}", &addr);
   let codec = {
@@ -377,14 +386,13 @@ pub fn create_transport(
     .map_err(|e| e.into()))
 }
 
-#[cfg(not(feature="enable-tls"))]
 pub fn create_transport(
   addr: &SocketAddr, 
   handle: &Handle,
   config: Rc<RefCell<RedisConfig>>,
   state: Arc<RwLock<ClientState>>,
   size_stats: Arc<RwLock<SizeTracker>>
-) -> Box<Future<Item=(RedisSink, RedisStream), Error=RedisError>>
+) -> Box<Future<Item=(SplitSink<Framed<TcpStream, RedisCodec>>, SplitStream<Framed<TcpStream, RedisCodec>>), Error=RedisError>>
 {
   debug!("Creating redis transport to {:?}", &addr);
   let codec = {
@@ -406,28 +414,9 @@ pub fn create_transport(
     .map_err(|e| e.into()))
 }
 
-pub fn request_response_split(stream: RedisStream, sink: RedisSink, mut request: RedisCommand) -> Box<Future<Item=(Frame, SplitTransport), Error=RedisError>> {
-  let frame = fry!(request.to_frame());
-
-  Box::new(sink.send(frame)
-    .map_err(|e| e.into())
-    .and_then(|sink| {
-      stream.into_future()
-        .map_err(|(e, _)| e.into())
-        .and_then(|(response, stream)| {
-          let response = match response {
-            Some(r) => r,
-            None => return Err(RedisError::new(
-              RedisErrorKind::ProtocolError, "Empty response."
-            ))
-          };
-
-          Ok((response, (sink, stream)))
-        })
-    }))
-}
-
-pub fn request_response(transport: RedisTransport, mut request: RedisCommand) -> Box<Future<Item=(Frame, RedisTransport), Error=RedisError>> {
+pub fn request_response<T>(transport: Framed<T, RedisCodec>, mut request: RedisCommand) -> Box<Future<Item=(Frame, Framed<T, RedisCodec>), Error=RedisError>>
+  where T: AsyncRead + AsyncWrite + 'static
+{
   let frame = fry!(request.to_frame());
 
   Box::new(transport.send(frame)
@@ -444,7 +433,9 @@ pub fn request_response(transport: RedisTransport, mut request: RedisCommand) ->
     }))
 }
 
-pub fn authenticate(transport: RedisTransport, key: Option<String>) -> Box<Future<Item=RedisTransport, Error=RedisError>> {
+pub fn authenticate<T>(transport: Framed<T, RedisCodec>, key: Option<String>) -> Box<Future<Item=Framed<T, RedisCodec>, Error=RedisError>>
+  where T: AsyncRead + AsyncWrite + 'static
+{
   let key = match key {
     Some(k) => k,
     None => return client_utils::future_ok(transport)
@@ -474,17 +465,15 @@ pub fn authenticate(transport: RedisTransport, key: Option<String>) -> Box<Futur
   }))
 }
 
-pub fn process_frame(multiplexer: &Rc<Multiplexer>, frame: Frame) {
-  flame_start!("redis:process_frame");
-
+pub fn process_frame<T, U>(multiplexer: &Rc<Multiplexer<T, U>>, frame: Frame)
+  where T: Stream<Item=Frame, Error=RedisError> + 'static,
+        U: Sink<SinkItem=Frame, SinkError=RedisError> + 'static
+{
   if frame.is_pubsub_message() {
     let (channel, message) = match protocol_utils::frame_to_pubsub(frame) {
       Ok((c, m)) => (c, m),
       // TODO or maybe send to error stream
-      Err(_) => {
-        flame_end!("redis:process_frame");
-        return;
-      }
+      Err(_) => return
     };
 
     let mut to_remove = VecDeque::new();
@@ -529,17 +518,17 @@ pub fn process_frame(multiplexer: &Rc<Multiplexer>, frame: Frame) {
 
     let last_request = match multiplexer.take_last_request() {
       Some(s) => s,
-      None => {
-        flame_end!("redis:process_frame");
-        return
-      }
+      None => return
+
     };
     let _ = last_request.send(Ok(frame));
   }
-  flame_end!("redis:process_frame");
 }
 
-pub fn create_multiplexer_ft(multiplexer: Rc<Multiplexer>, state: Arc<RwLock<ClientState>>) -> Box<Future<Item=(), Error=RedisError>> {
+pub fn create_multiplexer_ft<T, U>(multiplexer: Rc<Multiplexer<T, U>>, state: Arc<RwLock<ClientState>>) -> Box<Future<Item=(), Error=RedisError>>
+  where T: Stream<Item=Frame, Error=RedisError> + 'static,
+        U: Sink<SinkItem=Frame, SinkError=RedisError> + 'static
+{
   Box::new(Multiplexer::listen(multiplexer.clone()).then(move |result| {
     client_utils::set_client_state(&state, ClientState::Disconnected);
 
@@ -554,18 +543,18 @@ pub fn create_multiplexer_ft(multiplexer: Rc<Multiplexer>, state: Arc<RwLock<Cli
   }))
 }
 
-pub fn create_commands_ft(
-  rx: UnboundedReceiver<RedisCommand>,
-  error_tx: Rc<RefCell<VecDeque<UnboundedSender<RedisError>>>>,
-  multiplexer: Rc<Multiplexer>,
-  stream_state: Arc<RwLock<ClientState>>
-) -> Box<Future<Item=(), Error=RedisError>>
+pub fn create_commands_ft<T, U>(rx: UnboundedReceiver<RedisCommand>,
+                                error_tx: Rc<RefCell<VecDeque<UnboundedSender<RedisError>>>>,
+                                multiplexer: Rc<Multiplexer<T, U>>,
+                                stream_state: Arc<RwLock<ClientState>>)
+  -> Box<Future<Item=(), Error=RedisError>>
+  where T: Stream<Item=Frame, Error=RedisError> + 'static,
+        U: Sink<SinkItem=Frame, SinkError=RedisError> + 'static
 {
   let state = stream_state.clone();
+  let final_multiplexer = multiplexer.clone();
 
   Box::new(rx.fold((multiplexer, error_tx), move |(multiplexer, error_tx), mut command| {
-    flame_start!("redis:handle_multiplexer_command:1");
-
     debug!("Redis client running command {:?}", command.kind);
 
     if command.kind == RedisCommandKind::_Close {
@@ -576,8 +565,6 @@ pub fn create_commands_ft(
 
       multiplexer.sinks.close();
       multiplexer.streams.close();
-
-      flame_end!("redis:handle_multiplexer_command:1");
 
       client_utils::future_error_generic(())
     }else if command.kind.is_split() {
@@ -602,9 +589,7 @@ pub fn create_commands_ft(
     }else{
       let resp_tx = command.tx.take();
 
-      flame_end!("redis:handle_multiplexer_command:1");
       Box::new(multiplexer.write_command(command).then(move |result| {
-        flame_start!("redis:handle_multiplexer_command:2");
         match result {
           Ok(_) => {
             // create a second oneshot channel for notifying when to move on to the next command
@@ -613,7 +598,6 @@ pub fn create_commands_ft(
             multiplexer.set_last_request(resp_tx);
             multiplexer.set_last_caller(Some(m_tx));
 
-            flame_end!("redis:handle_multiplexer_command:2");
             Box::new(m_rx.then(|_| Ok(multiplexer)))
           },
           Err(e) => {
@@ -622,7 +606,6 @@ pub fn create_commands_ft(
               let _ = tx.send(Err(e));
             }
 
-            flame_end!("redis:handle_multiplexer_command:2");
             client_utils::future_ok(multiplexer)
           }
         }
@@ -632,25 +615,21 @@ pub fn create_commands_ft(
     }
   })
   .then(move |result| {
-    flame_start!("redis:handle_multiplexer_command:3");
+    final_multiplexer.sinks.close();
+    final_multiplexer.streams.close();
 
     let res = match result {
-      Ok((multiplexer, _)) => {
+      Ok((_multiplexer, _)) => {
         debug!("Command stream closing after quit.");
 
         // stream was closed due to exit command so close the socket
         client_utils::set_client_state(&stream_state, ClientState::Disconnected);
-
-        multiplexer.sinks.close();
-        multiplexer.streams.close();
-
         client_utils::future_ok(())
       },
       // these errors can only be (), so ignore them
       Err(_) => client_utils::future_ok(())
     };
 
-    flame_end!("redis:handle_multiplexer_command:3");
     res
   })
   .from_err::<RedisError>())
@@ -675,11 +654,20 @@ pub fn create_connection_ft(command_ft: Box<Future<Item=(), Error=RedisError>>, 
   }))
 }
 
+#[cfg(not(feature="enable-tls"))]
+pub fn create_initial_transport_tls(handle: Handle, config: Rc<RefCell<RedisConfig>>, size_stats: Arc<RwLock<SizeTracker>>)
+                                    -> Box<Future<Item=Option<Framed<TcpStream, RedisCodec>>, Error=RedisError>>
+{
+  create_initial_transport(handle, config, size_stats)
+}
+
 #[allow(deprecated)]
 #[cfg(feature="enable-tls")]
-pub fn create_initial_transport(handle: Handle, config: Rc<RefCell<RedisConfig>>, size_stats: Arc<RwLock<SizeTracker>>) -> Box<Future<Item=Option<RedisTransport>, Error=RedisError>> {
+pub fn create_initial_transport_tls(handle: Handle, config: Rc<RefCell<RedisConfig>>, size_stats: Arc<RwLock<SizeTracker>>)
+  -> Box<Future<Item=Option<Framed<TlsStream<TcpStream>, RedisCodec>>, Error=RedisError>>
+{
   let hosts = fry!(read_clustered_hosts(&config));
-  let found: Option<RedisTransport> = None;
+  let found: Option<Framed<TlsStream<TcpStream>, RedisCodec>> = None;
 
   // find the first available host that can be connected to. would be nice if streams had a `find` function...
   Box::new(stream::iter(hosts.into_iter().map(Ok)).fold((found, handle), move |(found, handle), (host, port)| {
@@ -742,10 +730,9 @@ pub fn create_initial_transport(handle: Handle, config: Rc<RefCell<RedisConfig>>
 }
 
 #[allow(deprecated)]
-#[cfg(not(feature="enable-tls"))]
-pub fn create_initial_transport(handle: Handle, config: Rc<RefCell<RedisConfig>>, size_stats: Arc<RwLock<SizeTracker>>) -> Box<Future<Item=Option<RedisTransport>, Error=RedisError>> {
+pub fn create_initial_transport(handle: Handle, config: Rc<RefCell<RedisConfig>>, size_stats: Arc<RwLock<SizeTracker>>) -> Box<Future<Item=Option<Framed<TcpStream, RedisCodec>>, Error=RedisError>> {
   let hosts = fry!(read_clustered_hosts(&config));
-  let found: Option<RedisTransport> = None;
+  let found: Option<Framed<TcpStream, RedisCodec>> = None;
 
   // find the first available host that can be connected to. would be nice if streams had a `find` function...
   Box::new(stream::iter(hosts.into_iter().map(Ok)).fold((found, handle), move |(found, handle), (host, port)| {
@@ -790,10 +777,19 @@ pub fn create_initial_transport(handle: Handle, config: Rc<RefCell<RedisConfig>>
   .map(|(transport, _)| transport))
 }
 
+#[cfg(not(feature="enable-tls"))]
+pub fn create_all_transports_tls(config: Rc<RefCell<RedisConfig>>, handle: Handle, hosts: Vec<(String, u16)>, key: Option<String>, size_stats: Arc<RwLock<SizeTracker>>)
+  -> Box<Future<Item=Vec<(String, Framed<TcpStream, RedisCodec>)>, Error=RedisError>>
+{
+  create_all_transports(config, handle, hosts, key, size_stats)
+}
+
 #[allow(deprecated)]
 #[cfg(feature="enable-tls")]
-pub fn create_all_transports(config: Rc<RefCell<RedisConfig>>, handle: Handle, hosts: Vec<(String, u16)>, key: Option<String>, size_stats: Arc<RwLock<SizeTracker>>) -> Box<Future<Item=Vec<(String, RedisTransport)>, Error=RedisError>> {
-  let transports: Vec<(String, RedisTransport)> = Vec::with_capacity(hosts.len());
+pub fn create_all_transports_tls(config: Rc<RefCell<RedisConfig>>, handle: Handle, hosts: Vec<(String, u16)>, key: Option<String>, size_stats: Arc<RwLock<SizeTracker>>)
+  -> Box<Future<Item=Vec<(String, Framed<TlsStream<TcpStream>, RedisCodec>)>, Error=RedisError>>
+{
+  let transports: Vec<(String, Framed<TlsStream<TcpStream>, RedisCodec>)> = Vec::with_capacity(hosts.len());
 
   Box::new(stream::iter(hosts.into_iter().map(Ok)).fold(transports, move |mut transports, (host, port)| {
     let addr_str = tuple_to_addr_str(&host, port);
@@ -841,7 +837,7 @@ pub fn create_all_transports(config: Rc<RefCell<RedisConfig>>, handle: Handle, h
       .and_then(move |transport| {
         authenticate(transport, key)
       })
-      .and_then(move |transport: RedisTransport| {
+      .and_then(move |transport| {
         transports.push((ip_str, transport));
         Ok(transports)
       })
@@ -850,9 +846,10 @@ pub fn create_all_transports(config: Rc<RefCell<RedisConfig>>, handle: Handle, h
 }
 
 #[allow(deprecated)]
-#[cfg(not(feature="enable-tls"))]
-pub fn create_all_transports(config: Rc<RefCell<RedisConfig>>, handle: Handle, hosts: Vec<(String, u16)>, key: Option<String>, size_stats: Arc<RwLock<SizeTracker>>) -> Box<Future<Item=Vec<(String, RedisTransport)>, Error=RedisError>> {
-  let transports: Vec<(String, RedisTransport)> = Vec::with_capacity(hosts.len());
+pub fn create_all_transports(config: Rc<RefCell<RedisConfig>>, handle: Handle, hosts: Vec<(String, u16)>, key: Option<String>, size_stats: Arc<RwLock<SizeTracker>>)
+  -> Box<Future<Item=Vec<(String, Framed<TcpStream, RedisCodec>)>, Error=RedisError>>
+{
+  let transports: Vec<(String, Framed<TcpStream, RedisCodec>)> = Vec::with_capacity(hosts.len());
 
   Box::new(stream::iter(hosts.into_iter().map(Ok)).fold(transports, move |mut transports, (host, port)| {
 
@@ -884,7 +881,7 @@ pub fn create_all_transports(config: Rc<RefCell<RedisConfig>>, handle: Handle, h
       .and_then(move |transport| {
         authenticate(transport, key)
       })
-      .and_then(move |transport: RedisTransport| {
+      .and_then(move |transport| {
         transports.push((ip_str, transport));
         Ok(transports)
       })

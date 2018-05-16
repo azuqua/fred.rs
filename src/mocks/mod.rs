@@ -24,7 +24,7 @@ use ::protocol::types::{
 };
 
 use ::utils as client_utils;
-use ::loop_serve::utils as loop_utils;
+use ::multiplexer::utils as multiplexer_utils;
 
 use futures::future::{
   loop_fn,
@@ -79,9 +79,9 @@ pub fn init_with_policy(client: RedisClient,
   let (tx, rx) = unbounded();
   let expiration_tx = tx.clone();
 
-  loop_utils::set_command_tx(&command_tx, tx);
-  loop_utils::emit_connect(&connect_tx, remote_tx, &client);
-  let _ = loop_utils::emit_reconnect(&reconnect_tx, &client);
+  multiplexer_utils::set_command_tx(&command_tx, tx);
+  multiplexer_utils::emit_connect(&connect_tx, remote_tx, &client);
+  let _ = multiplexer_utils::emit_reconnect(&reconnect_tx, &client);
 
   utils::create_command_ft(rx, expiration_tx)
 }

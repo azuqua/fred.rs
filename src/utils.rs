@@ -32,9 +32,9 @@ use error::{
   RedisError,
   RedisErrorKind
 };
-use super::RedisClient;
-use super::utils as client_utils;
-use super::loop_serve::utils as loop_serve_utils;
+use ::RedisClient;
+use ::utils as client_utils;
+use ::multiplexer::utils as multiplexer_utils;
 
 use std::rc::Rc;
 use std::cell::RefCell;
@@ -237,7 +237,7 @@ pub fn split(command_tx: &Rc<RefCell<Option<UnboundedSender<RedisCommand>>>>, co
   let (tx, rx) = oneshot_channel();
   let split_command = RedisCommandKind::_Split(Some(SplitCommand {
     tx: Arc::new(RwLock::new(Some(tx))),
-    key: loop_serve_utils::read_auth_key(config)
+    key: multiplexer_utils::read_auth_key(config)
   }));
   let command = RedisCommand::new(split_command, vec![], None);
 
@@ -245,11 +245,15 @@ pub fn split(command_tx: &Rc<RefCell<Option<UnboundedSender<RedisCommand>>>>, co
     return client_utils::future_error(e);
   }
 
+  let uses_tls = config.borrow().tls();
   let handle = handle.clone();
   Box::new(rx.flatten().and_then(move |configs| {
     let all_len = configs.len();
 
     stream::iter_ok(configs.into_iter()).map(move |mut config| {
+      // the underlying split() logic doesn't have the original tls flag, so it's copied above and restored here
+      config.set_tls(uses_tls);
+
       let client = RedisClient::new(config.clone());
       let err_client = client.clone();
       let client_ft = client.connect(&handle).map(|_| ()).map_err(|_| ());

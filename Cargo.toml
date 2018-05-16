@@ -6,7 +6,7 @@ authors = [
   "Kevin Wilson <kevinwilson541@gmail.com>"
 ]
 name = "fred"
-version = "0.0.13"
+version = "0.1.0"
 description = "A Redis client for Rust built on Futures and Tokio."
 readme = "README.md"
 repository = "https://github.com/azuqua/fred.rs"
@@ -21,7 +21,7 @@ maintenance = { status = "actively-developed" }
 [dependencies]
 bytes = "0.4.4"
 pretty_env_logger = "0.1"
-futures = "0.1.15"
+futures = "0.1.18"
 parking_lot = "0.4.4"
 tokio-core = "0.1.8"
 tokio-io = "0.1"

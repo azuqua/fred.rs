@@ -22,8 +22,8 @@ cargo add fred
 * Optional built-in reconnection logic with multiple backoff policies.
 * Publish-Subscribe interface.
 * Optional `Send` and `Sync` wrappers for the client.
+* Support TLS for ElastiCache, etc.
 * Flexible interface for different use cases.
-* 100% safe rust.
 
 ## Example
 
@@ -102,11 +102,12 @@ variable `RUST_LOG` with a value of `trace`, `debug`, `error`, or `info`. See th
 
 ## Features
 
-|  Name   | Default | Description                                                     |
-|---------|---------|-----------------------------------------------------------------|
-| sync    |    x    | Enable the `Send` and `Sync` wrappers.                          |
-| fuzz    |         | Expose the protocol utils as public functions for fuzz testing. |
-| metrics |    x    | Enable latency and payload size metrics.                        |
+|    Name    | Default | Description                                                     |
+|----------- |---------|-----------------------------------------------------------------|
+| sync       |    x    | Enable the `Send` and `Sync` wrappers.                          |
+| fuzz       |         | Expose the protocol utils as public functions for fuzz testing. |
+| metrics    |    x    | Enable latency and payload size metrics.                        |
+| enable-tls |         | Enable TLS support.                                             |
 
 ## Tests
 
