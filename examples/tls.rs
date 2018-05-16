@@ -40,7 +40,7 @@ fn main() {
     client.select(0)
   })
   .and_then(|client| {
-    println!("Selected database.");
+    println!("Selected database.");cargo 
 
     client.info(None)
   })
