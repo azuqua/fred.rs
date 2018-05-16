@@ -101,7 +101,7 @@ mod _flame;
 #[macro_use]
 mod utils;
 
-mod loop_serve;
+mod multiplexer;
 
 #[cfg(feature="metrics")]
 /// Structs for tracking latency and payload size metrics.
@@ -177,7 +177,7 @@ use types::{
   ASYNC
 };
 
-use loop_serve::{
+use multiplexer::{
   ConnectionFuture
 };
 
@@ -215,7 +215,7 @@ pub struct RedisClient {
   reconnect_tx: Rc<RefCell<VecDeque<UnboundedSender<RedisClient>>>>,
   // MPSC senders for `on_connect` futures
   connect_tx: Rc<RefCell<VecDeque<OneshotSender<Result<RedisClient, RedisError>>>>>,
-  // A flag used to determine if the client was intentionally closed. This is used in the loop_serve reconnect logic
+  // A flag used to determine if the client was intentionally closed. This is used in the multiplexer reconnect logic
   // to determine if `quit` was called while the client was waiting to reconnect.
   closed: Arc<RwLock<bool>>,
   // Senders to remote handles around this client instance. Since forwarding messages between futures and streams itself
@@ -291,10 +291,10 @@ impl RedisClient {
     };
 
     // close anything left over from previous connections or reconnection attempts
-    loop_serve::utils::close_error_tx(&self.error_tx);
-    loop_serve::utils::close_reconnect_tx(&self.reconnect_tx);
-    loop_serve::utils::close_messages_tx(&self.message_tx);
-    loop_serve::utils::close_connect_tx(&self.connect_tx, &self.remote_tx);
+    multiplexer::utils::close_error_tx(&self.error_tx);
+    multiplexer::utils::close_reconnect_tx(&self.reconnect_tx);
+    multiplexer::utils::close_messages_tx(&self.message_tx);
+    multiplexer::utils::close_connect_tx(&self.connect_tx, &self.remote_tx);
 
     if exit_early {
       utils::future_ok(self)
@@ -390,7 +390,7 @@ impl RedisClient {
     );
 
     debug!("Connecting to Redis server.");
-    loop_serve::init(self.clone(), handle, config, state, error_tx, message_tx, command_tx, connect_tx, reconnect_tx, remote_tx)
+    multiplexer::init(self.clone(), handle, config, state, error_tx, message_tx, command_tx, connect_tx, reconnect_tx, remote_tx)
   }
 
   /// Connect to the Redis server with a `ReconnectPolicy` to apply if the connection closes due to an error.
@@ -422,7 +422,7 @@ impl RedisClient {
     policy.reset_attempts();
     debug!("Connecting to Redis server with reconnect policy.");
 
-    loop_serve::init_with_policy(client, handle, config, state, closed, error_tx, message_tx, command_tx, reconnect_tx, connect_tx, remote_tx, policy)
+    multiplexer::init_with_policy(client, handle, config, state, closed, error_tx, message_tx, command_tx, reconnect_tx, connect_tx, remote_tx, policy)
   }
 
   /// Listen for successful reconnection notifications. When using a config with a `ReconnectPolicy` the future

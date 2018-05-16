@@ -34,11 +34,6 @@ use parking_lot::{
   RwLock
 };
 
-use super::{
-  RedisSink,
-  RedisStream
-};
-
 use std::rc::Rc;
 use std::cell::RefCell;
 
@@ -52,32 +47,50 @@ use ::metrics::{
   LatencyTracker
 };
 
-type FrameStream = Box<Stream<Item=Frame, Error=RedisError>>;
-type QuitFuture = Box<Future<Item=(String, RedisSink), Error=RedisError>>;
+use futures::stream::{
+  SplitSink,
+  SplitStream
+};
+use ::protocol::types::RedisCodec;
+use tokio_io::codec::Framed;
+use tokio_io::{AsyncWrite,AsyncRead};
 
-pub enum Sinks {
-  Centralized(Rc<RefCell<Option<RedisSink>>>),
+#[cfg(feature="enable-tls")]
+use tokio_tls::{
+  TlsConnectorExt,
+  TlsStream,
+  ConnectAsync
+};
+#[cfg(feature="native-tls")]
+use native_tls::{
+  TlsConnector
+};
+
+type FrameStream = Box<Stream<Item=Frame, Error=RedisError>>;
+
+pub enum Sinks<T> where T: Sink<SinkItem=Frame, SinkError=RedisError> + 'static {
+  Centralized(Rc<RefCell<Option<SplitSink<T>>>>),
   Clustered {
     cluster_cache: Rc<RefCell<ClusterKeyCache>>,
-    sinks: Rc<RefCell<BTreeMap<String, RedisSink>>>
+    sinks: Rc<RefCell<BTreeMap<String, SplitSink<T>>>>
   }
 }
 
-pub enum Streams {
-  Centralized(Rc<RefCell<Option<RedisStream>>>),
-  Clustered(Rc<RefCell<Vec<RedisStream>>>)
+pub enum Streams<T> where T: Stream<Item=Frame, Error=RedisError> + 'static {
+  Centralized(Rc<RefCell<Option<SplitStream<T>>>>),
+  Clustered(Rc<RefCell<Vec<SplitStream<T>>>>)
 }
 
-impl Sinks {
+impl<T> Sinks<T> where T: Sink<SinkItem=Frame, SinkError=RedisError> + 'static {
 
-  pub fn set_centralized_sink(&self, sink: RedisSink) {
+  pub fn set_centralized_sink(&self, sink: SplitSink<T>) {
     if let Sinks::Centralized(ref old_sink) = *self {
       let mut sink_ref = old_sink.borrow_mut();
       *sink_ref = Some(sink);
     }
   }
 
-  pub fn set_clustered_sink(&self, key: String, sink: RedisSink) {
+  pub fn set_clustered_sink(&self, key: String, sink: SplitSink<T>) {
     if let Sinks::Clustered {ref sinks, ..} = *self {
       let mut sinks_ref = sinks.borrow_mut();
       sinks_ref.insert(key, sink);
@@ -119,7 +132,8 @@ impl Sinks {
             host: parts.pop().unwrap(),
             port: port,
             key: key.clone(),
-            max_value_size: None
+            max_value_size: None,
+            tls: false
           })
         }
 
@@ -166,14 +180,14 @@ impl Sinks {
           let sinks_len = sinks_ref.len();
           let old_sinks = mem::replace(sinks_ref.deref_mut(), BTreeMap::new());
 
-          let iter: Vec<Result<(String, RedisSink), RedisError>> = old_sinks.into_iter().map(|(server, sink)| {
-            Ok::<(String, RedisSink), RedisError>((server, sink))
+          let iter: Vec<Result<(String, SplitSink<T>), RedisError>> = old_sinks.into_iter().map(|(server, sink)| {
+            Ok::<(String, SplitSink<T>), RedisError>((server, sink))
           }).collect();
 
           (iter, sinks_len)
         };
 
-        let quit_ft = stream::iter(sinks_iter).map(move |(server, sink): (String, RedisSink)| {
+        let quit_ft = stream::iter(sinks_iter).map(move |(server, sink)| {
           sink.send(frame.clone()).from_err::<RedisError>().and_then(|sink| {
             Ok((server, sink))
           })
@@ -300,7 +314,7 @@ impl Sinks {
 
 }
 
-impl Streams {
+impl<T> Streams<T> where T: Stream<Item=Frame, Error=RedisError> + 'static {
 
   pub fn close(&self) {
     match *self {
@@ -315,7 +329,7 @@ impl Streams {
     }
   }
 
-  pub fn add_stream(&self, stream: RedisStream) {
+  pub fn add_stream(&self, stream: SplitStream<T>) {
     match *self {
       Streams::Centralized(ref old_stream) => {
         let mut stream_ref = old_stream.borrow_mut();
@@ -371,7 +385,10 @@ impl Streams {
 /// interface and bl* commands do not. Due to the fact that a client can switch between these interfaces at will
 /// a more complex multiplexing layer is needed than is currently supported via the generic pipelined/multiplexed
 /// interfaces supported by tokio-proto.
-pub struct Multiplexer {
+pub struct Multiplexer<T, U>
+  where T: Stream<Item=Frame, Error=RedisError> + 'static,
+        U: Sink<SinkItem=Frame, SinkError=RedisError> + 'static
+{
   clustered: bool,
   config: Rc<RefCell<RedisConfig>>,
   pub message_tx: Rc<RefCell<VecDeque<UnboundedSender<(String, RedisValue)>>>>,
@@ -385,8 +402,8 @@ pub struct Multiplexer {
   // oneshot sender for the command stream to be notified when it can start processing the next request
   pub last_caller: RefCell<Option<OneshotSender<RefreshCache>>>,
 
-  pub streams: Streams,
-  pub sinks: Sinks,
+  pub streams: Streams<T>,
+  pub sinks: Sinks<U>,
 
   /// Latency metrics tracking, enabled with the feature `metrics`.
   pub latency_stats: Arc<RwLock<LatencyTracker>>,
@@ -394,13 +411,19 @@ pub struct Multiplexer {
   pub size_stats: Arc<RwLock<SizeTracker>>
 }
 
-impl fmt::Debug for Multiplexer {
+impl<T, U> fmt::Debug for Multiplexer<T, U>
+  where T: Stream<Item=Frame, Error=RedisError> + 'static,
+        U: Sink<SinkItem=Frame, SinkError=RedisError> + 'static
+{
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     write!(f, "[Multiplexer]")
   }
 }
 
-impl Multiplexer {
+impl<T, U> Multiplexer<T, U>
+  where T: Stream<Item=Frame, Error=RedisError> + 'static,
+        U: Sink<SinkItem=Frame, SinkError=RedisError> + 'static
+{
 
   pub fn new(config: Rc<RefCell<RedisConfig>>,
              message_tx: Rc<RefCell<VecDeque<UnboundedSender<(String, RedisValue)>>>>,
@@ -409,7 +432,7 @@ impl Multiplexer {
              state: Arc<RwLock<ClientState>>,
              latency: Arc<RwLock<LatencyTracker>>,
              size: Arc<RwLock<SizeTracker>>)
-    -> Rc<Multiplexer>
+    -> Rc<Multiplexer<T, U>>
   {
 
     let (streams, sinks, clustered) = {
@@ -504,7 +527,7 @@ impl Multiplexer {
   /// this reason.
   ///
   /// The future returned here resolves when the socket is closed.
-  pub fn listen(multiplexer: Rc<Multiplexer>) -> Box<Future<Item=Rc<Multiplexer>, Error=RedisError>> {
+  pub fn listen(multiplexer: Rc<Multiplexer<T, U>>) -> Box<Future<Item=Rc<Multiplexer<T, U>>, Error=RedisError>> {
     let frame_stream = match multiplexer.streams.listen() {
       Ok(stream) => stream,
       Err(e) => return client_utils::future_error(e)
@@ -518,12 +541,12 @@ impl Multiplexer {
         // pause commands to refresh the cached cluster state
         let _ = multiplexer.close_commands();
 
-        Err::<Rc<Multiplexer>, RedisError>(RedisError::new(
+        Err::<_, RedisError>(RedisError::new(
           RedisErrorKind::Cluster, ""
         ))
       }else{
         utils::process_frame(&multiplexer, frame);
-        Ok::<Rc<Multiplexer>, RedisError>(multiplexer)
+        Ok(multiplexer)
       };
 
       res
