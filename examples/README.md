@@ -14,3 +14,4 @@ cargo run --example basic
 6. [Sync Borrowed](sync_borrowed.rs) - Examples showing how to create a `RedisClientRemote` that borrows `self` on each command, allowing for greater control over ownership.
 7. [Multiple](multiple.rs) - An example that creates multiple clients on an event loop and composes their connections and commands together.
 8. [Http](http.rs) - An example using a Redis client with a [hyper http server](https://github.com/hyperium/hyper).
+9. [TLS](tls.rs) - An example showing how to use the TLS features.
