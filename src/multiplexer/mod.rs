@@ -54,7 +54,8 @@ use parking_lot::{
 };
 
 use std::net::{
-  ToSocketAddrs
+  ToSocketAddrs,
+  SocketAddr
 };
 
 use tokio_io::codec::Framed;
@@ -102,6 +103,8 @@ type TcpTransports = Vec<(String, Framed<TcpStream, RedisCodec>)>;
 fn init_tls_transports(config: Rc<RefCell<RedisConfig>>, handle: Handle, hosts: Vec<(String, u16)>, key: Option<String>, size_stats: Arc<RwLock<SizeTracker>>, cache: ClusterKeyCache)
  -> Box<Future<Item=(Either<TlsTransports, TcpTransports>, ClusterKeyCache), Error=RedisError>>
 {
+  debug!("Initialize clustered tls transports.");
+
   Box::new(utils::create_all_transports_tls(config, handle, hosts, key, size_stats).map(move |result| {
     (Either::A(result), cache)
   }))
@@ -271,6 +274,48 @@ fn init_clustered(
   }))
 }
 
+#[cfg(feature="enable-tls")]
+type TlsTransportSink = SplitSink<Framed<TlsStream<TcpStream>, RedisCodec>>;
+#[cfg(feature="enable-tls")]
+type TlsTransportStream = SplitStream<Framed<TlsStream<TcpStream>, RedisCodec>>;
+
+#[cfg(not(feature="enable-tls"))]
+type TlsTransportSink = SplitSink<Framed<TcpStream, RedisCodec>>;
+#[cfg(not(feature="enable-tls"))]
+type TlsTransportStream = SplitStream<Framed<TcpStream, RedisCodec>>;
+
+type TcpTransportSink = SplitSink<Framed<TcpStream, RedisCodec>>;
+type TcpTransportStream = SplitStream<Framed<TcpStream, RedisCodec>>;
+
+type SplitTlsTransport = (TlsTransportSink, TlsTransportStream);
+type SplitTcpTransport = (TcpTransportSink, TcpTransportStream);
+
+#[cfg(feature="enable-tls")]
+fn create_centralized_transport_tls(addr: &SocketAddr, handle: &Handle, config: Rc<RefCell<RedisConfig>>, state: Arc<RwLock<ClientState>>, size_stats: Arc<RwLock<SizeTracker>>)
+  -> Box<Future<Item=Either<SplitTlsTransport, SplitTcpTransport>, Error=RedisError>>
+{
+  Box::new(utils::create_transport_tls(&addr, &handle, config, state, size_stats).map(|(sink, stream)| {
+    Either::A((sink, stream))
+  }))
+}
+
+#[cfg(not(feature="enable-tls"))]
+fn create_centralized_transport_tls(addr: &SocketAddr, handle: &Handle, config: Rc<RefCell<RedisConfig>>, state: Arc<RwLock<ClientState>>, size_stats: Arc<RwLock<SizeTracker>>)
+  -> Box<Future<Item=Either<SplitTlsTransport, SplitTcpTransport>, Error=RedisError>>
+{
+  Box::new(utils::create_transport_tls(&addr, &handle, config, state, size_stats).map(|(sink, stream)| {
+    Either::A((sink, stream))
+  }))
+}
+
+fn create_centralized_transport(addr: &SocketAddr, handle: &Handle, config: Rc<RefCell<RedisConfig>>, state: Arc<RwLock<ClientState>>, size_stats: Arc<RwLock<SizeTracker>>)
+  -> Box<Future<Item=Either<SplitTlsTransport, SplitTcpTransport>, Error=RedisError>>
+{
+  Box::new(utils::create_transport(&addr, &handle, config, state, size_stats).map(|(sink, stream)| {
+    Either::B((sink, stream))
+  }))
+}
+
 fn init_centralized(
   client: RedisClient,
   handle: &Handle,
@@ -281,8 +326,7 @@ fn init_centralized(
   command_tx: Rc<RefCell<Option<UnboundedSender<RedisCommand>>>>,
   connect_tx: Rc<RefCell<VecDeque<OneshotSender<Result<RedisClient, RedisError>>>>>,
   reconnect_tx: Rc<RefCell<VecDeque<UnboundedSender<RedisClient>>>>,
-  remote_tx: Rc<RefCell<VecDeque<OneshotSender<Result<(), RedisError>>>>>,
-)
+  remote_tx: Rc<RefCell<VecDeque<OneshotSender<Result<(), RedisError>>>>>)
   -> ConnectionFuture
 {
   let addr_str = fry!(utils::read_centralized_host(&config));
@@ -301,28 +345,60 @@ fn init_centralized(
   let error_remote_tx = remote_tx.clone();
   let (latency_stats, size_stats) = client.metrics_trackers_cloned();
 
-  // TODO create transport tls or not
+  let transport_ft = if config.borrow().tls() {
+    create_centralized_transport_tls(&addr, &handle, config.clone(), state.clone(), size_stats.clone())
+  }else{
+    create_centralized_transport(&addr, &handle, config.clone(), state.clone(), size_stats.clone())
+  };
 
-  Box::new(utils::create_transport(&addr, &handle, config.clone(), state.clone(), size_stats.clone()).and_then(move |(redis_sink, redis_stream)| {
+  Box::new(transport_ft.and_then(move |transport| {
     let (tx, rx): (UnboundedSender<RedisCommand>, UnboundedReceiver<RedisCommand>) = unbounded();
 
-    let multiplexer = Multiplexer::new(
-      config.clone(),
-      message_tx.clone(),
-      error_tx.clone(),
-      command_tx.clone(),
-      state.clone(),
-      latency_stats,
-      size_stats
-    );
+    let (multiplexer_ft, commands_ft) = match transport {
+      Either::A((redis_sink, redis_stream)) => {
+        let multiplexer = Multiplexer::new(
+          config.clone(),
+          message_tx.clone(),
+          error_tx.clone(),
+          command_tx.clone(),
+          state.clone(),
+          latency_stats,
+          size_stats
+        );
 
-    multiplexer.sinks.set_centralized_sink(redis_sink);
-    multiplexer.streams.add_stream(redis_stream);
+        multiplexer.sinks.set_centralized_sink(redis_sink);
+        multiplexer.streams.add_stream(redis_stream);
 
-    // resolves when inbound responses stop
-    let multiplexer_ft = utils::create_multiplexer_ft(multiplexer.clone(), state.clone());
-    // resolves when outbound requests stop
-    let commands_ft = utils::create_commands_ft(rx, error_tx, multiplexer, state.clone());
+        // resolves when inbound responses stop
+        let multiplexer_ft = utils::create_multiplexer_ft(multiplexer.clone(), state.clone());
+        // resolves when outbound requests stop
+        let commands_ft = utils::create_commands_ft(rx, error_tx, multiplexer, state.clone());
+
+        (multiplexer_ft, commands_ft)
+      },
+      Either::B((redis_sink, redis_stream)) => {
+        let multiplexer = Multiplexer::new(
+          config.clone(),
+          message_tx.clone(),
+          error_tx.clone(),
+          command_tx.clone(),
+          state.clone(),
+          latency_stats,
+          size_stats
+        );
+
+        multiplexer.sinks.set_centralized_sink(redis_sink);
+        multiplexer.streams.add_stream(redis_stream);
+
+        // resolves when inbound responses stop
+        let multiplexer_ft = utils::create_multiplexer_ft(multiplexer.clone(), state.clone());
+        // resolves when outbound requests stop
+        let commands_ft = utils::create_commands_ft(rx, error_tx, multiplexer, state.clone());
+
+        (multiplexer_ft, commands_ft)
+      }
+    };
+
     // resolves when both sides of the channel stop
     let connection_ft = utils::create_connection_ft(commands_ft, multiplexer_ft, state.clone());
 
