@@ -348,7 +348,7 @@ pub fn create_transport_tls(
   size_stats: Arc<RwLock<SizeTracker>>
 ) -> Box<Future<Item=(SplitSink<Framed<TlsStream<TcpStream>, RedisCodec>>, SplitStream<Framed<TlsStream<TcpStream>, RedisCodec>>), Error=RedisError>>
 {
-  debug!("Creating redis transport to {:?}", &addr);
+  debug!("Creating redis tls transport to {:?}", &addr);
   let codec = {
     let config_ref = config.borrow();
     RedisCodec::new(config_ref.get_max_size(), size_stats)
@@ -693,7 +693,7 @@ pub fn create_initial_transport_tls(handle: Handle, config: Rc<RefCell<RedisConf
         RedisCodec::new(config_ref.get_max_size(), size_stats.clone())
       };
 
-      debug!("Creating clustered redis transport to {:?}", &addr);
+      debug!("Creating clustered redis tls transport to {:?}", &addr);
 
       Box::new(TcpStream::connect(&addr, &handle)
         .from_err::<RedisError>()
@@ -812,7 +812,7 @@ pub fn create_all_transports_tls(config: Rc<RefCell<RedisConfig>>, handle: Handl
       RedisCodec::new(config_ref.get_max_size(), size_stats.clone())
     };
 
-    debug!("Creating clustered transport to {:?}", addr);
+    debug!("Creating clustered tls transport to {:?}", addr);
 
     Box::new(TcpStream::connect(&addr, &handle)
       .from_err::<RedisError>()
@@ -889,7 +889,32 @@ pub fn create_all_transports(config: Rc<RefCell<RedisConfig>>, handle: Handle, h
   }))
 }
 
-pub fn build_cluster_cache(handle: Handle, config: &Rc<RefCell<RedisConfig>>, size_stats: Arc<RwLock<SizeTracker>>) -> Box<Future<Item=ClusterKeyCache, Error=RedisError>> {
+#[cfg(feature="enable-tls")]
+fn read_cluster_cache_tls(handle: Handle, config: &Rc<RefCell<RedisConfig>>, size_stats: Arc<RwLock<SizeTracker>>) -> Box<Future<Item=Frame, Error=RedisError>> {
+  Box::new(create_initial_transport_tls(handle, config.clone(), size_stats).and_then(|transport| {
+    let transport = match transport {
+      Some(t) => t,
+      None => return client_utils::future_error(RedisError::new(
+        RedisErrorKind::Unknown, "Could not connect to any Redis server in config."
+      ))
+    };
+
+    let command = RedisCommand::new(RedisCommandKind::ClusterNodes, vec![], None);
+    debug!("Reading cluster state...");
+
+    Box::new(request_response(transport, command).map(|(frame, mut transport)| {
+      let _ = transport.close();
+      frame
+    }))
+  }))
+}
+
+#[cfg(not(feature="enable-tls"))]
+fn read_cluster_cache_tls(handle: Handle, config: &Rc<RefCell<RedisConfig>>, size_stats: Arc<RwLock<SizeTracker>>) -> Box<Future<Item=Frame, Error=RedisError>> {
+  read_cluster_cache(handle, config, size_stats)
+}
+
+fn read_cluster_cache(handle: Handle, config: &Rc<RefCell<RedisConfig>>, size_stats: Arc<RwLock<SizeTracker>>) -> Box<Future<Item=Frame, Error=RedisError>> {
   Box::new(create_initial_transport(handle, config.clone(), size_stats).and_then(|transport| {
     let transport = match transport {
       Some(t) => t,
@@ -901,10 +926,21 @@ pub fn build_cluster_cache(handle: Handle, config: &Rc<RefCell<RedisConfig>>, si
     let command = RedisCommand::new(RedisCommandKind::ClusterNodes, vec![], None);
     debug!("Reading cluster state...");
 
-    request_response(transport, command)
-  })
-  .and_then(|(frame, mut transport)| {
+    Box::new(request_response(transport, command).map(|(frame, mut transport)| {
+      let _ = transport.close();
+      frame
+    }))
+  }))
+}
 
+pub fn build_cluster_cache(handle: Handle, config: &Rc<RefCell<RedisConfig>>, size_stats: Arc<RwLock<SizeTracker>>) -> Box<Future<Item=ClusterKeyCache, Error=RedisError>> {
+  let ft = if config.borrow().tls() {
+    read_cluster_cache_tls(handle, config, size_stats)
+  }else{
+    read_cluster_cache(handle, config, size_stats)
+  };
+
+  Box::new(ft.and_then(|frame| {
     let response = if frame.is_error() {
       match frame.into_error() {
         Some(e) => return Err(e),
@@ -921,15 +957,8 @@ pub fn build_cluster_cache(handle: Handle, config: &Rc<RefCell<RedisConfig>>, si
       }
     };
 
-    let cache = match ClusterKeyCache::new(Some(response)) {
-      Ok(c) => c,
-      Err(e) => return Err(e)
-    };
-
-    let _ = transport.close();
-    Ok(cache)
-  })
-  .from_err::<RedisError>())
+    ClusterKeyCache::new(Some(response))
+  }))
 }
 
 #[allow(unused_variables)]
