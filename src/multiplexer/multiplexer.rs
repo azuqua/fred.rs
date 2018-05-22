@@ -214,7 +214,6 @@ impl<T> Sinks<T> where T: Sink<SinkItem=Frame, SinkError=RedisError> + 'static {
 
     match *self {
       Sinks::Centralized(ref sink) => {
-        let _guard = flame_start!("redis:write_command:1");
         let owned_sink = {
           let mut sink_ref = sink.borrow_mut();
 
@@ -233,8 +232,6 @@ impl<T> Sinks<T> where T: Sink<SinkItem=Frame, SinkError=RedisError> + 'static {
         Box::new(owned_sink.send(frame)
           .map_err(|e| e.into())
           .and_then(move |sink| {
-            let _guard = flame_start!("redis:write_command:2");
-
             let mut sink_ref = sink_copy.borrow_mut();
             *sink_ref = Some(sink);
 
@@ -242,8 +239,6 @@ impl<T> Sinks<T> where T: Sink<SinkItem=Frame, SinkError=RedisError> + 'static {
           }))
       },
       Sinks::Clustered { ref sinks, ref cluster_cache } => {
-        let _guard = flame_start!("redis:write_command:3");
-
         let node = if no_cluster {
           let cluster_cache_ref = cluster_cache.borrow();
 
@@ -285,7 +280,8 @@ impl<T> Sinks<T> where T: Sink<SinkItem=Frame, SinkError=RedisError> + 'static {
         // and put back after the request has been written to the socket
         let owned_sink = {
           let mut sinks_ref = sinks.borrow_mut();
-          
+
+          trace!("Using redis node at {}", node.server);
           match sinks_ref.remove(&node.server) {
             Some(s) => s,
             None => {
@@ -301,8 +297,6 @@ impl<T> Sinks<T> where T: Sink<SinkItem=Frame, SinkError=RedisError> + 'static {
         Box::new(owned_sink.send(frame)
           .map_err(|e| e.into())
           .and_then(move |sink| {
-            let _guard = flame_start!("redis:write_command:4");
-
             let mut sinks_ref = sinks.borrow_mut();
             sinks_ref.insert(node.server.clone(), sink);
 
@@ -534,7 +528,6 @@ impl<T, U> Multiplexer<T, U>
     };
 
     Box::new(frame_stream.fold(multiplexer, |multiplexer, frame: Frame| {
-      let _guard = flame_start!("redis:listen_frame");
       trace!("Multiplexer stream recv frame.");
 
       let res = if frame.kind() == FrameKind::Moved || frame.kind() == FrameKind::Ask {
