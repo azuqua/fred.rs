@@ -804,7 +804,6 @@ pub fn create_all_transports_tls(config: Rc<RefCell<RedisConfig>>, handle: Handl
         RedisErrorKind::Unknown, format!("Could not resolve hostname {}.", addr_str)
       ))
     };
-    let ip_str = format!("{}:{}", addr.ip(), addr.port());
 
     let key = key.clone();
     let codec = {
@@ -838,7 +837,9 @@ pub fn create_all_transports_tls(config: Rc<RefCell<RedisConfig>>, handle: Handl
         authenticate(transport, key)
       })
       .and_then(move |transport| {
-        transports.push((ip_str, transport));
+        // when using TLS the FQDN must be used, so the IP string isn't used here like it is below.
+        // elasticache supports this by modifying the CLUSTER NODES command to use domain names instead of IPs
+        transports.push((addr_str, transport));
         Ok(transports)
       })
       .from_err::<RedisError>())
@@ -956,6 +957,8 @@ pub fn build_cluster_cache(handle: Handle, config: &Rc<RefCell<RedisConfig>>, si
         ))
       }
     };
+
+    trace!("Cluster state: {}", response);
 
     ClusterKeyCache::new(Some(response))
   }))
