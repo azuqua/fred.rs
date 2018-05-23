@@ -157,3 +157,21 @@ pub fn incrbyfloat(client: RedisClient, tx: OneshotSender<Result<f64, RedisError
     utils::send_normal_result(tx, result)
   }))
 }
+
+pub fn llen(client: RedisClient, tx: OneshotSender<Result<usize, RedisError>>, key: RedisKey) -> CommandFnResp {
+  Box::new(client.llen(key).then(move |result| {
+    utils::send_normal_result(tx, result)
+  }))
+}
+
+pub fn lpush(client: RedisClient, tx: OneshotSender<Result<usize, RedisError>>, key: RedisKey, value: RedisValue) -> CommandFnResp {
+  Box::new(client.lpush(key, value).then(move |result| {
+    utils::send_normal_result(tx, result)
+  }))
+}
+
+pub fn lpop(client: RedisClient, tx: OneshotSender<Result<Option<RedisValue>, RedisError>>, key: RedisKey) -> CommandFnResp {
+  Box::new(client.lpop(key).then(move |result| {
+    utils::send_normal_result(tx, result)
+  }))
+}
