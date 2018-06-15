@@ -592,6 +592,42 @@ impl RedisClientRemote {
     })
   }
 
+  /// Returns the length of the list stored at key.
+  ///
+  /// https://redis.io/commands/llen
+  pub fn llen<K: Into<RedisKey>> (self, key: K) -> Box<Future<Item=(Self, usize), Error=RedisError>> {
+    utils::run_borrowed(self, move |_self, borrowed| {
+      Box::new(borrowed.llen(key).and_then(move |resp| {
+        Ok((_self, resp))
+      }))
+    })
+  }
+
+  /// Insert all the specified values at the head of the list stored at key
+  ///
+  /// https://redis.io/commands/lpush
+  pub fn lpush<K: Into<RedisKey>, V: Into<RedisValue>> (self, key: K, value: V) -> Box<Future<Item=(Self, usize), Error=RedisError>> {
+    utils::run_borrowed(self, move |_self, borrowed| {
+      Box::new(borrowed.lpush(key, value).and_then(move |resp| {
+        Ok((_self, resp))
+      }))
+    })
+  }
+
+
+  /// Removes and returns the first element of the list stored at key.
+  ///
+  /// https://redis.io/commands/lpop
+  pub fn lpop<K: Into<RedisKey>> (self, key: K) -> Box<Future<Item=(Self, Option<RedisValue>), Error=RedisError>> {
+    let key = key.into();
+
+    utils::run_borrowed(self, move |_self, borrowed| {
+      Box::new(borrowed.lpop(key).and_then(move |resp| {
+        Ok((_self, resp))
+      }))
+    })
+  }
+
   // TODO more commands...
 
 }

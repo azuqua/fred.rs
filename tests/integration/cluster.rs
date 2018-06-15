@@ -44,6 +44,7 @@ use pretty_env_logger;
 
 use super::keys as keys_tests;
 use super::hashes as hashes_tests;
+use super::lists as lists_tests;
 
 #[test]
 fn it_should_connect_and_disconnect() {
@@ -179,4 +180,33 @@ pub mod hashes {
     });
   }
 
+}
+
+
+pub mod lists {
+  use super::*;
+
+  #[test]
+  fn it_should_llen_on_empty_list() {
+    let config = RedisConfig::default_clustered();
+    utils::setup_test_client(config, |client| {
+      lists_tests::should_llen_on_empty_list(client)
+    });
+  }
+
+  #[test]
+  fn it_should_llen_on_list_with_elements() {
+    let config = RedisConfig::default_clustered();
+    utils::setup_test_client(config, |client| {
+      lists_tests::should_llen_on_list_with_elements(client)
+    });
+  }
+
+  #[test]
+  fn it_should_lpush_and_lpop_to_list() {
+    let config = RedisConfig::default_clustered();
+    utils::setup_test_client(config, |client| {
+      lists_tests::should_lpush_and_lpop_to_list(client)
+    });
+  }
 }

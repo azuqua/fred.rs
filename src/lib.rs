@@ -1573,6 +1573,78 @@ impl RedisClient {
     }))
   }
 
+  /// Returns the length of the list stored at key. If key does not exist, it is interpreted as an
+  /// empty list and 0 is returned. An error is returned when the value stored at key is not a
+  /// list.
+  ///
+  /// https://redis.io/commands/llen
+  pub fn llen<K: Into<RedisKey>> (self, key: K) -> Box<Future<Item=(Self, usize), Error=RedisError>> {
+    let key = key.into();
+
+    Box::new(utils::request_response(&self.command_tx, &self.state, move || {
+      Ok((RedisCommandKind::LLen, vec![key.into()]))
+    }).and_then(|frame| {
+      let resp = frame.into_single_result()?;
+
+      match resp {
+        RedisValue::Integer(num) => Ok((self, num as usize)),
+        _ => Err(RedisError::new(
+            RedisErrorKind::Unknown, "Invalid LLEN response."
+        ))
+      }
+    }))
+  }
+
+  /// Insert all the specified values at the head of the list stored at key. If key does not exist,
+  /// it is created as empty list before performing the push operations. When key holds a value
+  /// that is not a list, an error is returned.
+  ///
+  /// https://redis.io/commands/lpush
+  pub fn lpush<K: Into<RedisKey>, V: Into<RedisValue>> (self, key: K, value: V) -> Box<Future<Item=(Self, usize), Error=RedisError>> {
+    let key = key.into();
+    let value = value.into();
+
+    Box::new(utils::request_response(&self.command_tx, &self.state, move || {
+      let args: Vec<RedisValue> = vec![key.into(), value.into()];
+
+      Ok((RedisCommandKind::LPush, args))
+    }).and_then(|frame| {
+      let resp = frame.into_single_result()?;
+
+      let res = match resp {
+        RedisValue::Integer(num) => Ok((self, num as usize)),
+        _ => Err(RedisError::new(
+          RedisErrorKind::Unknown , "Invalid LPUSH response."
+        ))
+      };
+
+      res
+    }))
+  }
+
+  /// Removes and returns the first element of the list stored at key.
+  ///
+  /// https://redis.io/commands/lpop
+  pub fn lpop<K: Into<RedisKey>>(self, key: K) -> Box<Future<Item=(Self, Option<RedisValue>), Error=RedisError>> {
+    let key = key.into();
+
+    Box::new(utils::request_response(&self.command_tx, &self.state, move || {
+      let args: Vec<RedisValue> = vec![key.into()];
+
+      Ok((RedisCommandKind::LPop, args))
+    }).and_then(|frame| {
+      let resp = frame.into_single_result()?;
+
+      let resp = if resp.kind() == RedisValueKind::Null {
+        None
+      } else {
+        Some(resp)
+      };
+
+      Ok((self, resp))
+    }))
+  }
+
   // TODO more commands...
 
 }

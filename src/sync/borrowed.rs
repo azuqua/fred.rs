@@ -777,6 +777,58 @@ impl RedisClientRemote {
     }
   }
 
+  /// Returns the number of fields contained in the hash stored at key.
+  ///
+  /// https://redis.io/commands/llen
+  pub fn llen<K: Into<RedisKey>> (&self, key: K) -> Box<Future<Item=usize, Error=RedisError>> {
+    let (tx, rx) = oneshot_channel();
+    let key = key.into();
+
+    let func: CommandFn = SendBoxFnOnce::new(move |client: RedisClient| {
+      commands::llen(client, tx, key)
+    });
+
+    match utils::send_command(&self.command_tx, func) {
+      Ok(_) => Box::new(rx.from_err::<RedisError>().flatten()),
+      Err(e) => client_utils::future_error(e)
+    }
+  }
+
+  /// Insert all the specified values at the head of the list stored at key
+  ///
+  /// https://redis.io/commands/lpush
+  pub fn lpush<K: Into<RedisKey>, V: Into<RedisValue>> (&self, key: K, value: V) -> Box<Future<Item=usize, Error=RedisError>> {
+    let (tx, rx) = oneshot_channel();
+    let key = key.into();
+    let value = value.into();
+
+    let func: CommandFn = SendBoxFnOnce::new(move |client: RedisClient| {
+      commands::lpush(client, tx, key, value)
+    });
+
+    match utils::send_command(&self.command_tx, func) {
+      Ok(_) => Box::new(rx.from_err::<RedisError>().flatten()),
+      Err(e) => client_utils::future_error(e)
+    }
+  }
+
+  /// Removes and returns the first element of the list stored at key.
+  ///
+  /// https://redis.io/commands/lpop
+  pub fn lpop<K: Into<RedisKey>> (&self, key: K) -> Box<Future<Item=Option<RedisValue>, Error=RedisError>> {
+    let (tx, rx) = oneshot_channel();
+    let key = key.into();
+
+    let func: CommandFn = SendBoxFnOnce::new(move |client: RedisClient| {
+      commands::lpop(client, tx, key)
+    });
+
+    match utils::send_command(&self.command_tx, func) {
+      Ok(_) => Box::new(rx.from_err::<RedisError>().flatten()),
+      Err(e) => client_utils::future_error(e)
+    }
+  }
+
   // TODO implement the rest of the commands on RedisClient
 
 }
