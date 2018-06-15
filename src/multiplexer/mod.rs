@@ -100,21 +100,21 @@ type TlsTransports = Vec<(String, Framed<TcpStream, RedisCodec>)>;
 type TcpTransports = Vec<(String, Framed<TcpStream, RedisCodec>)>;
 
 #[cfg(feature="enable-tls")]
-fn init_tls_transports(config: Rc<RefCell<RedisConfig>>, handle: Handle, hosts: Vec<(String, u16)>, key: Option<String>, size_stats: Arc<RwLock<SizeTracker>>, cache: ClusterKeyCache)
+fn init_tls_transports(config: Rc<RefCell<RedisConfig>>, handle: Handle, key: Option<String>, size_stats: Arc<RwLock<SizeTracker>>, cache: ClusterKeyCache)
  -> Box<Future<Item=(Either<TlsTransports, TcpTransports>, ClusterKeyCache), Error=RedisError>>
 {
   debug!("Initialize clustered tls transports.");
 
-  Box::new(utils::create_all_transports_tls(config, handle, hosts, key, size_stats).map(move |result| {
+  Box::new(utils::create_all_transports_tls(config, handle, &cache, key, size_stats).map(move |result| {
     (Either::A(result), cache)
   }))
 }
 
 #[cfg(not(feature="enable-tls"))]
-fn init_tls_transports(config: Rc<RefCell<RedisConfig>>, handle: Handle, hosts: Vec<(String, u16)>, key: Option<String>, size_stats: Arc<RwLock<SizeTracker>>, cache: ClusterKeyCache)
+fn init_tls_transports(config: Rc<RefCell<RedisConfig>>, handle: Handle, key: Option<String>, size_stats: Arc<RwLock<SizeTracker>>, cache: ClusterKeyCache)
    -> Box<Future<Item=(Either<TlsTransports, TcpTransports>, ClusterKeyCache), Error=RedisError>>
 {
-  Box::new(utils::create_all_transports(config, handle, hosts, key, size_stats).map(move |result| {
+  Box::new(utils::create_all_transports(config, handle, &cache, key, size_stats).map(move |result| {
     (Either::B(result), cache)
   }))
 }
@@ -153,14 +153,6 @@ fn init_clustered(
     loop_fn(memo, move |(client, handle, config, state, error_tx, message_tx, command_tx, connect_tx, reconnect_tx, remote_tx)| {
 
       let cluster_handle = handle.clone();
-      let hosts: Vec<(String, u16)> = {
-        let config_ref = config.borrow();
-
-        match *config_ref {
-          RedisConfig::Clustered { ref hosts, .. } => hosts.clone(),
-          _ => panic!("unreachable. this is a bug.")
-        }
-      };
       let key = utils::read_auth_key(&config);
 
       let mult_client = client.clone();
@@ -181,9 +173,9 @@ fn init_clustered(
 
       utils::build_cluster_cache(handle.clone(), &config, size_stats.clone()).and_then(move |cache: ClusterKeyCache| {
         if uses_tls {
-          init_tls_transports(cluster_config, cluster_handle, hosts, key, init_size_stats, cache)
+          init_tls_transports(cluster_config, cluster_handle, key, init_size_stats, cache)
         }else{
-          Box::new(utils::create_all_transports(cluster_config, cluster_handle, hosts, key, init_size_stats).map(move |result| {
+          Box::new(utils::create_all_transports(cluster_config, cluster_handle, &cache, key, init_size_stats).map(move |result| {
             (Either::B(result), cache)
           }))
         }

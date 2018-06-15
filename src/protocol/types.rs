@@ -899,6 +899,10 @@ impl ClusterKeyCache {
     self.data.len()
   }
 
+  pub fn slots(&self) -> &Vec<Rc<SlotRange>> {
+    &self.data
+  }
+
   pub fn random_slot(&self) -> Option<Rc<SlotRange>> {
     // for now just grab the first one, maybe in the future use a random slot.
     // at the very least if this starts causing errors it'll be easier to find due to this choice,
