@@ -818,7 +818,14 @@ pub fn create_all_transports_tls(config: Rc<RefCell<RedisConfig>>, handle: Handl
       RedisCodec::new(config_ref.get_max_size(), size_stats.clone())
     };
 
-    debug!("Creating clustered tls transport to {:?}", addr);
+    let domain = match addr_str.split(":").next() {
+      Some(d) => d.to_owned(),
+      None => return client_utils::future_error(RedisError::new(
+        RedisErrorKind::Unknown, format!("Invalid host/port string {}.", addr_str)
+      ))
+    };
+
+    debug!("Creating clustered tls transport to {:?} with domain {}", addr, domain);
 
     Box::new(TcpStream::connect(&addr, &handle)
       .from_err::<RedisError>()
@@ -835,7 +842,7 @@ pub fn create_all_transports_tls(config: Rc<RefCell<RedisConfig>>, handle: Handl
           ))
         };
 
-        Box::new(tls_stream.connect_async(&host, socket).map_err(|e| {
+        Box::new(tls_stream.connect_async(&domain, socket).map_err(|e| {
           RedisError::new(RedisErrorKind::Unknown, format!("TLS Error: {:?}", e))
         }))
       })
