@@ -65,7 +65,10 @@ use native_tls::{
 
 use std::rc::Rc;
 use std::cell::RefCell;
-use std::collections::VecDeque;
+use std::collections::{
+  VecDeque,
+  HashSet
+};
 
 use super::super::RedisClient;
 use super::multiplexer::Multiplexer;
@@ -778,21 +781,25 @@ pub fn create_initial_transport(handle: Handle, config: Rc<RefCell<RedisConfig>>
 }
 
 #[cfg(not(feature="enable-tls"))]
-pub fn create_all_transports_tls(config: Rc<RefCell<RedisConfig>>, handle: Handle, hosts: Vec<(String, u16)>, key: Option<String>, size_stats: Arc<RwLock<SizeTracker>>)
+pub fn create_all_transports_tls(config: Rc<RefCell<RedisConfig>>, handle: Handle, cache: &ClusterKeyCache, key: Option<String>, size_stats: Arc<RwLock<SizeTracker>>)
   -> Box<Future<Item=Vec<(String, Framed<TcpStream, RedisCodec>)>, Error=RedisError>>
 {
-  create_all_transports(config, handle, hosts, key, size_stats)
+  create_all_transports(config, handle, cache, key, size_stats)
 }
 
 #[allow(deprecated)]
 #[cfg(feature="enable-tls")]
-pub fn create_all_transports_tls(config: Rc<RefCell<RedisConfig>>, handle: Handle, hosts: Vec<(String, u16)>, key: Option<String>, size_stats: Arc<RwLock<SizeTracker>>)
+pub fn create_all_transports_tls(config: Rc<RefCell<RedisConfig>>, handle: Handle, cache: &ClusterKeyCache, key: Option<String>, size_stats: Arc<RwLock<SizeTracker>>)
   -> Box<Future<Item=Vec<(String, Framed<TlsStream<TcpStream>, RedisCodec>)>, Error=RedisError>>
 {
+  let hosts: Vec<String> = cache.slots().iter().fold(HashSet::new(), |mut memo, slot| {
+    memo.insert(slot.server.clone());
+    memo
+  }).into_iter().collect();
+
   let transports: Vec<(String, Framed<TlsStream<TcpStream>, RedisCodec>)> = Vec::with_capacity(hosts.len());
 
-  Box::new(stream::iter(hosts.into_iter().map(Ok)).fold(transports, move |mut transports, (host, port)| {
-    let addr_str = tuple_to_addr_str(&host, port);
+  Box::new(stream::iter(hosts.into_iter().map(Ok)).fold(transports, move |mut transports, addr_str| {
     let mut addr = match addr_str.to_socket_addrs() {
       Ok(addr) => addr,
       Err(e) => return client_utils::future_error(e.into())
@@ -847,14 +854,17 @@ pub fn create_all_transports_tls(config: Rc<RefCell<RedisConfig>>, handle: Handl
 }
 
 #[allow(deprecated)]
-pub fn create_all_transports(config: Rc<RefCell<RedisConfig>>, handle: Handle, hosts: Vec<(String, u16)>, key: Option<String>, size_stats: Arc<RwLock<SizeTracker>>)
+pub fn create_all_transports(config: Rc<RefCell<RedisConfig>>, handle: Handle, cache: &ClusterKeyCache, key: Option<String>, size_stats: Arc<RwLock<SizeTracker>>)
   -> Box<Future<Item=Vec<(String, Framed<TcpStream, RedisCodec>)>, Error=RedisError>>
 {
+  let hosts: Vec<String> = cache.slots().iter().fold(HashSet::new(), |mut memo, slot| {
+    memo.insert(slot.server.clone());
+    memo
+  }).into_iter().collect();
+
   let transports: Vec<(String, Framed<TcpStream, RedisCodec>)> = Vec::with_capacity(hosts.len());
 
-  Box::new(stream::iter(hosts.into_iter().map(Ok)).fold(transports, move |mut transports, (host, port)| {
-
-    let addr_str = tuple_to_addr_str(&host, port);
+  Box::new(stream::iter(hosts.into_iter().map(Ok)).fold(transports, move |mut transports, addr_str| {
     let mut addr = match addr_str.to_socket_addrs() {
       Ok(addr) => addr,
       Err(e) => return client_utils::future_error(e.into())
