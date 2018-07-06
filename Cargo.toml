@@ -6,7 +6,7 @@ authors = [
   "Kevin Wilson <kevinwilson541@gmail.com>"
 ]
 name = "fred"
-version = "0.1.5"
+version = "0.1.6"
 description = "A Redis client for Rust built on Futures and Tokio."
 readme = "README.md"
 repository = "https://github.com/azuqua/fred.rs"
@@ -69,5 +69,4 @@ debug = false
 debug-assertions = false
 lto = false
 opt-level = 3
-panic = "unwind"
 rpath = false
