@@ -175,3 +175,9 @@ pub fn lpop(client: RedisClient, tx: OneshotSender<Result<Option<RedisValue>, Re
     utils::send_normal_result(tx, result)
   }))
 }
+
+pub fn sadd(client: RedisClient, tx: OneshotSender<Result<usize, RedisError>>, key: RedisKey, value: RedisValue) -> CommandFnResp {
+  Box::new(client.sadd(key, value).then(move |result| {
+    utils::send_normal_result(tx, result)
+  }))
+}

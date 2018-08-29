@@ -829,6 +829,24 @@ impl RedisClientRemote {
     }
   }
 
+  /// Add all the specified values to set stored at key
+  ///
+  /// https://redis.io/commands/sadd
+  pub fn sadd<K: Into<RedisKey>, V: Into<RedisValue>> (&self, key: K, value: V) -> Box<Future<Item=usize, Error=RedisError>> {
+    let (tx, rx) = oneshot_channel();
+    let key = key.into();
+    let value = value.into();
+
+    let func: CommandFn = SendBoxFnOnce::new(move |client: RedisClient| {
+      commands::sadd(client, tx, key, value)
+    });
+
+    match utils::send_command(&self.command_tx, func) {
+      Ok(_) => Box::new(rx.from_err::<RedisError>().flatten()),
+      Err(e) => client_utils::future_error(e)
+    }
+  }
+
   // TODO implement the rest of the commands on RedisClient
 
 }

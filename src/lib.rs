@@ -1645,6 +1645,44 @@ impl RedisClient {
     }))
   }
 
+
+  // Add the specified members to the set stored at key. Specified members that are already a member of this set are ignored. 
+  // If key does not exist, a new set is created before adding the specified members.
+  // An error is returned when the value stored at key is not a set.
+  pub fn sadd<K: Into<RedisKey>, V: Into<RedisValue>>(self, key: K, value: V) -> Box<Future<Item=(Self, usize), Error=RedisError>> {
+    let key = key.into();
+    let value = value.into();
+
+    Box::new(utils::request_response(&self.command_tx, &self.state, move || {
+
+      // Convert non-vec argument to a Vec<RedisValue>
+      let mut valueList: Vec<RedisValue> = {
+        if let RedisValue::List(vec) = value {
+          vec
+        }else{
+          vec![value]
+        }
+      };
+
+      let mut args: Vec<RedisValue> = vec![key.into()];
+      args.append(&mut valueList);
+
+      Ok((RedisCommandKind::Sadd, args))
+    }).and_then(|frame| {
+      let resp = frame.into_single_result()?;
+
+      let res = match resp {
+        RedisValue::Integer(num) => Ok((self, num as usize)),
+        _ => Err(RedisError::new(
+          RedisErrorKind::Unknown , "Invalid SADD response."
+        ))
+      };
+
+      res
+    }))
+  }
+
+
   // TODO more commands...
 
 }
