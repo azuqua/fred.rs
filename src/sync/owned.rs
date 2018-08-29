@@ -639,6 +639,17 @@ impl RedisClientRemote {
     })
   }
 
+  /// Remove all the specified values to set stored at key
+  ///
+  /// https://redis.io/commands/srem
+  pub fn srem<K: Into<RedisKey>, V: Into<RedisValue>> (self, key: K, value: V) -> Box<Future<Item=(Self, usize), Error=RedisError>> {
+    utils::run_borrowed(self, move |_self, borrowed| {
+      Box::new(borrowed.sadd(key, value).and_then(move |resp| {
+        Ok((_self, resp))
+      }))
+    })
+  }
+
   // TODO more commands...
 
 }

@@ -1656,7 +1656,7 @@ impl RedisClient {
     Box::new(utils::request_response(&self.command_tx, &self.state, move || {
 
       // Convert non-vec argument to a Vec<RedisValue>
-      let mut valueList: Vec<RedisValue> = {
+      let mut value_list: Vec<RedisValue> = {
         if let RedisValue::List(vec) = value {
           vec
         }else{
@@ -1665,7 +1665,7 @@ impl RedisClient {
       };
 
       let mut args: Vec<RedisValue> = vec![key.into()];
-      args.append(&mut valueList);
+      args.append(&mut value_list);
 
       Ok((RedisCommandKind::Sadd, args))
     }).and_then(|frame| {
@@ -1682,6 +1682,42 @@ impl RedisClient {
     }))
   }
 
+
+  // Remove the specified members from the set stored at key. Specified members that are not a member of this set are ignored.
+  // If key does not exist, it is treated as an empty set and this command returns 0.
+  // An error is returned when the value stored at key is not a set.
+  pub fn srem<K: Into<RedisKey>, V: Into<RedisValue>>(self, key: K, value: V) -> Box<Future<Item=(Self, usize), Error=RedisError>> {
+    let key = key.into();
+    let value = value.into();
+
+    Box::new(utils::request_response(&self.command_tx, &self.state, move || {
+
+      // Convert non-vec argument to a Vec<RedisValue>
+      let mut value_list: Vec<RedisValue> = {
+        if let RedisValue::List(vec) = value {
+          vec
+        }else{
+          vec![value]
+        }
+      };
+
+      let mut args: Vec<RedisValue> = vec![key.into()];
+      args.append(&mut value_list);
+
+      Ok((RedisCommandKind::Srem, args))
+    }).and_then(|frame| {
+      let resp = frame.into_single_result()?;
+
+      let res = match resp {
+        RedisValue::Integer(num) => Ok((self, num as usize)),
+        _ => Err(RedisError::new(
+          RedisErrorKind::Unknown , "Invalid SREM response."
+        ))
+      };
+
+      res
+    }))
+  }
 
   // TODO more commands...
 
