@@ -42,6 +42,7 @@ use pretty_env_logger;
 use super::keys as keys_tests;
 use super::hashes as hashes_tests;
 use super::lists as lists_tests;
+use super::sets as sets_tests;
 
 #[test]
 fn it_should_connect_and_disconnect() {
@@ -196,6 +197,18 @@ pub mod lists {
     let config = RedisConfig::default();
     utils::setup_test_client(config, |client| {
       lists_tests::should_lpush_and_lpop_to_list(client)
+    });
+  }
+}
+
+pub mod sets {
+  use super::*;
+
+  #[test]
+  fn it_should_sadd_on_new_set() {
+    let config = RedisConfig::default();
+    utils::setup_test_client(config, |client| {
+      sets_tests::should_sadd_on_new_set(client)
     });
   }
 }
