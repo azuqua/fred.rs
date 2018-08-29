@@ -211,4 +211,12 @@ pub mod sets {
       sets_tests::should_sadd_on_new_set(client)
     });
   }
+
+  #[test]
+  fn it_should_srem_members_of_set() {
+    let config = RedisConfig::default();
+    utils::setup_test_client(config, |client| {
+      sets_tests::should_srem_members_of_set(client)
+    });
+  }
 }
