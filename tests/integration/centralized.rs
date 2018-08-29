@@ -205,10 +205,10 @@ pub mod sets {
   use super::*;
 
   #[test]
-  fn it_should_sadd_on_new_set() {
+  fn it_should_sadd_members_to_set() {
     let config = RedisConfig::default();
     utils::setup_test_client(config, |client| {
-      sets_tests::should_sadd_on_new_set(client)
+      sets_tests::should_sadd_members_to_set(client)
     });
   }
 
@@ -217,6 +217,14 @@ pub mod sets {
     let config = RedisConfig::default();
     utils::setup_test_client(config, |client| {
       sets_tests::should_srem_members_of_set(client)
+    });
+  }
+
+   #[test]
+  fn it_should_smembers_of_set() {
+    let config = RedisConfig::default();
+    utils::setup_test_client(config, |client| {
+      sets_tests::should_smembers_of_set(client)
     });
   }
 }

@@ -2,6 +2,8 @@ use futures::future;
 use futures::{IntoFuture, Future, Stream};
 use futures::stream;
 
+use std::borrow::Borrow;
+
 use fred::error::{
   RedisErrorKind,
   RedisError
@@ -11,7 +13,7 @@ use fred::RedisClient;
 
 use super::utils;
 
-pub fn should_sadd_on_new_set(client: RedisClient) -> Box<Future<Item=(), Error=RedisError>> {
+pub fn should_sadd_members_to_set(client: RedisClient) -> Box<Future<Item=(), Error=RedisError>> {
   // Test adding values to the set "foo" as a vec  
   Box::new(client.sadd("foo", vec![1, 2, 3]).and_then(|(client, len)| {
     assert_eq!(len, 3);
@@ -69,6 +71,36 @@ pub fn should_srem_members_of_set(client: RedisClient) -> Box<Future<Item=(), Er
   })
  .and_then(|(client, len)| {
     assert_eq!(len, 0);
+
+    Ok(())
+  }))
+}
+
+pub fn should_smembers_of_set(client: RedisClient) -> Box<Future<Item=(), Error=RedisError>> {
+  // Test adding values to the set "foo" as a vec for retrieval 
+  Box::new(client.sadd("foo", vec![1, 2, 3]).and_then(|(client, len)| {
+    assert_eq!(len, 3);
+    // Test getting all members from set 
+    client.smembers("foo")
+  })
+  .and_then(|(client, result)| {
+    assert_eq!(result.len(), 3);
+    
+    assert!(result.contains(&RedisValue::String("1".borrow().to_string())));
+    assert!(result.contains(&RedisValue::String("2".borrow().to_string())));
+    assert!(result.contains(&RedisValue::String("3".borrow().to_string())));
+
+    client.sadd("foo", vec![4])
+  })
+  .and_then(|(client, len)| { 
+    assert_eq!(len, 1);
+
+    // Test getting all members to ensure new addition successfully returned 
+    client.smembers("foo")
+  })
+  .and_then(|(client, result)| { 
+    assert_eq!(result.len(), 4);
+    assert!(result.contains(&RedisValue::String("4".borrow().to_string())));
 
     Ok(())
   }))
