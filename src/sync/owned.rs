@@ -650,6 +650,17 @@ impl RedisClientRemote {
     })
   }
 
+  /// Returns all the members of the set value stored at key.
+  ///
+  /// https://redis.io/commands/smembers
+  pub fn smembers<K: Into<RedisKey>> (self, key: K) -> Box<Future<Item=(Self, Vec<RedisValue>), Error=RedisError>> {
+    utils::run_borrowed(self, move |_self, borrowed| {
+      Box::new(borrowed.smembers(key).and_then(move |resp| {
+        Ok((_self, resp))
+      }))
+    })
+  }
+
   // TODO more commands...
 
 }

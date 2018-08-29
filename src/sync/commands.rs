@@ -187,3 +187,9 @@ pub fn srem(client: RedisClient, tx: OneshotSender<Result<usize, RedisError>>, k
     utils::send_normal_result(tx, result)
   }))
 }
+
+pub fn smembers(client: RedisClient, tx: OneshotSender<Result<Vec<RedisValue>, RedisError>>, key: RedisKey) -> CommandFnResp {
+  Box::new(client.smembers(key).then(move |result| {
+    utils::send_normal_result(tx, result)
+  }))
+}
