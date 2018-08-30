@@ -1645,6 +1645,98 @@ impl RedisClient {
     }))
   }
 
+
+  /// Add the specified members to the set stored at key. Specified members that are already a member of this set are ignored. 
+  /// If key does not exist, a new set is created before adding the specified members.
+  /// An error is returned when the value stored at key is not a set.
+  /// 
+  /// https://redis.io/commands/sadd
+  pub fn sadd<K: Into<RedisKey>, V: Into<RedisValue>>(self, key: K, value: V) -> Box<Future<Item=(Self, usize), Error=RedisError>> {
+    let key = key.into();
+    let value = value.into();
+
+    Box::new(utils::request_response(&self.command_tx, &self.state, move || {
+
+      // Convert non-vec argument to a Vec<RedisValue>
+      let mut value_list: Vec<RedisValue> = {
+        if let RedisValue::List(vec) = value {
+          vec
+        }else{
+          vec![value]
+        }
+      };
+
+      let mut args: Vec<RedisValue> = vec![key.into()];
+      args.append(&mut value_list);
+
+      Ok((RedisCommandKind::Sadd, args))
+    }).and_then(|frame| {
+      let resp = frame.into_single_result()?;
+
+      let res = match resp {
+        RedisValue::Integer(num) => Ok((self, num as usize)),
+        _ => Err(RedisError::new(
+          RedisErrorKind::Unknown , "Invalid SADD response."
+        ))
+      };
+
+      res
+    }))
+  }
+
+
+  /// Remove the specified members from the set stored at key. Specified members that are not a member of this set are ignored.
+  /// If key does not exist, it is treated as an empty set and this command returns 0.
+  /// An error is returned when the value stored at key is not a set.
+  /// 
+  /// https://redis.io/commands/srem
+  pub fn srem<K: Into<RedisKey>, V: Into<RedisValue>>(self, key: K, value: V) -> Box<Future<Item=(Self, usize), Error=RedisError>> {
+    let key = key.into();
+    let value = value.into();
+
+    Box::new(utils::request_response(&self.command_tx, &self.state, move || {
+
+      // Convert non-vec argument to a Vec<RedisValue>
+      let mut value_list: Vec<RedisValue> = {
+        if let RedisValue::List(vec) = value {
+          vec
+        }else{
+          vec![value]
+        }
+      };
+
+      let mut args: Vec<RedisValue> = vec![key.into()];
+      args.append(&mut value_list);
+
+      Ok((RedisCommandKind::Srem, args))
+    }).and_then(|frame| {
+      let resp = frame.into_single_result()?;
+
+      let res = match resp {
+        RedisValue::Integer(num) => Ok((self, num as usize)),
+        _ => Err(RedisError::new(
+          RedisErrorKind::Unknown , "Invalid SREM response."
+        ))
+      };
+
+      res
+    }))
+  }
+
+  /// Returns all the members of the set value stored at key.
+  /// This has the same effect as running SINTER with one argument key.
+  /// 
+  /// https://redis.io/commands/smembers
+  pub fn smembers<K: Into<RedisKey>> (self, key: K) -> Box<Future<Item=(Self, Vec<RedisValue>), Error=RedisError>> {
+    let key = key.into();
+
+    Box::new(utils::request_response(&self.command_tx, &self.state, move || {
+      Ok((RedisCommandKind::Smembers, vec![key.into()]))
+    }).and_then(|frame| {
+      Ok((self, frame.into_results()?))
+    }))
+  }
+
   // TODO more commands...
 
 }
