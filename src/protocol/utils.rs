@@ -100,6 +100,15 @@ mod readers {
 
 }
 
+/// Elasticache adds a '@1122' or some number suffix to the CLUSTER NODES response
+fn remove_elasticache_suffix(server: String) -> String {
+  if let Some(first) = server.split("@").next() {
+    return first.to_owned();
+  }
+
+  server
+}
+
 pub fn crc16_xmodem(key: &str) -> u16 {
   let _guard = flame_start!("redis:crc16_xmodem");
   let out = State::<XMODEM>::calculate(key.as_bytes()) % REDIS_CLUSTER_SLOTS;
@@ -189,7 +198,7 @@ pub fn parse_cluster_nodes(status: String) -> Result<HashMap<String, Vec<SlotRan
     if parts[2].contains("master") {
       let mut slots: Vec<SlotRange> = Vec::new();
 
-      let server = parts[1];
+      let server = remove_elasticache_suffix(parts[1].to_owned());
       for slot in parts[8..].iter() {
         let inner_parts: Vec<&str> = slot.split("-").collect();
 
@@ -208,7 +217,7 @@ pub fn parse_cluster_nodes(status: String) -> Result<HashMap<String, Vec<SlotRan
         });
       }
 
-      out.insert(server.to_owned(), slots);
+      out.insert(server.clone(), slots);
     }
   }
 
@@ -244,7 +253,7 @@ pub fn parse_cluster_nodes(status: String) -> Result<HashMap<String, Vec<SlotRan
         ))
       };
 
-      let server = parts[1].to_owned();
+      let server = remove_elasticache_suffix(parts[1].to_owned());
       let has_slaves = master.slaves.is_some();
 
       if has_slaves {
@@ -858,6 +867,42 @@ e7d1eecce10fd6bb5eb35b9f99a514335d9ba9ca 127.0.0.1:30001 myself,master - 0 0 1 c
       slaves: Some(SlaveNodes::new(vec![
         "127.0.0.1:30004".to_owned()
       ]))
+    }]);
+
+    let actual = match parse_cluster_nodes(status.to_owned()) {
+      Ok(h) => h,
+      Err(e) => panic!("{}", e)
+    };
+    assert_eq!(actual, expected);
+  }
+
+  #[test]
+  fn should_parse_elasticache_cluster_node_status() {
+    let status = "eec2b077ee95c590279115aac13e7eefdce61dba foo.cache.amazonaws.com:6379@1122 master - 0 1530900241038 0 connected 5462-10922
+b4fa5337b58e02673f961e22c9557e81dda4b559 bar.cache.amazonaws.com:6379@1122 myself,master - 0 1530900240000 1 connected 0-5461
+29d37b842d1bb097ba491be8f1cb00648620d4bd baz.cache.amazonaws.com:6379@1122 master - 0 1530900242042 2 connected 10923-16383";
+
+    let mut expected: HashMap<String, Vec<SlotRange>> = HashMap::new();
+    expected.insert("foo.cache.amazonaws.com:6379".to_owned(), vec![SlotRange {
+      start: 5462,
+      end: 10922,
+      server: "foo.cache.amazonaws.com:6379".to_owned(),
+      id: "eec2b077ee95c590279115aac13e7eefdce61dba".to_owned(),
+      slaves: None
+    }]);
+    expected.insert("bar.cache.amazonaws.com:6379".to_owned(), vec![SlotRange {
+      start: 0,
+      end: 5461,
+      server: "bar.cache.amazonaws.com:6379".to_owned(),
+      id: "b4fa5337b58e02673f961e22c9557e81dda4b559".to_owned(),
+      slaves: None
+    }]);
+    expected.insert("baz.cache.amazonaws.com:6379".to_owned(), vec![SlotRange {
+      start: 10923,
+      end: 16383,
+      server: "baz.cache.amazonaws.com:6379".to_owned(),
+      id: "29d37b842d1bb097ba491be8f1cb00648620d4bd".to_owned(),
+      slaves: None
     }]);
 
     let actual = match parse_cluster_nodes(status.to_owned()) {
