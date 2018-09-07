@@ -628,6 +628,39 @@ impl RedisClientRemote {
     })
   }
 
+  /// Add all the specified values to set stored at key
+  ///
+  /// https://redis.io/commands/sadd
+  pub fn sadd<K: Into<RedisKey>, V: Into<RedisValue>> (self, key: K, value: V) -> Box<Future<Item=(Self, usize), Error=RedisError>> {
+    utils::run_borrowed(self, move |_self, borrowed| {
+      Box::new(borrowed.sadd(key, value).and_then(move |resp| {
+        Ok((_self, resp))
+      }))
+    })
+  }
+
+  /// Remove all the specified values to set stored at key
+  ///
+  /// https://redis.io/commands/srem
+  pub fn srem<K: Into<RedisKey>, V: Into<RedisValue>> (self, key: K, value: V) -> Box<Future<Item=(Self, usize), Error=RedisError>> {
+    utils::run_borrowed(self, move |_self, borrowed| {
+      Box::new(borrowed.sadd(key, value).and_then(move |resp| {
+        Ok((_self, resp))
+      }))
+    })
+  }
+
+  /// Returns all the members of the set value stored at key.
+  ///
+  /// https://redis.io/commands/smembers
+  pub fn smembers<K: Into<RedisKey>> (self, key: K) -> Box<Future<Item=(Self, Vec<RedisValue>), Error=RedisError>> {
+    utils::run_borrowed(self, move |_self, borrowed| {
+      Box::new(borrowed.smembers(key).and_then(move |resp| {
+        Ok((_self, resp))
+      }))
+    })
+  }
+
   // TODO more commands...
 
 }

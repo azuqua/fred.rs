@@ -3,10 +3,11 @@ authors = [
   "Alec Embke <aembke@gmail.com>",
   "Howard Lin <linnyflow@gmail.com>",
   "Evan Milton <evan@azuqua.com>",
-  "Kevin Wilson <kevinwilson541@gmail.com>"
+  "Kevin Wilson <kevinwilson541@gmail.com>",
+  "Jeremy Crowe <crowe.jb@gmail.com>"
 ]
 name = "fred"
-version = "0.1.6"
+version = "0.1.7"
 description = "A Redis client for Rust built on Futures and Tokio."
 readme = "README.md"
 repository = "https://github.com/azuqua/fred.rs"
