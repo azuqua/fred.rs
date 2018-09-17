@@ -5,7 +5,7 @@
 //! messages and then quits, and the subscriber listens until it receives `MESSAGE_COUNT` messages, and then quits.
 
 extern crate fred;
-extern crate tokio_timer;
+extern crate tokio_timer_patched as tokio_timer;
 extern crate tokio_core;
 extern crate futures;
 

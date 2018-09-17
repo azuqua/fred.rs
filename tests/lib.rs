@@ -7,7 +7,7 @@
 
 extern crate futures;
 extern crate tokio_core;
-extern crate tokio_timer;
+extern crate tokio_timer_patched as tokio_timer;
 extern crate fred;
 extern crate rand;
 
