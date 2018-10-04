@@ -75,6 +75,7 @@ extern crate bytes;
 extern crate parking_lot;
 extern crate url;
 extern crate crc16;
+extern crate redis_protocol;
 
 #[cfg(feature="metrics")]
 extern crate chrono;
