@@ -1084,7 +1084,7 @@ impl Decoder for RedisCodec {
       buf.split_to(amt);
       metrics::sample_size(&self.size_stats, amt as u64);
 
-      Ok(Some(frame.into()))
+      Ok(Some(protocol_utils::check_auth_error(frame.into())))
     }else{
       Ok(None)
     }

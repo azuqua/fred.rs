@@ -482,13 +482,13 @@ pub fn check_expected_size(expected: usize, max: &Option<usize>) -> Result<(), R
 }
 
 #[cfg(not(feature="ignore-auth-error"))]
-fn check_auth_error(frame: Frame) -> Frame {
+pub fn check_auth_error(frame: Frame) -> Frame {
   frame
 }
 
 // https://i.imgur.com/RjpUxK4.png
 #[cfg(feature="ignore-auth-error")]
-fn check_auth_error(frame: Frame) -> Frame {
+pub fn check_auth_error(frame: Frame) -> Frame {
   let is_auth_error = match frame {
     Frame::Error(ref s) => s == "ERR Client sent AUTH, but no password is set",
     _ => false
