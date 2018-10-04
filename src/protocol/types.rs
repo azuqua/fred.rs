@@ -35,9 +35,20 @@ use std::ops::{
 
 pub const CR: char = '\r';
 pub const LF: char = '\n';
-pub const NULL: &'static str = "$-1\r\n";
 
 pub const REDIS_CLUSTER_SLOTS: u16 = 16384;
+
+use redis_protocol::types::{
+  FrameKind as ProtocolFrameKind,
+  Frame as ProtocolFrame,
+};
+use redis_protocol::encode::encode_bytes;
+use redis_protocol::decode::decode_bytes;
+pub use redis_protocol::{
+  CRLF,
+  NULL,
+  redis_keyslot
+};
 
 #[derive(Clone)]
 pub struct SplitCommand {
@@ -667,6 +678,40 @@ pub enum Frame {
   Canceled
 }
 
+impl From<ProtocolFrame> for Frame {
+  fn from(f: ProtocolFrame) -> Self {
+    use self::ProtocolFrame::*;
+
+    match f {
+      SimpleString(s) => Frame::SimpleString(s),
+      Error(s) => Frame::Error(s),
+      Integer(i) => Frame::Integer(i),
+      BulkString(b) => Frame::BulkString(b),
+      Array(f) => Frame::Array(f.into_iter().map(|f| f.into()).collect()),
+      Moved(s) => Frame::Moved(s),
+      Ask(s) => Frame::Ask(s),
+      Null => Frame::Null
+    }
+  }
+}
+
+impl From<Frame> for ProtocolFrame {
+  fn from(f: Frame) -> Self {
+    use self::Frame::*;
+
+    match f {
+      SimpleString(s) => ProtocolFrame::SimpleString(s),
+      Error(s) => ProtocolFrame::Error(s),
+      Integer(i) => ProtocolFrame::Integer(i),
+      BulkString(b) => ProtocolFrame::BulkString(b),
+      Array(f) => ProtocolFrame::Array(f.into_iter().map(|f| f.into()).collect()),
+      Moved(s) => ProtocolFrame::Moved(s),
+      Ask(s) => ProtocolFrame::Ask(s),
+      Null | Canceled => ProtocolFrame::Null
+    }
+  }
+}
+
 impl Frame {
 
   pub fn into_error(self) -> Option<RedisError> {
@@ -690,17 +735,13 @@ impl Frame {
   }
 
   pub fn is_pubsub_message(&self) -> bool {
-    flame_start!("redis:is_pubsub_message");
-    let res = if let Frame::Array(ref frames) = *self {
+    if let Frame::Array(ref frames) = *self {
       frames.len() == 3 
         && frames[0].kind() == FrameKind::BulkString 
         && frames[0].to_string().unwrap_or(String::new()) == "message" 
     }else{
       false
-    };
-
-    flame_end!("redis:is_pubsub_message");
-    res
+    }
   }
 
   pub fn kind(&self) -> FrameKind {
@@ -719,8 +760,7 @@ impl Frame {
 
   // mostly used for ClusterNodes command
   pub fn to_string(&self) -> Option<String> {
-    flame_start!("redis:to_string");
-    let res = match *self {
+    match *self {
       Frame::SimpleString(ref s) => Some(s.clone()),
       Frame::BulkString(ref b) => {
         match String::from_utf8(b.to_vec()) {
@@ -729,16 +769,11 @@ impl Frame {
         }
       },
       _ => None
-    };
-
-    flame_end!("redis:to_string");
-    res
+    }
   }
 
   pub fn into_results(self) -> Result<Vec<RedisValue>, RedisError> {
-    flame_start!("redis:into_results");
-
-    let res = match self {
+    match self {
       Frame::SimpleString(s) => Ok(vec![s.into()]),
       Frame::Integer(i) => Ok(vec![i.into()]),
       Frame::BulkString(b) => {
@@ -774,31 +809,22 @@ impl Frame {
       _ => Err(RedisError::new(
         RedisErrorKind::ProtocolError, "Invalid frame."
       ))
-    };
-
-    flame_end!("redis:into_results");
-    res
+    }
   }
 
   pub fn into_single_result(self) -> Result<RedisValue, RedisError> {
-    flame_start!("redis:into_single_result");
-
     let mut results = match self.into_results() {
       Ok(r) => r,
       Err(e) => {
-        flame_end!("redis:into_single_result");
         return Err(e);
       }
     };
 
     if results.len() != 1 {
-      flame_end!("redis:into_single_result");
-      return Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid results.")) 
+      return Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid results."))
     }
 
-    let out = results.pop().unwrap();
-    flame_end!("redis:into_single_result");
-    Ok(out)
+    Ok(results.pop().unwrap())
   }
 
 }
@@ -948,7 +974,6 @@ impl RedisCommand {
   // Convert to a single frame with an array of bulk strings (or null).
   // This consumes the arguments array
   pub fn to_frame(&mut self) -> Result<Frame, RedisError> {
-    flame_start!("redis:to_frame");
     let mut bulk_strings: Vec<Frame> = Vec::with_capacity(self.args.len() + 1);
 
     let cmd = self.kind.to_string().as_bytes();
@@ -977,7 +1002,6 @@ impl RedisCommand {
       bulk_strings.push(frame);
     }
 
-    flame_end!("redis:to_frame");
     Ok(Frame::Array(bulk_strings))
   }
 
@@ -1029,11 +1053,15 @@ impl Encoder for RedisCodec {
   type Error = RedisError;
 
   fn encode(&mut self, mut msg: Frame, buf: &mut BytesMut) -> Result<(), RedisError> {
-    let _guard = flame_start!("redis:encode");
-    let res = protocol_utils::frames_to_bytes(&mut msg, buf);
+    let proto_frame: ProtocolFrame = msg.into();
 
-    metrics::sample_size(&self.size_stats, buf.len() as u64);
-    res
+    let offset = buf.len();
+    let res = encode_bytes(buf, &proto_frame)?;
+    trace!("Encoded {} bytes", res.saturating_sub(offset));
+
+    metrics::sample_size(&self.size_stats, (res.saturating_sub(offset)) as u64);
+
+    Ok(())
   }
 
 }
@@ -1043,32 +1071,23 @@ impl Decoder for RedisCodec {
   type Error = RedisError;
 
   fn decode(&mut self, buf: &mut BytesMut) -> Result<Option<Frame>, RedisError> {
-    let _guard = flame_start!("redis:decode");
     trace!("Recv {:?} bytes.", buf.len());
 
-    if buf.len() < 1 || !protocol_utils::ends_with_crlf(buf) {
-      return Ok(None)
+    if buf.len() < 1 {
+      return Ok(None);
     }
 
-    let result = protocol_utils::bytes_to_frames(buf, &self.max_size);
-    let res = match result {
-      Ok(inner) => match inner {
-        Some((frame, size)) => {
-          trace!("Parsed {:?} bytes.", size);
-          metrics::sample_size(&self.size_stats, size as u64);
+    let (frame, amt) = decode_bytes(buf)?;
 
-          buf.clear();
-          Ok(Some(frame))
-        },
-        None => Ok(None)
-      },
-      Err(e) => {
-        buf.clear();
-        Err(e)
-      }
-    };
+    if let Some(frame) = frame {
+      trace!("Parsed {:?} bytes.", amt);
+      buf.split_to(amt);
+      metrics::sample_size(&self.size_stats, amt as u64);
 
-    res
+      Ok(Some(frame.into()))
+    }else{
+      Ok(None)
+    }
   }
 
 }
