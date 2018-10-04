@@ -14,6 +14,11 @@ use futures::Canceled;
 use tokio_timer::TimeoutError;
 use tokio_timer::TimerError;
 
+use redis_protocol::types::{
+  RedisProtocolError,
+  RedisProtocolErrorKind
+};
+
 /// An enum representing the type of error from Redis.
 #[derive(Debug)]
 pub enum RedisErrorKind {
@@ -131,6 +136,12 @@ impl PartialEq for RedisError {
 }
 
 impl Eq for RedisError {}
+
+impl<'a> From<RedisProtocolError<'a>> for RedisError {
+  fn from(e: RedisProtocolError) -> Self {
+    RedisError::new(RedisErrorKind::ProtocolError, format!("{}", e))
+  }
+}
 
 impl From<()> for RedisError {
   fn from(_: ()) -> Self {

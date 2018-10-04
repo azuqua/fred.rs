@@ -70,11 +70,12 @@ extern crate futures;
 extern crate tokio_core;
 extern crate tokio_io;
 extern crate tokio_proto;
-extern crate tokio_timer;
+extern crate tokio_timer_patched as tokio_timer;
 extern crate bytes;
 extern crate parking_lot;
 extern crate url;
 extern crate crc16;
+extern crate redis_protocol;
 
 #[cfg(feature="metrics")]
 extern crate chrono;

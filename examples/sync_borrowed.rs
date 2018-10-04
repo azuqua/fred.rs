@@ -5,7 +5,7 @@
 
 extern crate fred;
 extern crate tokio_core;
-extern crate tokio_timer;
+extern crate tokio_timer_patched as tokio_timer;
 extern crate futures;
 
 use fred::RedisClient;
