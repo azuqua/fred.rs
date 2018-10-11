@@ -81,9 +81,8 @@ pub type ConnectionFuture = Box<Future<Item=Option<RedisError>, Error=RedisError
 
 #[cfg(feature="enable-tls")]
 use tokio_tls::{
-  TlsConnectorExt,
-  TlsStream,
-  ConnectAsync
+  TlsConnector as TlsConnectorAsync,
+  TlsStream
 };
 #[cfg(feature="enable-tls")]
 use native_tls::{

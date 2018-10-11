@@ -57,9 +57,8 @@ use tokio_io::{AsyncWrite,AsyncRead};
 
 #[cfg(feature="enable-tls")]
 use tokio_tls::{
-  TlsConnectorExt,
-  TlsStream,
-  ConnectAsync
+  TlsConnector as TlsConnectorAsync,
+  TlsStream
 };
 #[cfg(feature="native-tls")]
 use native_tls::{
