@@ -343,6 +343,7 @@ fn should_disable_cert_verification() -> bool {
   }
 }
 
+#[cfg(feature="enable-tls")]
 fn create_tls_connector() -> Result<TlsConnectorAsync, RedisError> {
   let mut builder = TlsConnector::builder();
 
@@ -376,12 +377,20 @@ pub fn create_transport_tls(
   size_stats: Arc<RwLock<SizeTracker>>
 ) -> Box<Future<Item=(SplitSink<Framed<TlsStream<TcpStream>, RedisCodec>>, SplitStream<Framed<TlsStream<TcpStream>, RedisCodec>>), Error=RedisError>>
 {
-  debug!("Creating redis tls transport to {:?}", &addr);
   let codec = {
     let config_ref = config.borrow();
     RedisCodec::new(config_ref.get_max_size(), size_stats)
   };
-  let host = fry!(read_centralized_host(&config));
+  let addr_str = fry!(read_centralized_host(&config));
+
+  let domain = match addr_str.split(":").next() {
+    Some(d) => d.to_owned(),
+    None => return client_utils::future_error(RedisError::new(
+      RedisErrorKind::Unknown, format!("Invalid host/port string {}.", addr_str)
+    ))
+  };
+
+  debug!("Creating redis tls transport to {:?} with domain {}", &addr, domain);
 
   Box::new(TcpStream::connect(&addr, handle)
     .from_err::<RedisError>()
@@ -391,7 +400,7 @@ pub fn create_transport_tls(
         Err(e) => return client_utils::future_error(e)
       };
 
-      Box::new(tls_stream.connect(&host, socket).map_err(|e| {
+      Box::new(tls_stream.connect(&domain, socket).map_err(|e| {
         RedisError::new(RedisErrorKind::Unknown, format!("TLS Error: {:?}", e))
       }))
     })
