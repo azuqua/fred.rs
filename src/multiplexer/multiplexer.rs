@@ -65,6 +65,8 @@ use native_tls::{
   TlsConnector
 };
 
+use redis_protocol;
+
 type FrameStream = Box<Stream<Item=Frame, Error=RedisError>>;
 
 pub enum Sinks<T> where T: Sink<SinkItem=Frame, SinkError=RedisError> + 'static {
@@ -262,7 +264,7 @@ impl<T> Sinks<T> where T: Sink<SinkItem=Frame, SinkError=RedisError> + 'static {
             }
           };
 
-          let slot = protocol_utils::redis_crc16(&key);
+          let slot = redis_protocol::redis_keyslot(&key);
           trace!("Mapped key to slot: {:?} -> {:?}", key, slot);
 
           match cluster_cache_ref.get_server(slot) {
