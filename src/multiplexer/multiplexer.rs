@@ -57,14 +57,15 @@ use tokio_io::{AsyncWrite,AsyncRead};
 
 #[cfg(feature="enable-tls")]
 use tokio_tls::{
-  TlsConnectorExt,
-  TlsStream,
-  ConnectAsync
+  TlsConnector as TlsConnectorAsync,
+  TlsStream
 };
 #[cfg(feature="native-tls")]
 use native_tls::{
   TlsConnector
 };
+
+use redis_protocol;
 
 type FrameStream = Box<Stream<Item=Frame, Error=RedisError>>;
 
@@ -263,7 +264,7 @@ impl<T> Sinks<T> where T: Sink<SinkItem=Frame, SinkError=RedisError> + 'static {
             }
           };
 
-          let slot = protocol_utils::redis_crc16(&key);
+          let slot = redis_protocol::redis_keyslot(&key);
           trace!("Mapped key to slot: {:?} -> {:?}", key, slot);
 
           match cluster_cache_ref.get_server(slot) {

@@ -54,9 +54,8 @@ use std::net::{
 
 #[cfg(feature="enable-tls")]
 use tokio_tls::{
-  TlsConnectorExt,
-  TlsStream,
-  ConnectAsync
+  TlsConnector as TlsConnectorAsync,
+  TlsStream
 };
 #[cfg(feature="native-tls")]
 use native_tls::{
@@ -331,6 +330,32 @@ pub fn set_command_tx(command_tx: &Rc<RefCell<Option<UnboundedSender<RedisComman
   *command_tx_ref = Some(tx);
 }
 
+fn should_disable_cert_verification() -> bool {
+  match ::std::env::var_os("FRED_DISABLE_CERT_VERIFICATION") {
+    Some(s) => match s.into_string() {
+      Ok(s) => match s.as_ref() {
+        "1" | "true" | "TRUE" => true,
+        _ => false
+      },
+      Err(_) => false
+    },
+    None => false
+  }
+}
+
+#[cfg(feature="enable-tls")]
+fn create_tls_connector() -> Result<TlsConnectorAsync, RedisError> {
+  let mut builder = TlsConnector::builder();
+
+  if should_disable_cert_verification() {
+    builder.danger_accept_invalid_certs(true);
+  }
+
+  builder.build().map(|t| TlsConnectorAsync::from(t)).map_err(|e| RedisError::new(
+    RedisErrorKind::Unknown, format!("TLS Error: {:?}", e)
+  ))
+}
+
 #[cfg(not(feature="enable-tls"))]
 pub fn create_transport_tls(addr: &SocketAddr,
                             handle: &Handle,
@@ -339,6 +364,7 @@ pub fn create_transport_tls(addr: &SocketAddr,
                             size_stats: Arc<RwLock<SizeTracker>>)
   -> Box<Future<Item=(SplitSink<Framed<TcpStream, RedisCodec>>, SplitStream<Framed<TcpStream, RedisCodec>>), Error=RedisError>>
 {
+
   create_transport(addr, handle, config, state, size_stats)
 }
 
@@ -351,29 +377,30 @@ pub fn create_transport_tls(
   size_stats: Arc<RwLock<SizeTracker>>
 ) -> Box<Future<Item=(SplitSink<Framed<TlsStream<TcpStream>, RedisCodec>>, SplitStream<Framed<TlsStream<TcpStream>, RedisCodec>>), Error=RedisError>>
 {
-  debug!("Creating redis tls transport to {:?}", &addr);
   let codec = {
     let config_ref = config.borrow();
     RedisCodec::new(config_ref.get_max_size(), size_stats)
   };
-  let host = fry!(read_centralized_host(&config));
+  let addr_str = fry!(read_centralized_host(&config));
+
+  let domain = match addr_str.split(":").next() {
+    Some(d) => d.to_owned(),
+    None => return client_utils::future_error(RedisError::new(
+      RedisErrorKind::Unknown, format!("Invalid host/port string {}.", addr_str)
+    ))
+  };
+
+  debug!("Creating redis tls transport to {:?} with domain {}", &addr, domain);
 
   Box::new(TcpStream::connect(&addr, handle)
     .from_err::<RedisError>()
     .and_then(move |socket| {
-      let tls_stream = match TlsConnector::builder() {
-        Ok(b) => match b.build() {
-          Ok(t) => t,
-          Err(e) => return client_utils::future_error(RedisError::new(
-            RedisErrorKind::Unknown, format!("TLS Error: {:?}", e)
-          ))
-        },
-        Err(e) => return client_utils::future_error(RedisError::new(
-          RedisErrorKind::Unknown, format!("TLS Error: {:?}", e)
-        ))
+      let tls_stream = match create_tls_connector() {
+        Ok(t) => t,
+        Err(e) => return client_utils::future_error(e)
       };
 
-      Box::new(tls_stream.connect_async(&host, socket).map_err(|e| {
+      Box::new(tls_stream.connect(&domain, socket).map_err(|e| {
         RedisError::new(RedisErrorKind::Unknown, format!("TLS Error: {:?}", e))
       }))
     })
@@ -701,19 +728,12 @@ pub fn create_initial_transport_tls(handle: Handle, config: Rc<RefCell<RedisConf
       Box::new(TcpStream::connect(&addr, &handle)
         .from_err::<RedisError>()
         .and_then(move |socket| {
-          let tls_stream = match TlsConnector::builder() {
-            Ok(b) => match b.build() {
-              Ok(t) => t,
-              Err(e) => return client_utils::future_error(RedisError::new(
-                RedisErrorKind::Unknown, format!("TLS Error: {:?}", e)
-              ))
-            },
-            Err(e) => return client_utils::future_error(RedisError::new(
-              RedisErrorKind::Unknown, format!("TLS Error: {:?}", e)
-            ))
+          let tls_stream = match create_tls_connector() {
+            Ok(t) => t,
+            Err(e) => return client_utils::future_error(e)
           };
 
-          Box::new(tls_stream.connect_async(&host, socket).map_err(|e| {
+          Box::new(tls_stream.connect(&host, socket).map_err(|e| {
             RedisError::new(RedisErrorKind::Unknown, format!("TLS Error: {:?}", e))
           }))
         })
@@ -830,19 +850,12 @@ pub fn create_all_transports_tls(config: Rc<RefCell<RedisConfig>>, handle: Handl
     Box::new(TcpStream::connect(&addr, &handle)
       .from_err::<RedisError>()
       .and_then(move |socket| {
-        let tls_stream = match TlsConnector::builder() {
-          Ok(b) => match b.build() {
-            Ok(t) => t,
-            Err(e) => return client_utils::future_error(RedisError::new(
-              RedisErrorKind::Unknown, format!("TLS Error: {:?}", e)
-            ))
-          },
-          Err(e) => return client_utils::future_error(RedisError::new(
-            RedisErrorKind::Unknown, format!("TLS Error: {:?}", e)
-          ))
+        let tls_stream = match create_tls_connector() {
+          Ok(t) => t,
+          Err(e) => return client_utils::future_error(e)
         };
 
-        Box::new(tls_stream.connect_async(&domain, socket).map_err(|e| {
+        Box::new(tls_stream.connect(&domain, socket).map_err(|e| {
           RedisError::new(RedisErrorKind::Unknown, format!("TLS Error: {:?}", e))
         }))
       })
