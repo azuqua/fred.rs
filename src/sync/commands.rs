@@ -193,3 +193,9 @@ pub fn smembers(client: RedisClient, tx: OneshotSender<Result<Vec<RedisValue>, R
     utils::send_normal_result(tx, result)
   }))
 }
+
+pub fn expire(client: RedisClient, tx: OneshotSender<Result<bool, RedisError>>, key: RedisKey, seconds: i64) -> CommandFnResp {
+  Box::new(client.expire(key, seconds).then(move |result| {
+    utils::send_normal_result(tx, result)
+  }))
+}

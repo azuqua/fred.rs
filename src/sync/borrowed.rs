@@ -498,6 +498,24 @@ impl RedisClientRemote {
     }
   }
 
+  /// Set a timeout on key. After the timeout has expired, the key will automatically be deleted.
+  /// Returns `true` if timeout set, `false` if key does not exist.
+  ///
+  /// https://redis.io/commands/expire
+  pub fn expire<K: Into<RedisKey>>(&self, key: K, seconds: i64) -> Box<Future<Item=bool, Error=RedisError>> {
+    let (tx, rx) = oneshot_channel();
+    let key = key.into();
+
+    let func: CommandFn = SendBoxFnOnce::new(move |client: RedisClient| {
+      commands::expire(client, tx, key, seconds)
+    });
+
+    match utils::send_command(&self.command_tx, func) {
+      Ok(_) => Box::new(rx.from_err::<RedisError>().flatten()),
+      Err(e) => client_utils::future_error(e)
+    }
+  }
+
   /// Decrements the number stored at key by one. If the key does not exist, it is set to 0 before performing the operation.
   /// Returns error if the key contains a value of the wrong type.
   ///
