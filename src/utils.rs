@@ -39,6 +39,7 @@ use ::multiplexer::utils as multiplexer_utils;
 use std::rc::Rc;
 use std::cell::RefCell;
 use tokio_core::reactor::Handle;
+use std::collections::VecDeque;
 
 macro_rules! fry {
   ($expr:expr) => (match $expr {
@@ -202,7 +203,37 @@ pub fn send_command(command_tx: &Rc<RefCell<Option<UnboundedSender<RedisCommand>
   }
 }
 
+#[cfg(feature="replay-requests")]
 pub fn request_response<F>(
+  cmd_queue: &Rc<RefCell<VecDeque<RedisCommand>>>,
+  command_tx: &Rc<RefCell<Option<UnboundedSender<RedisCommand>>>>,
+  state: &Arc<RwLock<ClientState>>,
+  func: F
+) -> Box<Future<Item=Frame, Error=RedisError>>
+  where F: FnOnce() -> Result<(RedisCommandKind, Vec<RedisValue>), RedisError>
+{
+  let (kind, args) = fry!(func());
+
+  let (tx, rx) = oneshot_channel();
+  let command = RedisCommand::new(kind, args, Some(tx));
+
+  if let Err(_) = check_connected(state) {
+    debug!("Buffering {:?} command while connection is down.", command.kind);
+
+    cmd_queue.borrow_mut().push_back(command);
+
+    Box::new(rx.from_err::<RedisError>().flatten())
+  }else{
+    match send_command(command_tx, command) {
+      Ok(_) => Box::new(rx.from_err::<RedisError>().flatten()),
+      Err(e) => future_error(e)
+    }
+  }
+}
+
+#[cfg(not(feature="replay-requests"))]
+pub fn request_response<F>(
+  cmd_queue: &Rc<RefCell<VecDeque<RedisCommand>>>,
   command_tx: &Rc<RefCell<Option<UnboundedSender<RedisCommand>>>>,
   state: &Arc<RwLock<ClientState>>, 
   func: F
@@ -215,12 +246,10 @@ pub fn request_response<F>(
   let (tx, rx) = oneshot_channel();
   let command = RedisCommand::new(kind, args, Some(tx));
 
-  let res = match send_command(command_tx, command) {
+  match send_command(command_tx, command) {
     Ok(_) => Box::new(rx.from_err::<RedisError>().flatten()),
     Err(e) => future_error(e)
-  };
-
-  res
+  }
 }
 
 pub fn is_clustered(config: &Rc<RefCell<RedisConfig>>) -> bool {

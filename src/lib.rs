@@ -202,31 +202,33 @@ mod mocks;
 /// A Redis client.
 #[derive(Clone)]
 pub struct RedisClient {
-  // The state of the underlying connection
+  /// The state of the underlying connection
   state: Arc<RwLock<ClientState>>,
-  // The redis config used for initializing connections
+  /// The redis config used for initializing connections
   config: Rc<RefCell<RedisConfig>>,
-  // An mpsc sender for errors to `on_error` streams
+  /// An mpsc sender for errors to `on_error` streams
   error_tx: Rc<RefCell<VecDeque<UnboundedSender<RedisError>>>>,
-  // An mpsc sender for commands to the multiplexer
+  /// An mpsc sender for commands to the multiplexer
   command_tx: Rc<RefCell<Option<UnboundedSender<RedisCommand>>>>,
-  // An mpsc sender for pubsub messages to `on_message` streams
+  /// An mpsc sender for pubsub messages to `on_message` streams
   message_tx: Rc<RefCell<VecDeque<UnboundedSender<(String, RedisValue)>>>>,
-  // An mpsc sender for reconnection events to `on_reconnect` streams
+  /// An mpsc sender for reconnection events to `on_reconnect` streams
   reconnect_tx: Rc<RefCell<VecDeque<UnboundedSender<RedisClient>>>>,
-  // MPSC senders for `on_connect` futures
+  /// MPSC senders for `on_connect` futures
   connect_tx: Rc<RefCell<VecDeque<OneshotSender<Result<RedisClient, RedisError>>>>>,
-  // A flag used to determine if the client was intentionally closed. This is used in the multiplexer reconnect logic
-  // to determine if `quit` was called while the client was waiting to reconnect.
+  /// A flag used to determine if the client was intentionally closed. This is used in the multiplexer reconnect logic
+  /// to determine if `quit` was called while the client was waiting to reconnect.
   closed: Arc<RwLock<bool>>,
-  // Senders to remote handles around this client instance. Since forwarding messages between futures and streams itself
-  // requires creating and running another future it is quite tedious to do across threads with the command stream pattern.
-  // This field exists to allow remotes to register their own `on_connect` callbacks directly on the client.
+  /// Senders to remote handles around this client instance. Since forwarding messages between futures and streams itself
+  /// requires creating and running another future it is quite tedious to do across threads with the command stream pattern.
+  /// This field exists to allow remotes to register their own `on_connect` callbacks directly on the client.
   remote_tx: Rc<RefCell<VecDeque<OneshotSender<Result<(), RedisError>>>>>,
   /// Latency metrics tracking, enabled with the feature `metrics`.
   latency_stats: Arc<RwLock<LatencyTracker>>,
   /// Payload size metrics, enabled with the feature `metrics`.
-  size_stats: Arc<RwLock<SizeTracker>>
+  size_stats: Arc<RwLock<SizeTracker>>,
+  /// A queue of requests that haven't been sent out yet due to the socket being disconnected.
+  cmd_queue: Rc<RefCell<VecDeque<RedisCommand>>>
 }
 
 impl fmt::Debug for RedisClient {
@@ -254,7 +256,8 @@ impl RedisClient {
       closed: Arc::new(RwLock::new(false)),
       remote_tx: Rc::new(RefCell::new(VecDeque::new())),
       latency_stats: Arc::new(RwLock::new(latency)),
-      size_stats: Arc::new(RwLock::new(size))
+      size_stats: Arc::new(RwLock::new(size)),
+      cmd_queue: Rc::new(RefCell::new(VecDeque::new()))
     }
   }
 
@@ -300,7 +303,7 @@ impl RedisClient {
     if exit_early {
       utils::future_ok(self)
     }else{
-      Box::new(utils::request_response(&self.command_tx, &self.state, || {
+      Box::new(utils::request_response(&self.cmd_queue, &self.command_tx, &self.state, || {
         Ok((RedisCommandKind::Quit, vec![]))
       }).and_then(|_| {
         Ok(self)
@@ -379,7 +382,7 @@ impl RedisClient {
     fry!(utils::check_client_state(ClientState::Disconnected, &self.state));
     fry!(utils::check_and_set_closed_flag(&self.closed, false));
 
-    let (config, state, error_tx, message_tx, command_tx, connect_tx, reconnect_tx, remote_tx) = (
+    let (config, state, error_tx, message_tx, command_tx, connect_tx, reconnect_tx, remote_tx, cmd_queue) = (
       self.config.clone(),
       self.state.clone(),
       self.error_tx.clone(),
@@ -387,11 +390,12 @@ impl RedisClient {
       self.command_tx.clone(),
       self.connect_tx.clone(),
       self.reconnect_tx.clone(),
-      self.remote_tx.clone()
+      self.remote_tx.clone(),
+      self.cmd_queue.clone()
     );
 
     debug!("Connecting to Redis server.");
-    multiplexer::init(self.clone(), handle, config, state, error_tx, message_tx, command_tx, connect_tx, reconnect_tx, remote_tx)
+    multiplexer::init(self.clone(), handle, config, state, error_tx, message_tx, command_tx, connect_tx, reconnect_tx, remote_tx, cmd_queue)
   }
 
   /// Connect to the Redis server with a `ReconnectPolicy` to apply if the connection closes due to an error.
@@ -407,7 +411,7 @@ impl RedisClient {
     fry!(utils::check_client_state(ClientState::Disconnected, &self.state));
     fry!(utils::check_and_set_closed_flag(&self.closed, false));
 
-    let (client, config, state, error_tx, message_tx, command_tx, reconnect_tx, connect_tx, closed, remote_tx) = (
+    let (client, config, state, error_tx, message_tx, command_tx, reconnect_tx, connect_tx, closed, remote_tx, cmd_queue) = (
       self.clone(),
       self.config.clone(),
       self.state.clone(),
@@ -417,13 +421,14 @@ impl RedisClient {
       self.reconnect_tx.clone(),
       self.connect_tx.clone(),
       self.closed.clone(),
-      self.remote_tx.clone()
+      self.remote_tx.clone(),
+      self.cmd_queue.clone()
     );
 
     policy.reset_attempts();
     debug!("Connecting to Redis server with reconnect policy.");
 
-    multiplexer::init_with_policy(client, handle, config, state, closed, error_tx, message_tx, command_tx, reconnect_tx, connect_tx, remote_tx, policy)
+    multiplexer::init_with_policy(client, handle, config, state, closed, error_tx, message_tx, command_tx, reconnect_tx, connect_tx, remote_tx, cmd_queue, policy)
   }
 
   /// Listen for successful reconnection notifications. When using a config with a `ReconnectPolicy` the future
@@ -516,7 +521,7 @@ impl RedisClient {
   pub fn select(self, db: u8) -> Box<Future<Item=Self, Error=RedisError>> {
     debug!("Selecting Redis database {}", db);
 
-    Box::new(utils::request_response(&self.command_tx, &self.state, || {
+    Box::new(utils::request_response(&self.cmd_queue, &self.command_tx, &self.state, || {
       Ok((RedisCommandKind::Select, vec![RedisValue::from(db)]))
     }).and_then(|frame| {
       match frame.into_single_result() {
@@ -532,7 +537,7 @@ impl RedisClient {
   pub fn info(self, section: Option<InfoKind>) -> Box<Future<Item=(Self, String), Error=RedisError>> {
     let section = section.map(|k| k.to_string());
 
-    Box::new(utils::request_response(&self.command_tx, &self.state, move || {
+    Box::new(utils::request_response(&self.cmd_queue, &self.command_tx, &self.state, move || {
       let vec = match section {
         Some(s) => vec![RedisValue::from(s)],
         None => vec![]
@@ -562,7 +567,7 @@ impl RedisClient {
   pub fn ping(self) -> Box<Future<Item=(Self, String), Error=RedisError>> {
     debug!("Pinging Redis server.");
 
-    Box::new(utils::request_response(&self.command_tx, &self.state, move || {
+    Box::new(utils::request_response(&self.cmd_queue, &self.command_tx, &self.state, move || {
       Ok((RedisCommandKind::Ping, vec![]))
     }).and_then(|frame| {
       debug!("Received Redis ping response.");
@@ -593,7 +598,7 @@ impl RedisClient {
     // in the multiplexer to associate multiple responses with a single request
     let channel = channel.into();
 
-    Box::new(utils::request_response(&self.command_tx, &self.state, move || {
+    Box::new(utils::request_response(&self.cmd_queue, &self.command_tx, &self.state, move || {
       Ok((RedisCommandKind::Subscribe, vec![channel.into()]))
     }).and_then(|frame| {
       let mut results = frame.into_results()?;
@@ -624,7 +629,7 @@ impl RedisClient {
 
     let channel = channel.into();
 
-    Box::new(utils::request_response(&self.command_tx, &self.state, move || {
+    Box::new(utils::request_response(&self.cmd_queue, &self.command_tx, &self.state, move || {
       Ok((RedisCommandKind::Unsubscribe, vec![channel.into()]))
     }).and_then(|frame| {
       let mut results = frame.into_results()?;
@@ -653,7 +658,7 @@ impl RedisClient {
     let channel = channel.into();
     let message = message.into();
 
-    Box::new(utils::request_response(&self.command_tx, &self.state, move || {
+    Box::new(utils::request_response(&self.cmd_queue, &self.command_tx, &self.state, move || {
       Ok((RedisCommandKind::Publish, vec![channel.into(), message]))
     }).and_then(|frame| {
       let resp = frame.into_single_result()?;
@@ -676,7 +681,7 @@ impl RedisClient {
     let _guard = flame_start!("redis:get:1");
     let key = key.into();
 
-    Box::new(utils::request_response(&self.command_tx, &self.state, move || {
+    Box::new(utils::request_response(&self.cmd_queue, &self.command_tx, &self.state, move || {
       Ok((RedisCommandKind::Get, vec![key.into()]))
     }).and_then(|frame| {
       let _guard = flame_start!("redis:get:2");
@@ -700,7 +705,7 @@ impl RedisClient {
     let _guard = flame_start!("redis:set:1");
     let (key, value) = (key.into(), value.into());
 
-    Box::new(utils::request_response(&self.command_tx, &self.state, move || {
+    Box::new(utils::request_response(&self.cmd_queue, &self.command_tx, &self.state, move || {
       let _guard = flame_start!("redis:set:2");
       let mut args = vec![key.into(), value.into()];
 
@@ -728,7 +733,7 @@ impl RedisClient {
   pub fn auth<V: Into<String>>(self, value: V) -> Box<Future<Item=(Self, String), Error=RedisError>> {
     let value = value.into();
 
-    Box::new(utils::request_response(&self.command_tx, &self.state, move || {
+    Box::new(utils::request_response(&self.cmd_queue, &self.command_tx, &self.state, move || {
       Ok((RedisCommandKind::Auth, vec![value.into()]))
     }).and_then(|frame| {
       let resp = frame.into_single_result()?;
@@ -746,7 +751,7 @@ impl RedisClient {
   ///
   /// https://redis.io/commands/bgrewriteaof
   pub fn bgrewriteaof(self) -> Box<Future<Item=(Self, String), Error=RedisError>> {
-    Box::new(utils::request_response(&self.command_tx, &self.state, move || {
+    Box::new(utils::request_response(&self.cmd_queue, &self.command_tx, &self.state, move || {
       Ok((RedisCommandKind::BgreWriteAof, vec![]))
     }).and_then(|frame| {
       let resp = frame.into_single_result()?;
@@ -765,7 +770,7 @@ impl RedisClient {
   ///
   /// https://redis.io/commands/bgsave
   pub fn bgsave(self) -> Box<Future<Item=(Self, String), Error=RedisError>> {
-    Box::new(utils::request_response(&self.command_tx, &self.state, move || {
+    Box::new(utils::request_response(&self.cmd_queue, &self.command_tx, &self.state, move || {
       Ok((RedisCommandKind::BgSave, vec![]))
     }).and_then(|frame| {
       let resp = frame.into_single_result()?;
@@ -783,7 +788,7 @@ impl RedisClient {
   ///
   /// https://redis.io/commands/client-list
   pub fn client_list(self) -> Box<Future<Item=(Self, String), Error=RedisError>> {
-    Box::new(utils::request_response(&self.command_tx, &self.state, move || {
+    Box::new(utils::request_response(&self.cmd_queue, &self.command_tx, &self.state, move || {
       let args = vec![];
 
       Ok((RedisCommandKind::ClientList, args))
@@ -803,7 +808,7 @@ impl RedisClient {
   ///
   /// https://redis.io/commands/client-getname
   pub fn client_getname(self) -> Box<Future<Item=(Self, Option<String>), Error=RedisError>> {
-    Box::new(utils::request_response(&self.command_tx, &self.state, move || {
+    Box::new(utils::request_response(&self.cmd_queue, &self.command_tx, &self.state, move || {
       Ok((RedisCommandKind::ClientGetName, vec![]))
     }).and_then(|frame| {
       let resp = frame.into_single_result()?;
@@ -821,7 +826,7 @@ impl RedisClient {
   pub fn client_setname<V: Into<String>>(self, name: V) -> Box<Future<Item=(Self, Option<String>), Error=RedisError>> {
     let name = name.into();
 
-    Box::new(utils::request_response(&self.command_tx, &self.state, move || {
+    Box::new(utils::request_response(&self.cmd_queue, &self.command_tx, &self.state, move || {
       Ok((RedisCommandKind::ClientSetname, vec![name.into()]))
     }).and_then(|frame| {
       let resp = frame.into_single_result()?;
@@ -837,7 +842,7 @@ impl RedisClient {
   ///
   /// https://redis.io/commands/dbsize
   pub fn dbsize(self) -> Box<Future<Item=(Self, usize), Error=RedisError>> {
-    Box::new(utils::request_response(&self.command_tx, &self.state, move || {
+    Box::new(utils::request_response(&self.cmd_queue, &self.command_tx, &self.state, move || {
       Ok((RedisCommandKind::DBSize, vec![]))
     }).and_then(|frame| {
       let resp = frame.into_single_result()?;
@@ -858,7 +863,7 @@ impl RedisClient {
   pub fn decr<K: Into<RedisKey>>(self, key: K) -> Box<Future<Item=(Self, i64), Error=RedisError>> {
     let key = key.into();
 
-    Box::new(utils::request_response(&self.command_tx, &self.state, move || {
+    Box::new(utils::request_response(&self.cmd_queue, &self.command_tx, &self.state, move || {
       Ok((RedisCommandKind::Decr, vec![key.into()]))
     }).and_then(|frame| {
       let resp = frame.into_single_result()?;
@@ -879,7 +884,7 @@ impl RedisClient {
   pub fn decrby<V: Into<RedisValue>, K: Into<RedisKey>>(self, key: K, value: V) -> Box<Future<Item=(Self, i64), Error=RedisError>> {
     let key = key.into();
 
-    Box::new(utils::request_response(&self.command_tx, &self.state, move || {
+    Box::new(utils::request_response(&self.cmd_queue, &self.command_tx, &self.state, move || {
       let args = vec![key.into(), value.into()];
 
       Ok((RedisCommandKind::DecrBy, args))
@@ -906,7 +911,7 @@ impl RedisClient {
       k.into()
     }).collect();
 
-    Box::new(utils::request_response(&self.command_tx, &self.state, move || {
+    Box::new(utils::request_response(&self.cmd_queue, &self.command_tx, &self.state, move || {
       Ok((RedisCommandKind::Del, args))
     }).and_then(|frame| {
       let _guard = flame_start!("redis:del:2");
@@ -931,7 +936,7 @@ impl RedisClient {
   pub fn dump<K: Into<RedisKey>>(self, key: K) -> Box<Future<Item=(Self, Option<String>), Error=RedisError>> {
     let key = key.into();
 
-    Box::new(utils::request_response(&self.command_tx, &self.state, move || {
+    Box::new(utils::request_response(&self.cmd_queue, &self.command_tx, &self.state, move || {
       Ok((RedisCommandKind::Dump, vec![key.into()]))
     }).and_then(|frame| {
       let resp = frame.into_single_result()?;
@@ -952,7 +957,7 @@ impl RedisClient {
   pub fn exists<K: Into<MultipleKeys>>(self, keys: K) -> Box<Future<Item=(Self, usize), Error=RedisError>> {
     let mut keys = keys.into().inner();
 
-    Box::new(utils::request_response(&self.command_tx, &self.state, move || {
+    Box::new(utils::request_response(&self.cmd_queue, &self.command_tx, &self.state, move || {
       let args: Vec<RedisValue> = keys.drain(..).map(|k| k.into()).collect();
 
       Ok((RedisCommandKind::Exists, args))
@@ -975,7 +980,7 @@ impl RedisClient {
   pub fn expire<K: Into<RedisKey>>(self, key: K, seconds: i64) -> Box<Future<Item=(Self, bool), Error=RedisError>> {
     let key = key.into();
 
-    Box::new(utils::request_response(&self.command_tx, &self.state, move || {
+    Box::new(utils::request_response(&self.cmd_queue, &self.command_tx, &self.state, move || {
       Ok((RedisCommandKind::Expire, vec![
         key.into(),
         seconds.into()
@@ -1005,7 +1010,7 @@ impl RedisClient {
   pub fn expire_at<K: Into<RedisKey>>(self, key: K, timestamp: i64) -> Box<Future<Item=(Self, bool), Error=RedisError>> {
     let key = key.into();
 
-    Box::new(utils::request_response(&self.command_tx, &self.state, move || {
+    Box::new(utils::request_response(&self.cmd_queue, &self.command_tx, &self.state, move || {
       let args = vec![key.into(), timestamp.into()];
 
       Ok((RedisCommandKind::ExpireAt, args))
@@ -1038,7 +1043,7 @@ impl RedisClient {
       Vec::new()
     };
 
-    Box::new(utils::request_response(&self.command_tx, &self.state, move || {
+    Box::new(utils::request_response(&self.cmd_queue, &self.command_tx, &self.state, move || {
       Ok((RedisCommandKind::FlushAll, args))
     }).and_then(|frame| {
       let resp = frame.into_single_result()?;
@@ -1063,7 +1068,7 @@ impl RedisClient {
       Vec::new()
     };
 
-    Box::new(utils::request_response(&self.command_tx, &self.state, move || {
+    Box::new(utils::request_response(&self.cmd_queue, &self.command_tx, &self.state, move || {
       Ok((RedisCommandKind::FlushDB, args))
     }).and_then(|frame| {
       let resp = frame.into_single_result()?;
@@ -1092,7 +1097,7 @@ impl RedisClient {
       end
     ];
 
-    Box::new(utils::request_response(&self.command_tx, &self.state, move || {
+    Box::new(utils::request_response(&self.cmd_queue, &self.command_tx, &self.state, move || {
       Ok((RedisCommandKind::GetRange, args))
     }).and_then(|frame| {
       let resp = frame.into_single_result()?;
@@ -1113,7 +1118,7 @@ impl RedisClient {
   pub fn getset<V: Into<RedisValue>, K: Into<RedisKey>> (self, key: K, value: V) -> Box<Future<Item=(Self, Option<RedisValue>), Error=RedisError>> {
     let (key, value) = (key.into(), value.into());
 
-    Box::new(utils::request_response(&self.command_tx, &self.state, move || {
+    Box::new(utils::request_response(&self.cmd_queue, &self.command_tx, &self.state, move || {
       let args: Vec<RedisValue> = vec![key.into(), value.into()];
 
       Ok((RedisCommandKind::GetSet, args))
@@ -1137,7 +1142,7 @@ impl RedisClient {
     let key = key.into();
     let mut fields = fields.into().inner();
 
-    Box::new(utils::request_response(&self.command_tx, &self.state, move || {
+    Box::new(utils::request_response(&self.cmd_queue, &self.command_tx, &self.state, move || {
       let _guard = flame_start!("redis:hdel:2");
 
       let mut args: Vec<RedisValue> = Vec::with_capacity(fields.len() + 1);
@@ -1170,7 +1175,7 @@ impl RedisClient {
     let key = key.into();
     let field = field.into();
 
-    Box::new(utils::request_response(&self.command_tx, &self.state, move || {
+    Box::new(utils::request_response(&self.cmd_queue, &self.command_tx, &self.state, move || {
       let args: Vec<RedisValue> = vec![key.into(), field.into()];
 
       Ok((RedisCommandKind::HExists, args))
@@ -1200,7 +1205,7 @@ impl RedisClient {
     let key = key.into();
     let field = field.into();
 
-    Box::new(utils::request_response(&self.command_tx, &self.state, move || {
+    Box::new(utils::request_response(&self.cmd_queue, &self.command_tx, &self.state, move || {
       let args: Vec<RedisValue> = vec![key.into(), field.into()];
 
       Ok((RedisCommandKind::HGet, args))
@@ -1225,7 +1230,7 @@ impl RedisClient {
   pub fn hgetall<K: Into<RedisKey>> (self, key: K) -> Box<Future<Item=(Self, HashMap<String, RedisValue>), Error=RedisError>> {
     let key = key.into();
 
-    Box::new(utils::request_response(&self.command_tx, &self.state, move || {
+    Box::new(utils::request_response(&self.cmd_queue, &self.command_tx, &self.state, move || {
       let args: Vec<RedisValue> = vec![key.into()];
 
       Ok((RedisCommandKind::HGetAll, args))
@@ -1263,7 +1268,7 @@ impl RedisClient {
       incr.into()
     ];
 
-    Box::new(utils::request_response(&self.command_tx, &self.state, move || {
+    Box::new(utils::request_response(&self.cmd_queue, &self.command_tx, &self.state, move || {
       Ok((RedisCommandKind::HIncrBy, args))
     }).and_then(|frame| {
       let resp = frame.into_single_result()?;
@@ -1291,7 +1296,7 @@ impl RedisClient {
       incr.to_string().into()
     ];
 
-    Box::new(utils::request_response(&self.command_tx, &self.state, move || {
+    Box::new(utils::request_response(&self.cmd_queue, &self.command_tx, &self.state, move || {
       Ok((RedisCommandKind::HIncrByFloat, args))
     }).and_then(|frame| {
       let resp = frame.into_single_result()?;
@@ -1318,7 +1323,7 @@ impl RedisClient {
   pub fn hkeys<K: Into<RedisKey>> (self, key: K) -> Box<Future<Item=(Self, Vec<String>), Error=RedisError>> {
     let key = key.into();
 
-    Box::new(utils::request_response(&self.command_tx, &self.state, move || {
+    Box::new(utils::request_response(&self.cmd_queue, &self.command_tx, &self.state, move || {
       Ok((RedisCommandKind::HKeys, vec![key.into()]))
     }).and_then(|frame| {
       let mut resp = frame.into_results()?;
@@ -1346,7 +1351,7 @@ impl RedisClient {
   pub fn hlen<K: Into<RedisKey>> (self, key: K) -> Box<Future<Item=(Self, usize), Error=RedisError>> {
     let key = key.into();
 
-    Box::new(utils::request_response(&self.command_tx, &self.state, move || {
+    Box::new(utils::request_response(&self.cmd_queue, &self.command_tx, &self.state, move || {
       Ok((RedisCommandKind::HLen, vec![key.into()]))
     }).and_then(|frame| {
       let resp = frame.into_single_result()?;
@@ -1375,7 +1380,7 @@ impl RedisClient {
       args.push(field.into());
     }
 
-    Box::new(utils::request_response(&self.command_tx, &self.state, move || {
+    Box::new(utils::request_response(&self.cmd_queue, &self.command_tx, &self.state, move || {
       Ok((RedisCommandKind::HMGet, args))
     }).and_then(|frame| {
       Ok((self, frame.into_results()?))
@@ -1398,7 +1403,7 @@ impl RedisClient {
       args.push(value.into());
     }
 
-    Box::new(utils::request_response(&self.command_tx, &self.state, move || {
+    Box::new(utils::request_response(&self.cmd_queue, &self.command_tx, &self.state, move || {
       Ok((RedisCommandKind::HMSet, args))
     }).and_then(|frame| {
       let resp = frame.into_single_result()?;
@@ -1423,7 +1428,7 @@ impl RedisClient {
     let key = key.into();
     let field = field.into();
 
-    Box::new(utils::request_response(&self.command_tx, &self.state, move || {
+    Box::new(utils::request_response(&self.cmd_queue, &self.command_tx, &self.state, move || {
       let _guard = flame_start!("redis:hset:2");
 
       let args: Vec<RedisValue> = vec![key.into(), field.into(), value.into()];
@@ -1452,7 +1457,7 @@ impl RedisClient {
   pub fn hsetnx<K: Into<RedisKey>, F: Into<RedisKey>, V: Into<RedisValue>> (self, key: K, field: F, value: V) -> Box<Future<Item=(Self, usize), Error=RedisError>> {
     let (key, field, value) = (key.into(), field.into(), value.into());
 
-    Box::new(utils::request_response(&self.command_tx, &self.state, move || {
+    Box::new(utils::request_response(&self.cmd_queue, &self.command_tx, &self.state, move || {
       let args: Vec<RedisValue> = vec![key.into(), field.into(), value];
 
       Ok((RedisCommandKind::HSetNx, args))
@@ -1475,7 +1480,7 @@ impl RedisClient {
   pub fn hstrlen<K: Into<RedisKey>, F: Into<RedisKey>> (self, key: K, field: F) -> Box<Future<Item=(Self, usize), Error=RedisError>> {
     let (key, field) = (key.into(), field.into());
 
-    Box::new(utils::request_response(&self.command_tx, &self.state, move || {
+    Box::new(utils::request_response(&self.cmd_queue, &self.command_tx, &self.state, move || {
       let args: Vec<RedisValue> = vec![key.into(), field.into()];
 
       Ok((RedisCommandKind::HStrLen, args))
@@ -1498,7 +1503,7 @@ impl RedisClient {
   pub fn hvals<K: Into<RedisKey>> (self, key: K) -> Box<Future<Item=(Self, Vec<RedisValue>), Error=RedisError>> {
     let key = key.into();
 
-    Box::new(utils::request_response(&self.command_tx, &self.state, move || {
+    Box::new(utils::request_response(&self.cmd_queue, &self.command_tx, &self.state, move || {
       Ok((RedisCommandKind::HVals, vec![key.into()]))
     }).and_then(|frame| {
       Ok((self, frame.into_results()?))
@@ -1512,7 +1517,7 @@ impl RedisClient {
   pub fn incr<K: Into<RedisKey>> (self, key: K) -> Box<Future<Item=(Self, i64), Error=RedisError>>  {
     let key = key.into();
 
-    Box::new(utils::request_response(&self.command_tx, &self.state, move || {
+    Box::new(utils::request_response(&self.cmd_queue, &self.command_tx, &self.state, move || {
       Ok((RedisCommandKind::Incr, vec![key.into()]))
     }).and_then(|frame| {
       let _guard = flame_start!("redis:incr:1");
@@ -1536,7 +1541,7 @@ impl RedisClient {
   pub fn incrby<K: Into<RedisKey>>(self, key: K, incr: i64) -> Box<Future<Item=(Self, i64), Error=RedisError>> {
     let key = key.into();
 
-    Box::new(utils::request_response(&self.command_tx, &self.state, move || {
+    Box::new(utils::request_response(&self.cmd_queue, &self.command_tx, &self.state, move || {
       Ok((RedisCommandKind::IncrBy, vec![key.into(), incr.into()]))
     }).and_then(|frame| {
       let resp = frame.into_single_result()?;
@@ -1557,7 +1562,7 @@ impl RedisClient {
   pub fn incrbyfloat<K: Into<RedisKey>>(self, key: K, incr: f64) -> Box<Future<Item=(Self, f64), Error=RedisError>> {
     let key = key.into();
 
-    Box::new(utils::request_response(&self.command_tx, &self.state, move || {
+    Box::new(utils::request_response(&self.cmd_queue, &self.command_tx, &self.state, move || {
       Ok((RedisCommandKind::IncrByFloat, vec![key.into(), incr.to_string().into()]))
     }).and_then(|frame| {
       let resp = frame.into_single_result()?;
@@ -1582,7 +1587,7 @@ impl RedisClient {
   pub fn llen<K: Into<RedisKey>> (self, key: K) -> Box<Future<Item=(Self, usize), Error=RedisError>> {
     let key = key.into();
 
-    Box::new(utils::request_response(&self.command_tx, &self.state, move || {
+    Box::new(utils::request_response(&self.cmd_queue, &self.command_tx, &self.state, move || {
       Ok((RedisCommandKind::LLen, vec![key.into()]))
     }).and_then(|frame| {
       let resp = frame.into_single_result()?;
@@ -1605,7 +1610,7 @@ impl RedisClient {
     let key = key.into();
     let value = value.into();
 
-    Box::new(utils::request_response(&self.command_tx, &self.state, move || {
+    Box::new(utils::request_response(&self.cmd_queue, &self.command_tx, &self.state, move || {
       let args: Vec<RedisValue> = vec![key.into(), value.into()];
 
       Ok((RedisCommandKind::LPush, args))
@@ -1629,7 +1634,7 @@ impl RedisClient {
   pub fn lpop<K: Into<RedisKey>>(self, key: K) -> Box<Future<Item=(Self, Option<RedisValue>), Error=RedisError>> {
     let key = key.into();
 
-    Box::new(utils::request_response(&self.command_tx, &self.state, move || {
+    Box::new(utils::request_response(&self.cmd_queue, &self.command_tx, &self.state, move || {
       let args: Vec<RedisValue> = vec![key.into()];
 
       Ok((RedisCommandKind::LPop, args))
@@ -1656,7 +1661,7 @@ impl RedisClient {
     let key = key.into();
     let value = value.into();
 
-    Box::new(utils::request_response(&self.command_tx, &self.state, move || {
+    Box::new(utils::request_response(&self.cmd_queue, &self.command_tx, &self.state, move || {
 
       // Convert non-vec argument to a Vec<RedisValue>
       let mut value_list: Vec<RedisValue> = {
@@ -1695,7 +1700,7 @@ impl RedisClient {
     let key = key.into();
     let value = value.into();
 
-    Box::new(utils::request_response(&self.command_tx, &self.state, move || {
+    Box::new(utils::request_response(&self.cmd_queue, &self.command_tx, &self.state, move || {
 
       // Convert non-vec argument to a Vec<RedisValue>
       let mut value_list: Vec<RedisValue> = {
@@ -1731,7 +1736,7 @@ impl RedisClient {
   pub fn smembers<K: Into<RedisKey>> (self, key: K) -> Box<Future<Item=(Self, Vec<RedisValue>), Error=RedisError>> {
     let key = key.into();
 
-    Box::new(utils::request_response(&self.command_tx, &self.state, move || {
+    Box::new(utils::request_response(&self.cmd_queue, &self.command_tx, &self.state, move || {
       Ok((RedisCommandKind::Smembers, vec![key.into()]))
     }).and_then(|frame| {
       Ok((self, frame.into_results()?))
