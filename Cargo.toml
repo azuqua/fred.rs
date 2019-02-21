@@ -7,7 +7,7 @@ authors = [
   "Jeremy Crowe <crowe.jb@gmail.com>"
 ]
 name = "fred"
-version = "0.2.3"
+version = "0.2.4"
 description = "A Redis client for Rust built on Futures and Tokio."
 readme = "README.md"
 repository = "https://github.com/azuqua/fred.rs"
@@ -63,6 +63,7 @@ metrics = []
 mock = []
 ignore-auth-error = []
 enable-tls = ["native-tls", "tokio-tls"]
+replay-requests = []
 
 [profile.bench]
 codegen-units = 1

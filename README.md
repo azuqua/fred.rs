@@ -102,12 +102,13 @@ variable `RUST_LOG` with a value of `trace`, `debug`, `error`, or `info`. See th
 
 ## Features
 
-|    Name    | Default | Description                                                     |
-|----------- |---------|-----------------------------------------------------------------|
-| sync       |    x    | Enable the `Send` and `Sync` wrappers.                          |
-| fuzz       |         | Expose the protocol utils as public functions for fuzz testing. |
-| metrics    |    x    | Enable latency and payload size metrics.                        |
-| enable-tls |         | Enable TLS support.                                             |
+|    Name         | Default | Description                                                                        |
+|---------------- |---------|----------------------------------------------------------------------------------- |
+| sync            |    x    | Enable the `Send` and `Sync` wrappers.                                             |
+| fuzz            |         | Expose the protocol utils as public functions for fuzz testing.                    |
+| metrics         |    x    | Enable latency and payload size metrics.                                           |
+| enable-tls      |         | Enable TLS support.                                                                |
+| replay-requests |         | Queue up requests while the connection is down, and replay them when possible.   |
 
 ## Tests
 
