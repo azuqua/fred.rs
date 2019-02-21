@@ -403,7 +403,9 @@ pub struct Multiplexer<T, U>
   /// Latency metrics tracking, enabled with the feature `metrics`.
   pub latency_stats: Arc<RwLock<LatencyTracker>>,
   /// Payload size metrics, enabled with the feature `metrics`.
-  pub size_stats: Arc<RwLock<SizeTracker>>
+  pub size_stats: Arc<RwLock<SizeTracker>>,
+
+  pub cmd_queue: Rc<RefCell<VecDeque<RedisCommand>>>
 }
 
 impl<T, U> fmt::Debug for Multiplexer<T, U>
@@ -426,7 +428,8 @@ impl<T, U> Multiplexer<T, U>
              command_tx: Rc<RefCell<Option<UnboundedSender<RedisCommand>>>>,
              state: Arc<RwLock<ClientState>>,
              latency: Arc<RwLock<LatencyTracker>>,
-             size: Arc<RwLock<SizeTracker>>)
+             size: Arc<RwLock<SizeTracker>>,
+             cmd_queue: Rc<RefCell<VecDeque<RedisCommand>>>)
     -> Rc<Multiplexer<T, U>>
   {
 
@@ -459,19 +462,20 @@ impl<T, U> Multiplexer<T, U>
     };
 
     Rc::new(Multiplexer {
-      clustered: clustered,
-      message_tx: message_tx,
-      error_tx: error_tx,
-      command_tx: command_tx,
-      state: state,
+      clustered,
+      message_tx,
+      error_tx,
+      command_tx,
+      state,
+      config,
+      streams,
+      sinks,
+      cmd_queue,
+      latency_stats: latency,
+      size_stats: size,
       last_request: RefCell::new(None),
       last_request_sent: RefCell::new(None),
-      last_caller: RefCell::new(None),
-      config: config,
-      streams: streams,
-      sinks: sinks,
-      latency_stats: latency,
-      size_stats: size
+      last_caller: RefCell::new(None)
     })
   }
 
@@ -573,6 +577,28 @@ impl<T, U> Multiplexer<T, U>
     };
 
     res
+  }
+
+  pub fn drain_cmd_queue(&self, tx: UnboundedSender<RedisCommand>) {
+    { debug!("Draining {} queued up requests...", self.cmd_queue.borrow().len()); }
+
+    let mut cmd_queue_ref = self.cmd_queue.borrow_mut();
+    let mut last_cmd = None;
+
+    for cmd in cmd_queue_ref.drain(..) {
+      debug!("Replaying {:?} command.", cmd.kind);
+
+      if let Err(e) = tx.unbounded_send(cmd) {
+        error!("Error replaying queued requests: {:?}", e);
+
+        last_cmd = Some(e.into_inner());
+        break;
+      }
+    }
+
+    if let Some(cmd) = last_cmd {
+      cmd_queue_ref.push_front(cmd);
+    }
   }
 
 }

@@ -5,6 +5,7 @@ extern crate fred;
 extern crate tokio_core;
 extern crate tokio_timer_patched as tokio_timer;
 extern crate futures;
+extern crate pretty_env_logger;
 
 use fred::RedisClient;
 use fred::sync::owned::RedisClientRemote;
@@ -29,6 +30,8 @@ use std::thread;
 const KEY: &'static str = "foo";
 
 fn main() {
+  pretty_env_logger::init();
+
   let sync_client = RedisClientRemote::new();
 
   let t_sync_client = sync_client.clone();
@@ -39,6 +42,11 @@ fn main() {
 
     let config = RedisConfig::default();
     let client = RedisClient::new(config);
+    let policy = ReconnectPolicy::Constant {
+      delay: 1000,
+      attempts: 0,
+      max_attempts: 100
+    };
 
     let connect_ft = client.on_connect().and_then(|_| {
       println!("Client connected.");
@@ -46,7 +54,7 @@ fn main() {
     });
 
     // future that runs the underlying connection
-    let connection = client.connect(&handle);
+    let connection = client.connect_with_policy(&handle, policy);
 
     // future that runs the remote interface
     let remote = t_sync_client.init(client);
@@ -67,7 +75,7 @@ fn main() {
     let timer = Timer::default();
     let dur = Duration::from_millis(2000);
 
-    // read the value every second
+    // read the value every 2 seconds
     let timer_ft = timer.interval(dur).from_err::<RedisError>().fold(reader_client, |reader_client, _| {
 
       reader_client.get(KEY).and_then(|(client, value)| {

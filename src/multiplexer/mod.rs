@@ -130,6 +130,7 @@ fn init_clustered(
   connect_tx: Rc<RefCell<VecDeque<OneshotSender<Result<RedisClient, RedisError>>>>>,
   reconnect_tx: Rc<RefCell<VecDeque<UnboundedSender<RedisClient>>>>,
   remote_tx: Rc<RefCell<VecDeque<OneshotSender<Result<(), RedisError>>>>>,
+  cmd_queue: Rc<RefCell<VecDeque<RedisCommand>>>,
 )
   -> ConnectionFuture
 {
@@ -163,6 +164,7 @@ fn init_clustered(
       let mult_connect_tx = connect_tx.clone();
       let mult_reconnect_tx = reconnect_tx.clone();
       let mult_remote_tx = remote_tx.clone();
+      let mult_cmd_queue = cmd_queue.clone();
 
       let cluster_config = config.clone();
       let (latency_stats, size_stats) = client.metrics_trackers_cloned();
@@ -181,8 +183,9 @@ fn init_clustered(
       })
       .and_then(move |(mut transports, cache)| {
         let (tx, rx): (UnboundedSender<RedisCommand>, UnboundedReceiver<RedisCommand>) = unbounded();
+        let cmd_queue_tx = tx.clone();
 
-        let (multiplexer_ft, commands_ft) = match transports {
+        let (multiplexer, multiplexer_ft, commands_ft) = match transports {
           Either::A(transports) => {
             let multiplexer = Multiplexer::new(
               mult_config.clone(),
@@ -191,7 +194,8 @@ fn init_clustered(
               mult_command_tx.clone(),
               mult_state.clone(),
               latency_stats,
-              size_stats
+              size_stats,
+              mult_cmd_queue.clone()
             );
             multiplexer.sinks.set_cluster_cache(cache);
 
@@ -207,7 +211,7 @@ fn init_clustered(
             // resolves when outbound requests stop
             let commands_ft = utils::create_commands_ft(rx, mult_error_tx, multiplexer.clone(), mult_state.clone());
 
-            (multiplexer_ft, commands_ft)
+            (multiplexer, multiplexer_ft, commands_ft)
           },
           Either::B(transports) => {
             let multiplexer = Multiplexer::new(
@@ -217,7 +221,8 @@ fn init_clustered(
               mult_command_tx.clone(),
               mult_state.clone(),
               latency_stats,
-              size_stats
+              size_stats,
+              mult_cmd_queue.clone()
             );
             multiplexer.sinks.set_cluster_cache(cache);
 
@@ -233,7 +238,7 @@ fn init_clustered(
             // resolves when outbound requests stop
             let commands_ft = utils::create_commands_ft(rx, mult_error_tx, multiplexer.clone(), mult_state.clone());
 
-            (multiplexer_ft, commands_ft)
+            (multiplexer, multiplexer_ft, commands_ft)
           }
         };
 
@@ -243,6 +248,8 @@ fn init_clustered(
         utils::emit_connect(&mult_connect_tx, mult_remote_tx, &mult_client);
         let _ = utils::emit_reconnect(&mult_reconnect_tx, &mult_client);
         client_utils::set_client_state(&mult_state, ClientState::Connected);
+
+        multiplexer.drain_cmd_queue(cmd_queue_tx);
 
         connection_ft
       })
@@ -317,7 +324,8 @@ fn init_centralized(
   command_tx: Rc<RefCell<Option<UnboundedSender<RedisCommand>>>>,
   connect_tx: Rc<RefCell<VecDeque<OneshotSender<Result<RedisClient, RedisError>>>>>,
   reconnect_tx: Rc<RefCell<VecDeque<UnboundedSender<RedisClient>>>>,
-  remote_tx: Rc<RefCell<VecDeque<OneshotSender<Result<(), RedisError>>>>>)
+  remote_tx: Rc<RefCell<VecDeque<OneshotSender<Result<(), RedisError>>>>>,
+  cmd_queue: Rc<RefCell<VecDeque<RedisCommand>>>)
   -> ConnectionFuture
 {
   let addr_str = fry!(utils::read_centralized_host(&config));
@@ -344,8 +352,9 @@ fn init_centralized(
 
   Box::new(transport_ft.and_then(move |transport| {
     let (tx, rx): (UnboundedSender<RedisCommand>, UnboundedReceiver<RedisCommand>) = unbounded();
+    let cmd_queue_tx = tx.clone();
 
-    let (multiplexer_ft, commands_ft) = match transport {
+    let (multiplexer, multiplexer_ft, commands_ft) = match transport {
       Either::A((redis_sink, redis_stream)) => {
         let multiplexer = Multiplexer::new(
           config.clone(),
@@ -354,7 +363,8 @@ fn init_centralized(
           command_tx.clone(),
           state.clone(),
           latency_stats,
-          size_stats
+          size_stats,
+          cmd_queue.clone()
         );
 
         multiplexer.sinks.set_centralized_sink(redis_sink);
@@ -363,9 +373,9 @@ fn init_centralized(
         // resolves when inbound responses stop
         let multiplexer_ft = utils::create_multiplexer_ft(multiplexer.clone(), state.clone());
         // resolves when outbound requests stop
-        let commands_ft = utils::create_commands_ft(rx, error_tx, multiplexer, state.clone());
+        let commands_ft = utils::create_commands_ft(rx, error_tx, multiplexer.clone(), state.clone());
 
-        (multiplexer_ft, commands_ft)
+        (multiplexer, multiplexer_ft, commands_ft)
       },
       Either::B((redis_sink, redis_stream)) => {
         let multiplexer = Multiplexer::new(
@@ -375,7 +385,8 @@ fn init_centralized(
           command_tx.clone(),
           state.clone(),
           latency_stats,
-          size_stats
+          size_stats,
+          cmd_queue.clone()
         );
 
         multiplexer.sinks.set_centralized_sink(redis_sink);
@@ -384,9 +395,9 @@ fn init_centralized(
         // resolves when inbound responses stop
         let multiplexer_ft = utils::create_multiplexer_ft(multiplexer.clone(), state.clone());
         // resolves when outbound requests stop
-        let commands_ft = utils::create_commands_ft(rx, error_tx, multiplexer, state.clone());
+        let commands_ft = utils::create_commands_ft(rx, error_tx, multiplexer.clone(), state.clone());
 
-        (multiplexer_ft, commands_ft)
+        (multiplexer, multiplexer_ft, commands_ft)
       }
     };
 
@@ -399,6 +410,8 @@ fn init_centralized(
     utils::emit_connect(&connect_tx, remote_tx, &client);
     let _ = utils::emit_reconnect(&reconnect_tx, &client);
     client_utils::set_client_state(&state, ClientState::Connected);
+
+    multiplexer.drain_cmd_queue(cmd_queue_tx);
 
     // resolve the outer future when the socket is connected and authenticated
     // the inner future `connection_ft` resolves when the connection is closed by either end
@@ -427,6 +440,7 @@ pub fn init(
   connect_tx: Rc<RefCell<VecDeque<OneshotSender<Result<RedisClient, RedisError>>>>>,
   reconnect_tx: Rc<RefCell<VecDeque<UnboundedSender<RedisClient>>>>,
   remote_tx: Rc<RefCell<VecDeque<OneshotSender<Result<(), RedisError>>>>>,
+  cmd_queue: Rc<RefCell<VecDeque<RedisCommand>>>
 ) -> ConnectionFuture
 {
   let is_clustered = {
@@ -439,9 +453,9 @@ pub fn init(
   };
 
   if is_clustered {
-    init_clustered(client,handle.clone(), config, state, error_tx, message_tx, command_tx, connect_tx, reconnect_tx, remote_tx)
+    init_clustered(client,handle.clone(), config, state, error_tx, message_tx, command_tx, connect_tx, reconnect_tx, remote_tx, cmd_queue)
   }else{
-    init_centralized(client,handle, config, state, error_tx, message_tx, command_tx, connect_tx, reconnect_tx, remote_tx)
+    init_centralized(client,handle, config, state, error_tx, message_tx, command_tx, connect_tx, reconnect_tx, remote_tx, cmd_queue)
   }
 }
 
@@ -458,6 +472,7 @@ pub fn init_with_policy(
   reconnect_tx: Rc<RefCell<VecDeque<UnboundedSender<RedisClient>>>>,
   connect_tx: Rc<RefCell<VecDeque<OneshotSender<Result<RedisClient, RedisError>>>>>,
   remote_tx: Rc<RefCell<VecDeque<OneshotSender<Result<(), RedisError>>>>>,
+  cmd_queue: Rc<RefCell<VecDeque<RedisCommand>>>,
   policy: ReconnectPolicy,
 ) -> Box<Future<Item=(), Error=RedisError>> {
 
@@ -468,7 +483,7 @@ pub fn init_with_policy(
 
     loop_fn((handle, timer, policy), move |(handle, timer, policy)| {
 
-      let (_client, _config, _state, _error_tx, _message_tx, _command_tx, _connect_tx, _reconnect_tx, _remote_tx) = (
+      let (_client, _config, _state, _error_tx, _message_tx, _command_tx, _connect_tx, _reconnect_tx, _remote_tx, _cmd_queue) = (
         client.clone(),
         config.clone(),
         state.clone(),
@@ -477,7 +492,8 @@ pub fn init_with_policy(
         command_tx.clone(),
         connect_tx.clone(),
         reconnect_tx.clone(),
-        remote_tx.clone()
+        remote_tx.clone(),
+        cmd_queue.clone()
       );
 
       let reconnect_tx_copy = reconnect_tx.clone();
@@ -500,10 +516,10 @@ pub fn init_with_policy(
 
       let connection_ft = if is_clustered {
         Box::new(init_clustered(client_copy, handle.clone(), _config, _state,
-          _error_tx, _message_tx, _command_tx, _connect_tx, _reconnect_tx, _remote_tx))
+          _error_tx, _message_tx, _command_tx, _connect_tx, _reconnect_tx, _remote_tx, _cmd_queue))
       }else{
         Box::new(init_centralized(client_copy, &handle, _config, _state, _error_tx,
-          _message_tx, _command_tx, _connect_tx, _reconnect_tx, _remote_tx))
+          _message_tx, _command_tx, _connect_tx, _reconnect_tx, _remote_tx, _cmd_queue))
       };
 
       Box::new(connection_ft.then(move |result| {
