@@ -172,6 +172,8 @@ fn init_clustered(
 
       let uses_tls = config.borrow().tls();
 
+      let init_handle = handle.clone();
+
       utils::build_cluster_cache(handle.clone(), &config, size_stats.clone()).and_then(move |cache: ClusterKeyCache| {
         if uses_tls {
           init_tls_transports(cluster_config, cluster_handle, key, init_size_stats, cache)
@@ -185,7 +187,7 @@ fn init_clustered(
         let (tx, rx): (UnboundedSender<RedisCommand>, UnboundedReceiver<RedisCommand>) = unbounded();
         let cmd_queue_tx = tx.clone();
 
-        let (multiplexer, multiplexer_ft, commands_ft) = match transports {
+        let (multiplexer_ft, commands_ft) = match transports {
           Either::A(transports) => {
             let multiplexer = Multiplexer::new(
               mult_config.clone(),
@@ -211,7 +213,10 @@ fn init_clustered(
             // resolves when outbound requests stop
             let commands_ft = utils::create_commands_ft(rx, mult_error_tx, multiplexer.clone(), mult_state.clone());
 
-            (multiplexer, multiplexer_ft, commands_ft)
+            utils::set_command_tx(&mult_command_tx, tx);
+            multiplexer.drain_cmd_queue(cmd_queue_tx);
+
+            (multiplexer_ft, commands_ft)
           },
           Either::B(transports) => {
             let multiplexer = Multiplexer::new(
@@ -238,20 +243,23 @@ fn init_clustered(
             // resolves when outbound requests stop
             let commands_ft = utils::create_commands_ft(rx, mult_error_tx, multiplexer.clone(), mult_state.clone());
 
-            (multiplexer, multiplexer_ft, commands_ft)
+            utils::set_command_tx(&mult_command_tx, tx);
+            multiplexer.drain_cmd_queue(cmd_queue_tx);
+
+            (multiplexer_ft, commands_ft)
           }
         };
 
-        let connection_ft = utils::create_connection_ft(commands_ft, multiplexer_ft, mult_state.clone());
+        let init_state = mult_state.clone();
+        init_handle.spawn_fn(move || {
+          utils::emit_connect(&mult_connect_tx, mult_remote_tx, &mult_client);
+          let _ = utils::emit_reconnect(&mult_reconnect_tx, &mult_client);
+          client_utils::set_client_state(&init_state, ClientState::Connected);
 
-        utils::set_command_tx(&mult_command_tx, tx);
-        utils::emit_connect(&mult_connect_tx, mult_remote_tx, &mult_client);
-        let _ = utils::emit_reconnect(&mult_reconnect_tx, &mult_client);
-        client_utils::set_client_state(&mult_state, ClientState::Connected);
+          Ok::<_, ()>(())
+        });
 
-        multiplexer.drain_cmd_queue(cmd_queue_tx);
-
-        connection_ft
+        utils::create_connection_ft(commands_ft, multiplexer_ft, mult_state)
       })
       .then(move |result| {
         match result {
@@ -338,6 +346,7 @@ fn init_centralized(
     ))
   };
 
+  let init_handle = handle.clone();
   client_utils::set_client_state(&state, ClientState::Connecting);
 
   let error_connect_tx = connect_tx.clone();
@@ -354,7 +363,7 @@ fn init_centralized(
     let (tx, rx): (UnboundedSender<RedisCommand>, UnboundedReceiver<RedisCommand>) = unbounded();
     let cmd_queue_tx = tx.clone();
 
-    let (multiplexer, multiplexer_ft, commands_ft) = match transport {
+    let (multiplexer_ft, commands_ft) = match transport {
       Either::A((redis_sink, redis_stream)) => {
         let multiplexer = Multiplexer::new(
           config.clone(),
@@ -375,7 +384,11 @@ fn init_centralized(
         // resolves when outbound requests stop
         let commands_ft = utils::create_commands_ft(rx, error_tx, multiplexer.clone(), state.clone());
 
-        (multiplexer, multiplexer_ft, commands_ft)
+        debug!("Redis client successfully connected.");
+        utils::set_command_tx(&command_tx, tx);
+        multiplexer.drain_cmd_queue(cmd_queue_tx);
+
+        (multiplexer_ft, commands_ft)
       },
       Either::B((redis_sink, redis_stream)) => {
         let multiplexer = Multiplexer::new(
@@ -397,25 +410,27 @@ fn init_centralized(
         // resolves when outbound requests stop
         let commands_ft = utils::create_commands_ft(rx, error_tx, multiplexer.clone(), state.clone());
 
-        (multiplexer, multiplexer_ft, commands_ft)
+        debug!("Redis client successfully connected.");
+        utils::set_command_tx(&command_tx, tx);
+        multiplexer.drain_cmd_queue(cmd_queue_tx);
+
+        (multiplexer_ft, commands_ft)
       }
     };
 
+    let init_state = state.clone();
+    init_handle.spawn_fn(move || {
+      utils::emit_connect(&connect_tx, remote_tx, &client);
+      let _ = utils::emit_reconnect(&reconnect_tx, &client);
+      client_utils::set_client_state(&init_state, ClientState::Connected);
+
+      Ok::<_, ()>(())
+    });
+
     // resolves when both sides of the channel stop
-    let connection_ft = utils::create_connection_ft(commands_ft, multiplexer_ft, state.clone());
-
-    debug!("Redis client successfully connected.");
-
-    utils::set_command_tx(&command_tx, tx);
-    utils::emit_connect(&connect_tx, remote_tx, &client);
-    let _ = utils::emit_reconnect(&reconnect_tx, &client);
-    client_utils::set_client_state(&state, ClientState::Connected);
-
-    multiplexer.drain_cmd_queue(cmd_queue_tx);
-
     // resolve the outer future when the socket is connected and authenticated
     // the inner future `connection_ft` resolves when the connection is closed by either end
-    connection_ft
+    utils::create_connection_ft(commands_ft, multiplexer_ft, state)
   })
   .then(move |result| {
     debug!("Centralized connection future closed with result {:?}.", result);

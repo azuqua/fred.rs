@@ -543,14 +543,16 @@ pub fn process_frame<T, U>(multiplexer: &Rc<Multiplexer<T, U>>, frame: Frame)
     }
   }else{
     if let Some(m_tx) = multiplexer.take_last_caller() {
+      trace!("Found last caller from multiplexer.");
       let _ = m_tx.send(false);
     }
 
     let last_request = match multiplexer.take_last_request() {
       Some(s) => s,
       None => return
-
     };
+    trace!("Responding to last request with frame.");
+
     let _ = last_request.send(Ok(frame));
   }
 }
