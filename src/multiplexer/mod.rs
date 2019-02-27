@@ -213,6 +213,7 @@ fn init_clustered(
             // resolves when outbound requests stop
             let commands_ft = utils::create_commands_ft(rx, mult_error_tx, multiplexer.clone(), mult_state.clone());
 
+            utils::set_command_tx(&mult_command_tx, tx);
             multiplexer.drain_cmd_queue(cmd_queue_tx);
 
             (multiplexer_ft, commands_ft)
@@ -242,12 +243,12 @@ fn init_clustered(
             // resolves when outbound requests stop
             let commands_ft = utils::create_commands_ft(rx, mult_error_tx, multiplexer.clone(), mult_state.clone());
 
+            utils::set_command_tx(&mult_command_tx, tx);
             multiplexer.drain_cmd_queue(cmd_queue_tx);
 
             (multiplexer_ft, commands_ft)
           }
         };
-        utils::set_command_tx(&mult_command_tx, tx);
 
         let init_state = mult_state.clone();
         init_handle.spawn_fn(move || {
@@ -384,6 +385,7 @@ fn init_centralized(
         let commands_ft = utils::create_commands_ft(rx, error_tx, multiplexer.clone(), state.clone());
 
         debug!("Redis client successfully connected.");
+        utils::set_command_tx(&command_tx, tx);
         multiplexer.drain_cmd_queue(cmd_queue_tx);
 
         (multiplexer_ft, commands_ft)
@@ -409,12 +411,12 @@ fn init_centralized(
         let commands_ft = utils::create_commands_ft(rx, error_tx, multiplexer.clone(), state.clone());
 
         debug!("Redis client successfully connected.");
+        utils::set_command_tx(&command_tx, tx);
         multiplexer.drain_cmd_queue(cmd_queue_tx);
 
         (multiplexer_ft, commands_ft)
       }
     };
-    utils::set_command_tx(&command_tx, tx);
 
     let init_state = state.clone();
     init_handle.spawn_fn(move || {
