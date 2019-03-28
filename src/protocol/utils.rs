@@ -1,55 +1,42 @@
-#![allow(unused_imports)]
 
-use ::error::{
-  RedisError,
-  RedisErrorKind
-};
+use crate::multiplexer::utils as multiplexer_utils;
+use crate::utils as client_utils;
 
-use std::io;
-use std::io::{
-  Error as IoError,
-  Cursor
-};
+use crate::error::*;
+use crate::protocol::types::*;
+use crate::types::RedisValue;
 
 use std::sync::Arc;
-
-use std::str;
-use std::collections::{
-  HashMap
+use parking_lot::RwLock;
+use std::ops::{
+  DerefMut,
+  Deref
 };
 
-use std::fmt::{
-  Write
+use redis_protocol::types::{
+  Frame as ProtocolFrame,
+  FrameKind as ProtocolFrameKind
 };
 
-use bytes::{
-  BytesMut,
-  BufMut,
-  Buf
-};
+use std::collections::HashMap;
 
-use super::types::{
-  CR,
-  LF,
-  NULL,
-  FrameKind,
-  Frame,
-  SlotRange,
-  REDIS_CLUSTER_SLOTS,
-  SlaveNodes,
-  RedisCommandKind
+use futures::{
+  Future,
+  Stream
 };
-
-use crc16::{
-  State,
-  XMODEM
+use futures::future::{
+  Loop,
+  loop_fn
 };
+use tokio_core::reactor::Handle;
 
-use ::types::{
-  RedisValue
-};
+use crate::client::RedisClientInner;
+use crate::types::ClientState;
 
-use std::rc::Rc;
+use std::time::Duration;
+
+use std::io::Error as IoError;
+use std::io::ErrorKind as IoErrorKind;
 
 /// Elasticache adds a '@1122' or some number suffix to the CLUSTER NODES response
 fn remove_elasticache_suffix(server: String) -> String {
@@ -60,7 +47,7 @@ fn remove_elasticache_suffix(server: String) -> String {
   server
 }
 
-pub fn binary_search(slots: &Vec<Rc<SlotRange>>, slot: u16) -> Option<Rc<SlotRange>> {
+pub fn binary_search(slots: &Vec<Arc<SlotRange>>, slot: u16) -> Option<Arc<SlotRange>> {
   if slot > REDIS_CLUSTER_SLOTS {
     return None;
   }
@@ -169,6 +156,7 @@ pub fn parse_cluster_nodes(status: String) -> Result<HashMap<String, Vec<SlotRan
     }
   }
 
+  out.shrink_to_fit();
   Ok(out)
 }
 
@@ -177,7 +165,7 @@ fn first_two_words(s: &str) -> (&str, &str) {
   (parts.next().unwrap_or(""), parts.next().unwrap_or(""))
 }
 
-pub fn better_error(resp: String) -> RedisError {
+pub fn pretty_error(resp: String) -> RedisError {
   let kind = {
     let (first, second) = first_two_words(&resp);
 
@@ -202,8 +190,8 @@ pub fn better_error(resp: String) -> RedisError {
   RedisError::new(kind, details)
 }
 
-pub fn frame_to_pubsub(frame: Frame) -> Result<(String, RedisValue), RedisError> {
-  if let Frame::Array(mut frames) = frame {
+pub fn frame_to_pubsub(frame: ProtocolFrame) -> Result<(String, RedisValue), RedisError> {
+  if let ProtocolFrame::Array(mut frames) = frame {
     if frames.len() != 3 {
       return Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid pubsub message frames."));
     }
@@ -228,16 +216,13 @@ pub fn frame_to_pubsub(frame: Frame) -> Result<(String, RedisValue), RedisError>
       };
 
       // the payload is a bulk string on pubsub messages
-      if payload.kind() == FrameKind::BulkString {
-        let payload = match payload.into_results() {
-          Ok(mut r) => r.pop(),
-          Err(e) => return Err(e)
-        };
+      if payload.kind() == ProtocolFrameKind::BulkString {
+        let payload = frame_to_single_result(payload)?;
 
-        if payload.is_none() {
+        if !payload.is_string() {
           Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid pubsub channel payload."))
         }else{
-          Ok((channel, payload.unwrap()))
+          Ok((channel, payload))
         }
       }else{
         Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid pubsub payload frame type."))
@@ -250,22 +235,22 @@ pub fn frame_to_pubsub(frame: Frame) -> Result<(String, RedisValue), RedisError>
   }
 }
 
-pub fn command_args(kind: &RedisCommandKind) -> Option<Frame> {
+pub fn command_args(kind: &RedisCommandKind) -> Option<ProtocolFrame> {
   let frame = if kind.is_cluster_command() {
     if let Some(arg) = kind.cluster_args() {
-      Frame::BulkString(arg.into_bytes())
+      ProtocolFrame::BulkString(arg.into_bytes())
     }else{
       return None;
     }
   }else if kind.is_client_command() {
     if let Some(arg) = kind.client_args() {
-      Frame::BulkString(arg.into_bytes())
+      ProtocolFrame::BulkString(arg.into_bytes())
     }else{
       return None;
     }
   }else if kind.is_config_command() {
     if let Some(arg) = kind.config_args() {
-      Frame::BulkString(arg.into_bytes())
+      ProtocolFrame::BulkString(arg.into_bytes())
     }else{
       return None;
     }
@@ -277,32 +262,194 @@ pub fn command_args(kind: &RedisCommandKind) -> Option<Frame> {
 }
 
 #[cfg(not(feature="ignore-auth-error"))]
-pub fn check_auth_error(frame: Frame) -> Frame {
+pub fn check_auth_error(frame: ProtocolFrame) -> ProtocolFrame {
   frame
 }
 
-// https://i.imgur.com/RjpUxK4.png
 #[cfg(feature="ignore-auth-error")]
-pub fn check_auth_error(frame: Frame) -> Frame {
+pub fn check_auth_error(frame: ProtocolFrame) -> ProtocolFrame {
   let is_auth_error = match frame {
-    Frame::Error(ref s) => s == "ERR Client sent AUTH, but no password is set",
+    ProtocolFrame::Error(ref s) => s == "ERR Client sent AUTH, but no password is set",
     _ => false
   };
 
   if is_auth_error {
-    Frame::SimpleString("OK".into())
+    ProtocolFrame::SimpleString("OK".into())
   }else{
     frame
   }
 }
+
+pub fn frame_to_results(frame: ProtocolFrame) -> Result<Vec<RedisValue>, RedisError> {
+  match frame {
+    ProtocolFrame::SimpleString(s) => Ok(vec![s.into()]),
+    ProtocolFrame::Integer(i) => Ok(vec![i.into()]),
+    ProtocolFrame::BulkString(b) => {
+      String::from_utf8(b)
+        .map(|s| vec![s.into()])
+        .map_err(|e| e.into())
+    },
+    ProtocolFrame::Array(mut frames) => {
+      let mut out = Vec::with_capacity(frames.len());
+      for frame in frames.drain(..) {
+        // there shouldn't be errors buried in arrays...
+        let mut res = frame_to_results(frame)?;
+
+        if res.len() > 1 {
+          // nor should there be more than one layer of nested arrays
+          return Err(RedisError::new(
+            RedisErrorKind::ProtocolError, "Invalid nested array."
+          ));
+        }else if res.len() == 0 {
+          // shouldn't be possible...
+          return Err(RedisError::new(
+            RedisErrorKind::Unknown, "Invalid empty frame."
+          ));
+        }
+
+        out.push(res.pop().unwrap())
+      }
+
+      Ok(out)
+    },
+    ProtocolFrame::Null => Ok(vec![RedisValue::Null]),
+    ProtocolFrame::Error(s) => Err(pretty_error(s)),
+    _ => Err(RedisError::new(
+      RedisErrorKind::ProtocolError, "Invalid frame."
+    ))
+  }
+}
+
+pub fn frame_to_single_result(frame: ProtocolFrame) -> Result<RedisValue, RedisError> {
+  match frame {
+    ProtocolFrame::SimpleString(s) => Ok(s.into()),
+    ProtocolFrame::Integer(i) => Ok(i.into()),
+    ProtocolFrame::BulkString(b) => {
+      String::from_utf8(b).map(|s| s.into()).map_err(|e| e.into())
+    },
+    ProtocolFrame::Array(mut frames) => {
+      if frames.len() > 1 {
+        return Err(RedisError::new(
+          RedisErrorKind::ProtocolError, "Could not convert multiple frames to RedisValue."
+        ));
+      }else if frames.is_empty() {
+        return Ok(RedisValue::Null);
+      }
+
+      let first_frame = frames.pop().unwrap();
+      if first_frame.kind() == ProtocolFrameKind::Array || first_frame.kind() == ProtocolFrameKind::Error {
+        // there shouldn't be errors buried in arrays, nor should there be more than one layer of nested arrays
+        return Err(RedisError::new(
+          RedisErrorKind::ProtocolError, "Invalid nested array."
+        ));
+      }
+
+      frame_to_single_result(first_frame)
+    },
+    ProtocolFrame::Null => Ok(RedisValue::Null),
+    ProtocolFrame::Error(s) => Err(pretty_error(s)),
+    _ => Err(RedisError::new(
+      RedisErrorKind::ProtocolError, "Invalid frame."
+    ))
+  }
+}
+
+pub fn frame_to_error(frame: ProtocolFrame) -> Option<RedisError> {
+  if let ProtocolFrame::Error(s) = frame {
+    Some(pretty_error(s))
+  }else{
+    None
+  }
+}
+
+/// Reconnect to the server based on the result of the previous connection.
+#[allow(unused_variables)]
+pub fn reconnect(handle: Handle, inner: Arc<RedisClientInner>, mut result: Result<Option<RedisError>, RedisError>, force_no_delay: bool)
+  -> Box<Future<Item=Loop<(), (Handle, Arc<RedisClientInner>)>, Error=RedisError>>
+{
+  // since framed sockets don't give an error when closed abruptly the client's state is
+  // used to determine whether or not the socket was closed intentionally or not
+  if client_utils::read_client_state(&inner.state) == ClientState::Disconnecting {
+    result = Err(RedisError::new(
+      RedisErrorKind::IO, "Redis socket closed abruptly."
+    ));
+  }
+
+  debug!("Starting reconnect logic from error {:?}...", result);
+
+  match result {
+    Ok(err) => {
+      if let Some(err) = err {
+        // socket was closed unintentionally
+        debug!("Redis client closed abruptly.");
+        multiplexer_utils::emit_error(&inner.error_tx, &err);
+
+        let delay = match multiplexer_utils::next_reconnect_delay(&inner.policy) {
+          Some(delay) => delay,
+          None => return client_utils::future_ok(Loop::Break(()))
+        };
+
+        debug!("Waiting for {} ms before attempting to reconnect...", delay);
+
+        Box::new(inner.timer.sleep(Duration::from_millis(delay as u64)).from_err::<RedisError>().and_then(move |_| {
+          if client_utils::read_closed_flag(&inner.closed) {
+            client_utils::set_closed_flag(&inner.closed, false);
+
+            return Err(RedisError::new(
+              RedisErrorKind::Canceled, "Client closed while waiting to reconnect."
+            ));
+          }
+
+          Ok(Loop::Continue((handle, inner)))
+        }))
+      } else {
+        // socket was closed via Quit command
+        debug!("Redis client closed via Quit.");
+
+        client_utils::set_client_state(&inner.state, ClientState::Disconnected);
+
+        multiplexer_utils::close_error_tx(&inner.error_tx);
+        multiplexer_utils::close_reconnect_tx(&inner.reconnect_tx);
+        multiplexer_utils::close_connect_tx(&inner.connect_tx);
+        multiplexer_utils::close_messages_tx(&inner.message_tx);
+
+        client_utils::future_ok(Loop::Break(()))
+      }
+    },
+    Err(e) => {
+      multiplexer_utils::emit_error(&inner.error_tx, &e);
+
+      let delay = match multiplexer_utils::next_reconnect_delay(&inner.policy) {
+        Some(delay) => delay,
+        None => return client_utils::future_ok(Loop::Break(()))
+      };
+
+      debug!("Waiting for {} ms before attempting to reconnect...", delay);
+
+      Box::new(inner.timer.sleep(Duration::from_millis(delay as u64)).from_err::<RedisError>().and_then(move |_| {
+        if client_utils::read_closed_flag(&inner.closed) {
+          client_utils::set_closed_flag(&inner.closed, false);
+
+          return Err(RedisError::new(
+            RedisErrorKind::Canceled, "Client closed while waiting to reconnect."
+          ));
+        }
+
+        Ok(Loop::Continue((handle, inner)))
+      }))
+    }
+  }
+}
+
 
 // ------------------
 
 #[cfg(test)]
 mod tests {
   use super::*;
-  use super::super::types::*;
-  use super::super::super::types::*;
+  use crate::types::*;
+  use crate::protocol::types::*;
+  use std::collections::HashMap;
 
   #[test]
   fn should_parse_cluster_node_status() {

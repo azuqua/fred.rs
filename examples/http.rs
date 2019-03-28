@@ -7,7 +7,8 @@ extern crate futures;
 extern crate hyper;
 
 use fred::RedisClient;
-use fred::sync::borrowed::RedisClientRemote;
+use fred::owned::RedisClientOwned;
+
 use fred::types::*;
 use fred::error::*;
 
@@ -110,7 +111,7 @@ fn main() {
     attempts: 0,
     max_attempts: 10
   };
-  let client = RedisClient::new(config);
+  let client = RedisClient::new(config, None);
 
   // give the service its own clone of the client
   let http_client = client.clone();
@@ -129,5 +130,5 @@ fn main() {
 
   println!("Starting HTTP server on port {:?}", PORT);
   // run the http server until the redis connection dies
-  let _ = server.run_until(connection.map_err(|_| ()));
+  let _ = server.run_until(connection.map_err(|_| ()).map(|_| ()));
 }

@@ -33,7 +33,10 @@ use fred::error::{
   RedisError
 };
 use fred::types::*;
-use fred::RedisClient;
+use fred::client::RedisClient;
+use fred::owned::RedisClientOwned;
+
+use tokio_timer::Timer;
 
 use std::thread;
 use std::sync::Arc;
@@ -46,18 +49,18 @@ pub type TestFuture = Box<Future<Item=(), Error=RedisError>>;
 macro_rules! sleep_ms(
   ($($arg:tt)*) => { {
     ::std::thread::sleep(::std::time::Duration::from_millis($($arg)*))
-  } } 
+  } }
 );
 
 pub fn create_core() -> Core {
   Core::new().unwrap()
 }
 
-pub fn setup_test_client<F: FnOnce(RedisClient) -> TestFuture>(config: RedisConfig, func: F) {
+pub fn setup_test_client<F: FnOnce(RedisClient) -> TestFuture>(config: RedisConfig, timer: Timer, func: F) {
   let mut core = Core::new().unwrap();
   let handle = core.handle();
 
-  let client = RedisClient::new(config);
+  let client = RedisClient::new(config, Some(timer));
   let connection = client.connect(&handle);
 
   let clone = client.clone();

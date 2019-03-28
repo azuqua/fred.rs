@@ -15,10 +15,13 @@ extern crate rand;
 extern crate log;
 extern crate pretty_env_logger;
 
+#[macro_use]
+extern crate lazy_static;
+
 // this is a poor way of dealing with global mutable state
 #[test]
 fn init_test_logger() {
-  pretty_env_logger::init().unwrap();
+  pretty_env_logger::init();
 }
 
 pub mod integration;

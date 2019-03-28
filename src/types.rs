@@ -1,4 +1,10 @@
 
+use futures::{
+  Future,
+  Stream
+};
+
+use crate::error::*;
 
 use std::collections::{
   HashMap,
@@ -12,22 +18,21 @@ use std::hash::Hash;
 use std::hash::Hasher;
 use std::mem;
 
-use super::error::*;
+use crate::error::*;
 
-use utils;
-use protocol::types::*;
+use crate::utils;
 
-pub use ::multiplexer::{
-  ConnectionFuture
-};
+use redis_protocol::types::*;
+use redis_protocol::NULL;
+use crate::multiplexer::types::*;
 
-use std::cmp::{
-  Ordering,
-  Ord,
-  PartialOrd
-};
+pub use redis_protocol::types::Frame;
 
+use std::cmp::Ordering;
+
+#[doc(hidden)]
 pub static ASYNC: &'static str = "ASYNC";
+
 
 /// Options for the [info](https://redis.io/commands/info) command.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -48,7 +53,7 @@ pub enum InfoKind {
 
 impl InfoKind {
 
-  pub fn to_string(&self) -> &'static str {
+  pub fn to_str(&self) -> &'static str {
     match *self {
       InfoKind::Default      => "default",
       InfoKind::All          => "all",
@@ -132,7 +137,7 @@ impl ReconnectPolicy {
       ReconnectPolicy::Constant { ref mut attempts, delay, max_attempts } => {
         *attempts = match utils::incr_with_max(*attempts, max_attempts) {
           Some(a) => a,
-          None => return None 
+          None => return None
         };
 
         Some(delay)
@@ -140,7 +145,7 @@ impl ReconnectPolicy {
       ReconnectPolicy::Linear { ref mut attempts, max, max_attempts, delay } => {
         *attempts = match utils::incr_with_max(*attempts, max_attempts) {
           Some(a) => a,
-          None => return None 
+          None => return None
         };
 
         Some(cmp::min(max, delay.saturating_mul(*attempts)))
@@ -148,7 +153,7 @@ impl ReconnectPolicy {
       ReconnectPolicy::Exponential { ref mut attempts, min, max, max_attempts, mult } => {
         *attempts = match utils::incr_with_max(*attempts, max_attempts) {
           Some(a) => a,
-          None => return None 
+          None => return None
         };
 
         Some(cmp::min(max, mult.pow(*attempts - 1).saturating_mul(min)))
@@ -164,12 +169,10 @@ pub enum RedisConfig {
   Centralized {
     /// The hostname or IP address of the Redis server.
     host: String,
-    /// The port on which the Redis server is listening. 
+    /// The port on which the Redis server is listening.
     port: u16,
     /// An optional authentication key to use after connecting.
     key: Option<String>,
-    /// The maximum number of bytes that can be allocated for a value, or `None` for no limit.
-    max_value_size: Option<usize>,
     /// Whether or not to use TLS. This will only take effect when `enable-tls` is used.
     tls: bool
   },
@@ -179,8 +182,6 @@ pub enum RedisConfig {
     hosts: Vec<(String, u16)>,
     /// An optional authentication key to use after connecting.
     key: Option<String>,
-    /// The maximum number of bytes that can be allocated for a value, or `None` for no limit.
-    max_value_size: Option<usize>,
     /// Whether or not to use TLS. This will only take effect when `enable-tls` is used.
     tls: bool
   }
@@ -199,7 +200,6 @@ impl RedisConfig {
       host: host.into(),
       port: port,
       key: key,
-      max_value_size: None,
       tls: false
     }
   }
@@ -212,7 +212,6 @@ impl RedisConfig {
     RedisConfig::Clustered {
       hosts: hosts,
       key: key,
-      max_value_size: None,
       tls: false
     }
   }
@@ -223,7 +222,6 @@ impl RedisConfig {
       host: "127.0.0.1".to_owned(),
       port: 6379,
       key: None,
-      max_value_size: None,
       tls: false
     }
   }
@@ -237,7 +235,6 @@ impl RedisConfig {
         ("127.0.0.1".to_owned(), 30003),
       ],
       key: None,
-      max_value_size: None,
       tls: false
     }
   }
@@ -247,30 +244,10 @@ impl RedisConfig {
     match *self {
       RedisConfig::Centralized { ref mut key, .. } => {
         *key = new_key.map(|t| t.into())
-      }, 
+      },
       RedisConfig::Clustered { ref mut key, .. } => {
         *key = new_key.map(|t| t.into())
       }
-    }
-  }
-
-  /// Set the max size of values received over the socket, or `None` for no limit.
-  pub fn set_max_size(&mut self, size: Option<usize>) {
-    match *self {
-      RedisConfig::Centralized {ref mut max_value_size, ..} => {
-        *max_value_size = size;
-      },
-      RedisConfig::Clustered {ref mut max_value_size, ..} => {
-        *max_value_size = size;
-      }
-    }
-  }
-
-  /// Read a copy of the `max_value_size`.
-  pub fn get_max_size(&self) -> Option<usize> {
-    match *self {
-      RedisConfig::Centralized {ref max_value_size, ..} => max_value_size.clone(),
-      RedisConfig::Clustered {ref max_value_size, ..} => max_value_size.clone()
     }
   }
 
@@ -307,7 +284,8 @@ impl RedisConfig {
 
 }
 
-/// Options for the `set` command.
+
+/// Options for the [set](https://redis.io/commands/set) command.
 ///
 /// https://redis.io/commands/set
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -327,9 +305,7 @@ impl SetOptions {
 
 }
 
-/// Expiration options for the `set` command.
-///
-/// https://redis.io/commands/set
+/// Expiration options for the [set](https://redis.io/commands/set) command.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum Expiration {
   EX(i64),
@@ -357,18 +333,18 @@ pub enum ClientState {
 }
 
 /// A key in Redis.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub struct RedisKey {
   pub key: String
 }
 
 impl RedisKey {
 
-  pub fn new(key: String) -> RedisKey {
-    RedisKey { key: key }
+  pub fn new<S: Into<String>>(key: S) -> RedisKey {
+    RedisKey { key: key.into() }
   }
 
-  pub fn to_string(&self) -> &str {
+  pub fn as_str(&self) -> &str {
     &self.key
   }
 
@@ -380,18 +356,6 @@ impl RedisKey {
     mem::replace(&mut self.key, String::new())
   }
 
-}
-
-impl Ord for RedisKey {
-  fn cmp(&self, other: &RedisKey) -> Ordering {
-    self.key.cmp(&other.key)
-  }
-}
-
-impl PartialOrd for RedisKey {
-  fn partial_cmp(&self, other: &RedisKey) -> Option<Ordering> {
-    Some(self.key.cmp(&other.key))
-  }
 }
 
 impl From<String> for RedisKey {
@@ -408,67 +372,7 @@ impl<'a> From<&'a str> for RedisKey {
 
 impl<'a> From<&'a String> for RedisKey {
   fn from(s: &'a String) -> RedisKey {
-    RedisKey { key: s.clone() }
-  }
-}
-
-impl From<u8> for RedisKey {
-  fn from(i: u8) -> Self {
-    RedisKey { key: i.to_string() }
-  }
-}
-
-impl From<u16> for RedisKey {
-  fn from(i: u16) -> Self {
-    RedisKey { key: i.to_string() }
-  }
-}
-
-impl From<u32> for RedisKey {
-  fn from(i: u32) -> Self {
-    RedisKey { key: i.to_string() }
-  }
-}
-
-impl From<u64> for RedisKey {
-  fn from(i: u64) -> Self {
-    RedisKey { key: i.to_string() }
-  }
-}
-
-impl From<i8> for RedisKey {
-  fn from(i: i8) -> Self {
-    RedisKey { key: i.to_string() }
-  }
-}
-
-impl From<i16> for RedisKey {
-  fn from(i: i16) -> Self {
-    RedisKey { key: i.to_string() }
-  }
-}
-
-impl From<i32> for RedisKey {
-  fn from(i: i32) -> Self {
-    RedisKey { key: i.to_string() }
-  }
-}
-
-impl From<i64> for RedisKey {
-  fn from(i: i64) -> Self {
-    RedisKey { key: i.to_string() }
-  }
-}
-
-impl From<f32> for RedisKey {
-  fn from(i: f32) -> Self {
-    RedisKey { key: i.to_string() }
-  }
-}
-
-impl From<f64> for RedisKey {
-  fn from(i: f64) -> Self {
-    RedisKey { key: i.to_string() }
+    RedisKey { key: s.to_owned() }
   }
 }
 
@@ -506,7 +410,7 @@ impl<T: Into<RedisKey>> From<T> for MultipleKeys {
 impl<T: Into<RedisKey>> From<Vec<T>> for MultipleKeys {
   fn from(mut d: Vec<T>) -> Self {
     MultipleKeys {
-      keys: d.drain(..).map(|k| k.into()).collect()
+      keys: d.into_iter().map(|k| k.into()).collect()
     }
   }
 }
@@ -514,7 +418,7 @@ impl<T: Into<RedisKey>> From<Vec<T>> for MultipleKeys {
 impl<T: Into<RedisKey>> From<VecDeque<T>> for MultipleKeys {
   fn from(mut d: VecDeque<T>) -> Self {
     MultipleKeys {
-      keys: d.drain(..).map(|k| k.into()).collect()
+      keys: d.into_iter().map(|k| k.into()).collect()
     }
   }
 }
@@ -524,32 +428,20 @@ impl<T: Into<RedisKey>> From<VecDeque<T>> for MultipleKeys {
 pub enum RedisValueKind {
   Integer,
   String,
-  Null,
-  #[doc(hidden)]
-  List,
-  #[doc(hidden)]
-  Set,
-  #[doc(hidden)]
-  Map
+  Null
 }
 
 /// A value used in a Redis command.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub enum RedisValue {
   Integer(i64),
   String(String),
-  Null,
-  #[doc(hidden)]
-  List(Vec<RedisValue>),
-  #[doc(hidden)]
-  Set(HashSet<RedisValue>),
-  #[doc(hidden)]
-  Map(HashMap<RedisKey, RedisValue>)
+  Null
 }
 
 impl RedisValue {
 
-  /// Returns the original string as an error if the parsing fails, otherwise this consumes the original string.
+  /// Attempt to convert the value into an integer, returning the original string as an error if the parsing fails, otherwise this consumes the original string.
   pub fn into_integer(self) -> Result<RedisValue, RedisValue> {
     match self {
       RedisValue::String(s) => {
@@ -567,9 +459,6 @@ impl RedisValue {
     match *self {
       RedisValue::Integer(_)   => RedisValueKind::Integer,
       RedisValue::String(_)    => RedisValueKind::String,
-      RedisValue::Set(_)       => RedisValueKind::Set,
-      RedisValue::List(_)      => RedisValueKind::List,
-      RedisValue::Map(_)       => RedisValueKind::Map,
       RedisValue::Null         => RedisValueKind::Null
     }
   }
@@ -601,37 +490,38 @@ impl RedisValue {
   /// Check if the inner string value can be coerced to an `f64`.
   pub fn is_float(&self) -> bool {
     match *self {
-      RedisValue::String(ref s) => match s.parse::<f64>() {
-        Ok(_) => true,
-        Err(_) => false,
-      },
+      RedisValue::String(ref s) => s.parse::<f64>().is_ok(),
       _ => false
     }
   }
 
   /// Read and return the inner value as a `u64`, if possible.
-  pub fn into_u64(self) -> Option<u64> {
+  pub fn as_u64(&self) -> Option<u64> {
     match self{
-      RedisValue::Integer(i) => Some(i as u64),
+      RedisValue::Integer(ref i) => if *i >= 0 {
+        Some(*i as u64)
+      }else{
+        None
+      },
+      RedisValue::String(ref s) => s.parse::<u64>().ok(),
       _ => None
     }
   }
 
   ///  Read and return the inner value as a `i64`, if possible.
-  pub fn into_i64(self) -> Option<i64> {
+  pub fn as_i64(&self) -> Option<i64> {
     match self{
-      RedisValue::Integer(i) => Some(i),
+      RedisValue::Integer(ref i) => Some(*i),
+      RedisValue::String(ref s) => s.parse::<i64>().ok(),
       _ => None
     }
   }
 
   ///  Read and return the inner value as a `f64`, if possible.
-  pub fn into_f64(self) -> Option<f64> {
+  pub fn as_f64(&self) -> Option<f64> {
     match self{
-      RedisValue::String(s) => match s.parse::<f64>() {
-        Ok(f) => Some(f),
-        Err(_) => None
-      },
+      RedisValue::String(ref s) => s.parse::<f64>().ok(),
+      RedisValue::Integer(ref i) => Some(*i as f64),
       _ => None
     }
   }
@@ -644,6 +534,14 @@ impl RedisValue {
       _ => None
     }
   }
+  /// Read and return the inner `String` if the value is a string or integer.
+  pub fn as_string(&self) -> Option<String> {
+    match self {
+      RedisValue::String(ref s) => Some(s.to_owned()),
+      RedisValue::Integer(ref i) => Some(i.to_string()),
+      _ => None
+    }
+  }
 
   /// Convert from a `u64` to the `i64` representation used by Redis. This can fail due to overflow so it is not implemented via the From trait.
   pub fn from_u64(d: u64) -> Result<RedisValue, RedisError> {
@@ -653,7 +551,7 @@ impl RedisValue {
       ));
     }
 
-    Ok((d as i64).into())  
+    Ok((d as i64).into())
   }
 
   pub fn from_usize(d: usize) -> Result<RedisValue, RedisError> {
@@ -673,52 +571,16 @@ impl RedisValue {
 
 }
 
-impl PartialEq for RedisValue {
-  
-  fn eq(&self, other: &RedisValue) -> bool {
-    match *self {
-      RedisValue::Integer(d) => match *other {
-        RedisValue::Integer(_d) => d == _d,
-        _ => false
-      },
-      RedisValue::String(ref d) => match *other {
-        RedisValue::String(ref _d) => d == _d,
-        _ => false
-      },
-      RedisValue::Null => match *other {
-        RedisValue::Null => true,
-        _ => false
-      },
-      RedisValue::Set(ref s) => match *other {
-        RedisValue::Set(ref _s) => s == _s,
-        _ => false
-      },
-      RedisValue::List(ref s) => match *other {
-        RedisValue::List(ref _s) => s == _s,
-        _ => false
-      },
-      RedisValue::Map(ref s) => match *other {
-        RedisValue::Map(ref _s) => s == _s,
-        _ => false
-      }
-    }
-  }
-}
-
-impl Eq for RedisValue {}
-
 impl Hash for RedisValue {
   fn hash<H: Hasher>(&self, state: &mut H) {
     match *self {
       RedisValue::Integer(d)     => d.hash(state),
       RedisValue::String(ref s)  => s.hash(state),
       RedisValue::Null           => NULL.hash(state),
-      RedisValue::Set(_)         => panic!("unreachable. this is a bug."),
-      RedisValue::List(_)        => panic!("unreachable. this is a bug."),
-      RedisValue::Map(_)         => panic!("unreachable. this is a bug.")
     }
   }
 }
+
 
 impl From<u8> for RedisValue {
   fn from(d: u8) -> RedisValue {
@@ -805,55 +667,4 @@ impl From<RedisKey> for RedisValue {
   fn from(d: RedisKey) -> RedisValue {
     RedisValue::String(d.into_string())
   }
-}
-
-impl<T: Into<RedisValue>> From<Vec<T>> for RedisValue {
-  fn from(mut d: Vec<T>) -> Self {
-    let val: Vec<RedisValue> = d.drain(..)
-      .map(|c| c.into())
-      .collect();
-
-    RedisValue::List(val)
-  }
-}
-
-impl<T: Hash + Eq + Into<RedisValue>> From<HashSet<T>> for RedisValue {
-  fn from(mut s: HashSet<T>) -> Self {
-    let mut out: HashSet<RedisValue> = HashSet::with_capacity(s.len());
-
-    for val in s.drain() {
-      out.insert(val.into());
-    }
-
-    RedisValue::Set(out)
-  }
-}
-
-impl<K: Hash + Eq + Into<RedisKey>, V: Into<RedisValue>> From<HashMap<K, V>> for RedisValue {
-  fn from(mut m: HashMap<K, V>) -> Self {
-    let mut out: HashMap<RedisKey, RedisValue> = HashMap::with_capacity(m.len());
-
-    for (key, val) in m.drain() {
-      out.insert(key.into(), val.into());
-    }
-
-    RedisValue::Map(out)
-  }
-}
-
-// --------------------------
-
-#[cfg(test)]
-mod test {
-  #![allow(dead_code)]
-  #![allow(unused_imports)]
-  #![allow(unused_variables)]
-  #![allow(unused_mut)]
-  #![allow(deprecated)]
-  #![allow(unused_macros)]
-
-  use super::*;
-
-
-
 }

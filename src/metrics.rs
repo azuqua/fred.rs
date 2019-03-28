@@ -1,6 +1,4 @@
 
-use chrono::prelude::*;
-
 use std::sync::Arc;
 use parking_lot::RwLock;
 use std::ops::{
@@ -8,88 +6,43 @@ use std::ops::{
   DerefMut
 };
 
-use std::cmp::{min, max};
+use std::cmp;
 
-#[doc(hidden)]
-pub fn now_utc_ms() -> Option<i64> {
-  let time = Utc::now();
-  Some(time.timestamp() * 1000 + (time.timestamp_subsec_millis() as i64))
-}
+use std::time::{
+  Instant,
+  Duration
+};
 
-#[doc(hidden)]
-pub fn sample_latency(tracker: &Arc<RwLock<LatencyTracker>>, latency: i64) {
-  let mut tracker_guard = tracker.write();
-  tracker_guard.deref_mut().sample(latency);
-}
-
-#[doc(hidden)]
-pub fn sample_size(tracker: &Arc<RwLock<SizeTracker>>, size: u64) {
-  let mut tracker_guard = tracker.write();
-  tracker_guard.deref_mut().sample(size);
-}
-
-#[doc(hidden)]
-pub fn read_latency_stats(tracker: &Arc<RwLock<LatencyTracker>>) -> LatencyMetrics {
-  let tracker_guard = tracker.read();
-  tracker_guard.deref().read_metrics()
-}
-
-#[doc(hidden)]
-pub fn read_size_stats(tracker: &Arc<RwLock<SizeTracker>>) -> SizeMetrics {
-  let tracker_guard = tracker.read();
-  tracker_guard.deref().read_metrics()
-}
-
-#[doc(hidden)]
-pub fn take_latency_stats(tracker: &Arc<RwLock<LatencyTracker>>) -> LatencyMetrics {
-  let mut tracker_guard = tracker.write();
-  tracker_guard.deref_mut().take_metrics()
-}
-
-#[doc(hidden)]
-pub fn take_size_stats(tracker: &Arc<RwLock<SizeTracker>>) -> SizeMetrics {
-  let mut tracker_guard = tracker.write();
-  tracker_guard.deref_mut().take_metrics()
-}
-
-/// Latency metrics across all Redis commands, measured in milliseconds.
-#[derive(Clone, Debug)]
-pub struct LatencyMetrics {
-  pub min: i64,
-  pub max: i64,
-  pub avg: f64,
-  pub stddev: f64,
-  pub samples: usize
-}
-
-/// Payload size metrics across all Redis commands, measured in bytes.
-#[derive(Clone, Debug)]
-pub struct SizeMetrics {
+/// Stats describing a distribution of samples.
+pub struct DistributionStats {
   pub min: u64,
   pub max: u64,
   pub avg: f64,
   pub stddev: f64,
-  pub samples: usize
+  pub samples: u64,
+  pub sum: u64
 }
 
-#[doc(hidden)]
-pub struct LatencyTracker {
+/// Stats describing latency metrics for requests.
+pub struct LatencyStats {
   pub min: i64,
   pub max: i64,
   pub avg: f64,
   pub variance: f64,
   pub samples: usize,
+  pub sum: u64,
   old_avg: f64,
   s: f64,
   old_s: f64
 }
 
-impl Default for LatencyTracker {
+impl Default for LatencyStats {
   fn default() -> Self {
-    LatencyTracker {
+    LatencyStats {
       min: 0,
       max: 0,
       avg: 0.0,
+      sum: 0,
       variance: 0.0,
       samples: 0,
       s: 0.0,
@@ -99,12 +52,13 @@ impl Default for LatencyTracker {
   }
 }
 
-impl LatencyTracker {
+impl LatencyStats {
 
   pub fn sample(&mut self, latency: i64) {
     self.samples += 1;
     let latency_count = self.samples as f64;
     let latency_f = latency as f64;
+    self.sum += cmp::max(0, latency) as u64;
 
     if self.samples == 1 {
       self.avg = latency_f;
@@ -121,8 +75,8 @@ impl LatencyTracker {
       self.old_s = self.s;
       self.variance = self.s/(latency_count - 1.0);
 
-      self.min = min(self.min, latency);
-      self.max = max(self.max, latency);
+      self.min = cmp::min(self.min, latency);
+      self.max = cmp::max(self.max, latency);
     }
   }
 
@@ -132,22 +86,17 @@ impl LatencyTracker {
     self.avg = 0.0;
     self.variance = 0.0;
     self.samples = 0;
+    self.sum = 0;
     self.s = 0.0;
     self.old_s = 0.0;
     self.old_avg = 0.0;
   }
 
-  pub fn read_metrics(&self) -> LatencyMetrics {
-    LatencyMetrics {
-      min: self.min,
-      max: self.max,
-      avg: self.avg,
-      stddev: self.variance.sqrt(),
-      samples: self.samples
-    }
+  pub fn read_metrics(&self) -> DistributionStats {
+    self.into()
   }
 
-  pub fn take_metrics(&mut self) -> LatencyMetrics {
+  pub fn take_metrics(&mut self) -> DistributionStats {
     let metrics = self.read_metrics();
     self.reset();
     metrics
@@ -155,26 +104,41 @@ impl LatencyTracker {
 
 }
 
-#[doc(hidden)]
-pub struct SizeTracker {
+impl<'a> From<&'a LatencyStats> for DistributionStats {
+  fn from(stats: &'a LatencyStats) -> DistributionStats {
+    DistributionStats {
+      avg: stats.avg,
+      stddev: stats.variance.sqrt(),
+      min: cmp::max(stats.min, 0) as u64,
+      max: cmp::max(stats.max, 0) as u64,
+      samples: stats.samples as u64,
+      sum: stats.sum,
+    }
+  }
+}
+
+/// Stats describing sizes (in bytes) for requests or responses.
+pub struct SizeStats {
   pub min: u64,
   pub max: u64,
   pub avg: f64,
   pub variance: f64,
   pub samples: usize,
+  pub sum: u64,
   old_avg: f64,
   s: f64,
   old_s: f64
 }
 
-impl Default for SizeTracker {
+impl Default for SizeStats {
   fn default() -> Self {
-    SizeTracker {
+    SizeStats {
       min: 0,
       max: 0,
       avg: 0.0,
       variance: 0.0,
       samples: 0,
+      sum: 0,
       s: 0.0,
       old_s: 0.0,
       old_avg: 0.0
@@ -182,12 +146,13 @@ impl Default for SizeTracker {
   }
 }
 
-impl SizeTracker {
+impl SizeStats {
 
   pub fn sample(&mut self, size: u64) {
     self.samples += 1;
     let size_count = self.samples as f64;
     let size_f = size as f64;
+    self.sum += size;
 
     if self.samples == 1 {
       self.avg = size_f;
@@ -204,8 +169,8 @@ impl SizeTracker {
       self.old_s = self.s;
       self.variance = self.s/(size_count - 1.0);
 
-      self.min = min(self.min, size);
-      self.max = max(self.max, size);
+      self.min = cmp::min(self.min, size);
+      self.max = cmp::max(self.max, size);
     }
   }
 
@@ -215,25 +180,33 @@ impl SizeTracker {
     self.avg = 0.0;
     self.variance = 0.0;
     self.samples = 0;
+    self.sum = 0;
     self.s = 0.0;
     self.old_s = 0.0;
     self.old_avg = 0.0;
   }
 
-  pub fn read_metrics(&self) -> SizeMetrics {
-    SizeMetrics {
-      min: self.min,
-      max: self.max,
-      avg: self.avg,
-      stddev: self.variance.sqrt(),
-      samples: self.samples
-    }
+  pub fn read_metrics(&self) -> DistributionStats {
+    self.into()
   }
 
-  pub fn take_metrics(&mut self) -> SizeMetrics {
+  pub fn take_metrics(&mut self) -> DistributionStats {
     let metrics = self.read_metrics();
     self.reset();
     metrics
   }
 
+}
+
+impl<'a> From<&'a SizeStats> for DistributionStats {
+  fn from(stats: &'a SizeStats) -> DistributionStats {
+    DistributionStats {
+      avg: stats.avg,
+      stddev: stats.variance.sqrt(),
+      min: stats.min,
+      max: stats.max,
+      samples: stats.samples as u64,
+      sum: stats.sum
+    }
+  }
 }

@@ -10,6 +10,8 @@ extern crate tokio_core;
 extern crate futures;
 
 use fred::RedisClient;
+use fred::owned::RedisClientOwned;
+
 use fred::types::*;
 use fred::error::*;
 
@@ -30,18 +32,19 @@ use std::time::Duration;
 const MESSAGE_COUNT: u32 = 5;
 
 fn main() {
+  let timer = Timer::default();
+
   let publisher_config = RedisConfig::default();
   let subscriber_config = RedisConfig::default();
 
   let mut core = Core::new().unwrap();
   let handle = core.handle();
-  let timer = Timer::default();
 
   println!("Publisher connecting to {:?}...", publisher_config);
   println!("Subscriber connecting to {:?}...", subscriber_config);
 
-  let publisher = RedisClient::new(publisher_config);
-  let subscriber = RedisClient::new(subscriber_config);
+  let publisher = RedisClient::new(publisher_config, Some(timer.clone()));
+  let subscriber = RedisClient::new(subscriber_config, Some(timer.clone()));
 
   let publisher_connection = publisher.connect(&handle);
   let subscriber_connection = subscriber.connect(&handle);

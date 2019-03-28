@@ -7,6 +7,8 @@ extern crate tokio_timer_patched as tokio_timer;
 extern crate futures;
 
 use fred::RedisClient;
+use fred::owned::RedisClientOwned;
+
 use fred::types::*;
 use fred::error::*;
 
@@ -25,6 +27,8 @@ use tokio_timer::Timer;
 use std::time::Duration;
 
 fn main() {
+  let timer = Timer::default();
+
   let foo_config = RedisConfig::default();
   let bar_config = RedisConfig::default();
   let baz_config = RedisConfig::default();
@@ -32,9 +36,9 @@ fn main() {
   let mut core = Core::new().unwrap();
   let handle = core.handle();
 
-  let foo_client = RedisClient::new(foo_config);
-  let bar_client = RedisClient::new(bar_config);
-  let baz_client = RedisClient::new(baz_config);
+  let foo_client = RedisClient::new(foo_config, Some(timer.clone()));
+  let bar_client = RedisClient::new(bar_config, Some(timer.clone()));
+  let baz_client = RedisClient::new(baz_config, Some(timer.clone()));
 
   let foo_connection = foo_client.connect(&handle);
   let bar_connection = bar_client.connect(&handle);

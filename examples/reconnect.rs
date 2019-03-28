@@ -11,6 +11,8 @@ extern crate log;
 extern crate pretty_env_logger;
 
 use fred::RedisClient;
+use fred::owned::RedisClientOwned;
+
 use fred::types::*;
 use fred::error::*;
 
@@ -22,7 +24,7 @@ use futures::stream::Stream;
 use std::time::Duration;
 
 fn main() {
-  pretty_env_logger::init().unwrap();
+  pretty_env_logger::init();
 
   let config = RedisConfig::default();
   let policy = ReconnectPolicy::Constant {
@@ -37,7 +39,7 @@ fn main() {
 
   println!("Connecting to {:?} with policy {:?}", config, policy);
 
-  let client = RedisClient::new(config);
+  let client = RedisClient::new(config, Some(timer.clone()));
   let connection = client.connect_with_policy(&handle, policy);
 
   let errors = client.on_error().for_each(|err| {
