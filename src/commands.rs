@@ -21,12 +21,11 @@ use std::ops::{
   Deref,
   DerefMut
 };
-use url::quirks::protocol;
 
 const ASYNC: &'static str = "ASYNC";
 
 pub fn quit(inner: &Arc<RedisClientInner>) -> Box<Future<Item=(), Error=RedisError>> {
-  debug!("Closing Redis connection.");
+  debug!("Closing Redis connection with Quit command.");
 
   // need to lock the closed flag so any reconnect logic running in another thread doesn't screw this up,
   // but we also don't want to hold the lock if the client is connected
@@ -34,6 +33,7 @@ pub fn quit(inner: &Arc<RedisClientInner>) -> Box<Future<Item=(), Error=RedisErr
     let mut closed_guard = inner.closed.write();
     let mut closed_ref = closed_guard.deref_mut();
 
+    debug!("Checking client state in quit command: {:?}", utils::read_client_state(&inner.state));
     if utils::read_client_state(&inner.state) != ClientState::Connected {
       if *closed_ref {
         // client is already waiting to quit
@@ -55,6 +55,7 @@ pub fn quit(inner: &Arc<RedisClientInner>) -> Box<Future<Item=(), Error=RedisErr
   multiplexer_utils::close_connect_tx(&inner.connect_tx);
 
   if exit_early {
+    debug!("Exit early in quit command.");
     utils::future_ok(())
   }else{
     Box::new(utils::request_response(&inner, || {

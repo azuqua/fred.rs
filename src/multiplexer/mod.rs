@@ -190,6 +190,7 @@ impl Multiplexer {
     };
 
     if request.kind == RedisCommandKind::Quit {
+      debug!("Writing Quit command.");
       self.sinks.quit(frame)
     }else{
       self.sinks.write_command(key, frame, no_cluster)
@@ -212,6 +213,7 @@ impl Multiplexer {
       }
     };
     let final_self = self.clone();
+    let final_inner = self.inner.clone();
 
     let inner = self.inner.clone();
     let last_request = self.last_request.clone();
@@ -235,7 +237,21 @@ impl Multiplexer {
         Ok((inner, last_request, last_request_sent, last_command_callback))
       }
     })
-    .then(move |result| {
+    .then(move |mut result| {
+      if let Err(ref e) = result {
+        debug!("Multiplexer frame stream closed with error? {:?}", e);
+      }else{
+        debug!("Multiplexer frame stream closed without error.");
+      }
+
+      if let Ok((ref inner, _, _, _)) = result {
+        if client_utils::read_client_state(&inner.state) != ClientState::Disconnecting {
+          // if the connection died but the state is not Disconnecting then the user didn't `quit`, so this should be handled as an error so a reconnect occurs
+          result = Err(RedisError::new(RedisErrorKind::IO, "Connection closed abruptly."));
+        }
+      }
+      client_utils::set_client_state(&final_inner.state, ClientState::Disconnected);
+
       streams.close();
       sinks.close();
 
@@ -253,14 +269,28 @@ impl Multiplexer {
           Ok(())
         },
         Err(e) => {
+          debug!("Handling error on multiplexer frame stream: {:?}", e);
+
           // send a message to the command stream processing loop with the last message and the error when the stream closed
           let last_command_callback = match final_last_command_callback.borrow_mut().take() {
             Some(tx) => tx,
-            None => return Ok(())
+            None => {
+              debug!("Couldn't find last command callback on error in multiplexer frame stream.");
+
+              // since there's no request pending in the command stream we have to send a message via the message queue in order to force a reconnect event to occur.
+              if let Some(ref tx) = final_inner.command_tx.read().deref() {
+                tx.unbounded_send(RedisCommand::new(RedisCommandKind::_Close, vec![], None));
+              }
+
+              return Ok(());
+            }
           };
           let last_command = match final_last_request.borrow_mut().take() {
             Some(cmd) => cmd,
-            None => return Ok(())
+            None => {
+              warn!("Couldn't find last command on error in multiplexer frame stream.");
+              return Ok(());
+            }
           };
 
           if let Err(e) = last_command_callback.send(Some((last_command, e))) {

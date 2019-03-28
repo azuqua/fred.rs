@@ -1,10 +1,10 @@
 Fred
 ====
 
+[![LICENSE](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Build Status](https://travis-ci.org/azuqua/fred.rs.svg?branch=master)](https://travis-ci.org/azuqua/fred.rs)
 [![Crates.io](https://img.shields.io/crates/v/fred.svg)](https://crates.io/crates/fred)
-
-[Documentation](https://docs.rs/fred/*/fred/)
+[![API docs](https://docs.rs/fred/badge.svg)](https://docs.rs/fred)
 
 A Redis client for Rust based on [Futures](https://github.com/alexcrichton/futures-rs) and [Tokio](https://tokio.rs/) that supports PubSub commands, clustered Redis deployments, and more.
 

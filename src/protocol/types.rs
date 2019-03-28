@@ -252,6 +252,13 @@ impl RedisCommandKind {
     }
   }
 
+  pub fn is_close(&self) -> bool {
+    match *self {
+      RedisCommandKind::_Close => true,
+      _ => false
+    }
+  }
+
   pub fn take_split(&mut self) -> Result<SplitCommand, RedisError> {
     match *self {
       RedisCommandKind::_Split(ref mut inner) => match inner.take() {
