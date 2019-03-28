@@ -22,6 +22,9 @@ use std::ops::{
   DerefMut
 };
 
+use std::hash::Hash;
+use std::collections::HashMap;
+
 const ASYNC: &'static str = "ASYNC";
 
 pub fn quit(inner: &Arc<RedisClientInner>) -> Box<Future<Item=(), Error=RedisError>> {
@@ -346,3 +349,590 @@ pub fn decrby<V: Into<RedisValue>, K: Into<RedisKey>>(inner: &Arc<RedisClientInn
   }))
 }
 
+// TODO
+
+pub fn ping(inner: &Arc<RedisClientInner>) -> Box<Future<Item=String, Error=RedisError>> {
+  debug!("Pinging Redis server.");
+
+  Box::new(utils::request_response(inner, move || {
+    Ok((RedisCommandKind::Ping, vec![]))
+  }).and_then(|frame| {
+    debug!("Received Redis ping response.");
+
+    match protocol_utils::frame_to_single_result(frame) {
+      Ok(resp) => {
+        let kind = resp.kind();
+
+        match resp.into_string() {
+          Some(s) => Ok(s),
+          None => Err(RedisError::new(
+            RedisErrorKind::Unknown, format!("Invalid PING response. Expected String, found {:?}", kind)
+          ))
+        }
+      },
+      Err(e) => Err(e)
+    }
+  }))
+}
+
+pub fn auth<V: Into<String>>(inner: &Arc<RedisClientInner>, value: V) -> Box<Future<Item=String, Error=RedisError>> {
+  let value = value.into();
+
+  Box::new(utils::request_response(inner, move || {
+    Ok((RedisCommandKind::Auth, vec![value.into()]))
+  }).and_then(|frame| {
+    let resp = protocol_utils::frame_to_single_result(frame)?;
+
+    match resp.into_string() {
+      Some(s) => Ok(s),
+      None => Err(RedisError::new(
+        RedisErrorKind::Auth, "AUTH denied."
+      ))
+    }
+  }))
+}
+
+pub fn bgrewriteaof(inner: &Arc<RedisClientInner>) -> Box<Future<Item=String, Error=RedisError>> {
+  Box::new(utils::request_response(inner, move || {
+    Ok((RedisCommandKind::BgreWriteAof, vec![]))
+  }).and_then(|frame| {
+    let resp = protocol_utils::frame_to_single_result(frame)?;
+
+    match resp.into_string() {
+      Some(s) => Ok(s),
+      None => Err(RedisError::new(
+        RedisErrorKind::ProtocolError, "Invalid BGREWRITEAOF response."
+      ))
+    }
+  }))
+}
+
+pub fn bgsave(inner: &Arc<RedisClientInner>) -> Box<Future<Item=String, Error=RedisError>> {
+  Box::new(utils::request_response(inner, move || {
+    Ok((RedisCommandKind::BgSave, vec![]))
+  }).and_then(|frame| {
+    let resp = protocol_utils::frame_to_single_result(frame)?;
+
+    match resp.into_string() {
+      Some(s) => Ok(s),
+      None => Err(RedisError::new(
+        RedisErrorKind::ProtocolError, "Invalid BGSAVE response."
+      ))
+    }
+  }))
+}
+
+pub fn client_list(inner: &Arc<RedisClientInner>) -> Box<Future<Item=String, Error=RedisError>> {
+  Box::new(utils::request_response(inner, move || {
+    let args = vec![];
+
+    Ok((RedisCommandKind::ClientList, args))
+  }).and_then(|frame| {
+    let resp = protocol_utils::frame_to_single_result(frame)?;
+
+    match resp.into_string() {
+      Some(s) => Ok(s),
+      None => Err(RedisError::new(
+        RedisErrorKind::ProtocolError, "Invalid CLIENTLIST response."
+      ))
+    }
+  }))
+}
+
+pub fn client_getname(inner: &Arc<RedisClientInner>) -> Box<Future<Item=Option<String>, Error=RedisError>> {
+  Box::new(utils::request_response(inner, move || {
+    Ok((RedisCommandKind::ClientGetName, vec![]))
+  }).and_then(|frame| {
+    let resp = protocol_utils::frame_to_single_result(frame)?;
+
+    match resp.into_string() {
+      Some(s) => Ok(Some(s)),
+      None => Ok(None)
+    }
+  }))
+}
+
+pub fn client_setname<V: Into<String>>(inner: &Arc<RedisClientInner>, name: V) -> Box<Future<Item=Option<String>, Error=RedisError>> {
+  let name = name.into();
+
+  Box::new(utils::request_response(inner, move || {
+    Ok((RedisCommandKind::ClientSetname, vec![name.into()]))
+  }).and_then(|frame| {
+    let resp = protocol_utils::frame_to_single_result(frame)?;
+
+    match resp.into_string() {
+      Some(s) => Ok(Some(s)),
+      None => Ok(None)
+    }
+  }))
+}
+
+pub fn dbsize(inner: &Arc<RedisClientInner>) -> Box<Future<Item=usize, Error=RedisError>> {
+  Box::new(utils::request_response(inner, move || {
+    Ok((RedisCommandKind::DBSize, vec![]))
+  }).and_then(|frame| {
+    let resp = protocol_utils::frame_to_single_result(frame)?;
+
+    match resp {
+      RedisValue::Integer(num) => Ok(num as usize),
+      _ => Err(RedisError::new(
+        RedisErrorKind::ProtocolError, "Invalid DBSIZE response."
+      ))
+    }
+  }))
+}
+
+pub fn dump<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Box<Future<Item=Option<String>, Error=RedisError>> {
+  let key = key.into();
+
+  Box::new(utils::request_response(inner, move || {
+    Ok((RedisCommandKind::Dump, vec![key.into()]))
+  }).and_then(|frame| {
+    let resp = protocol_utils::frame_to_single_result(frame)?;
+
+    match resp {
+      RedisValue::String(s) => Ok(Some(s)),
+      RedisValue::Null => Ok(None),
+      _ => Err(RedisError::new(
+        RedisErrorKind::ProtocolError, "Invalid DUMP response."
+      ))
+    }
+  }))
+}
+
+pub fn exists<K: Into<MultipleKeys>>(inner: &Arc<RedisClientInner>, keys: K) -> Box<Future<Item=usize, Error=RedisError>> {
+  let mut keys = keys.into().inner();
+
+  Box::new(utils::request_response(inner, move || {
+    let args: Vec<RedisValue> = keys.drain(..).map(|k| k.into()).collect();
+
+    Ok((RedisCommandKind::Exists, args))
+  }).and_then(|frame| {
+    let resp = protocol_utils::frame_to_single_result(frame)?;
+
+    match resp {
+      RedisValue::Integer(num) => Ok(num as usize),
+      _ => Err(RedisError::new(
+        RedisErrorKind::ProtocolError, "Invalid EXISTS response."
+      ))
+    }
+  }))
+}
+
+pub fn expire<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, seconds: i64) -> Box<Future<Item=bool, Error=RedisError>> {
+  let key = key.into();
+
+  Box::new(utils::request_response(inner, move || {
+    Ok((RedisCommandKind::Expire, vec![
+      key.into(),
+      seconds.into()
+    ]))
+  }).and_then(|frame| {
+    let resp = protocol_utils::frame_to_single_result(frame)?;
+
+    match resp {
+      RedisValue::Integer(num) => match num {
+        0 => Ok(false),
+        1 => Ok(true),
+        _ => Err(RedisError::new(
+          RedisErrorKind::ProtocolError, "Invalid EXPIRE response value."
+        ))
+      },
+      _ => Err(RedisError::new(
+        RedisErrorKind::ProtocolError, "Invalid EXPIRE response."
+      ))
+    }
+  }))
+}
+
+pub fn expire_at<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, timestamp: i64) -> Box<Future<Item=bool, Error=RedisError>> {
+  let key = key.into();
+
+  Box::new(utils::request_response(inner, move || {
+    let args = vec![key.into(), timestamp.into()];
+
+    Ok((RedisCommandKind::ExpireAt, args))
+  }).and_then(|frame| {
+    let resp = protocol_utils::frame_to_single_result(frame)?;
+
+    match resp {
+      RedisValue::Integer(num) => match num {
+        0 => Ok(false),
+        1 => Ok(true),
+        _ => Err(RedisError::new(
+          RedisErrorKind::ProtocolError, "Invalid EXPIREAT response value."
+        ))
+      },
+      _ => Err(RedisError::new(
+        RedisErrorKind::ProtocolError, "Invalid EXPIREAT response."
+      ))
+    }
+  }))
+}
+
+pub fn flushdb(inner: &Arc<RedisClientInner>, _async: bool) -> Box<Future<Item=String, Error=RedisError>> {
+  let args = if _async {
+    vec![ASYNC.into()]
+  }else{
+    Vec::new()
+  };
+
+  Box::new(utils::request_response(inner, move || {
+    Ok((RedisCommandKind::FlushDB, args))
+  }).and_then(|frame| {
+    let resp = protocol_utils::frame_to_single_result(frame)?;
+
+    match resp {
+      RedisValue::String(s) => Ok(s),
+      _ => Err(RedisError::new(
+        RedisErrorKind::ProtocolError, "Invalid FLUSHALLDB response."
+      ))
+    }
+  }))
+}
+
+pub fn getrange<K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K, start: usize, end: usize) -> Box<Future<Item=String, Error=RedisError>> {
+  let key = key.into();
+  let start = fry!(RedisValue::from_usize(start));
+  let end = fry!(RedisValue::from_usize(end));
+
+  let args = vec![
+    key.into(),
+    start,
+    end
+  ];
+
+  Box::new(utils::request_response(inner, move || {
+    Ok((RedisCommandKind::GetRange, args))
+  }).and_then(|frame| {
+    let resp = protocol_utils::frame_to_single_result(frame)?;
+
+    match resp {
+      RedisValue::String(s) => Ok(s),
+      _ => Err(RedisError::new(
+        RedisErrorKind::ProtocolError, "Invalid GETRANGE response."
+      ))
+    }
+  }))
+}
+
+pub fn getset<V: Into<RedisValue>, K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K, value: V) -> Box<Future<Item=Option<RedisValue>, Error=RedisError>> {
+  let (key, value) = (key.into(), value.into());
+
+  Box::new(utils::request_response(inner, move || {
+    let args: Vec<RedisValue> = vec![key.into(), value.into()];
+
+    Ok((RedisCommandKind::GetSet, args))
+  }).and_then(|frame| {
+    let resp = protocol_utils::frame_to_single_result(frame)?;
+
+    match resp {
+      RedisValue::Null => Ok(None),
+      _ => Ok(Some(resp))
+    }
+  }))
+}
+
+pub fn hdel<F: Into<MultipleKeys>, K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K, fields: F) -> Box<Future<Item=usize, Error=RedisError>> {
+  let key = key.into();
+  let mut fields = fields.into().inner();
+
+  Box::new(utils::request_response(inner, move || {
+    let mut args: Vec<RedisValue> = Vec::with_capacity(fields.len() + 1);
+    args.push(key.into());
+
+    for field in fields.drain(..) {
+      args.push(field.into());
+    }
+
+    Ok((RedisCommandKind::HDel, args))
+  }).and_then(|frame| {
+    let resp = protocol_utils::frame_to_single_result(frame)?;
+
+    match resp {
+      RedisValue::Integer(num) => Ok(num as usize),
+      _ => Err(RedisError::new(
+        RedisErrorKind::ProtocolError, "Invalid HDEL response."
+      ))
+    }
+  }))
+}
+
+pub fn hexists<F: Into<RedisKey>, K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K, field: F) -> Box<Future<Item=bool, Error=RedisError>> {
+  let key = key.into();
+  let field = field.into();
+
+  Box::new(utils::request_response(inner, move || {
+    let args: Vec<RedisValue> = vec![key.into(), field.into()];
+
+    Ok((RedisCommandKind::HExists, args))
+  }).and_then(|frame| {
+    let resp = protocol_utils::frame_to_single_result(frame)?;
+
+    match resp {
+      RedisValue::Integer(num) => match num {
+        0 => Ok(false),
+        1 => Ok(true),
+        _ => Err(RedisError::new(
+          RedisErrorKind::Unknown, "Invalid HEXISTS response value."
+        ))
+      },
+      _ => Err(RedisError::new(
+        RedisErrorKind::ProtocolError, "Invalid HEXISTS response."
+      ))
+    }
+  }))
+}
+
+pub fn hget<F: Into<RedisKey>, K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K, field: F) -> Box<Future<Item=Option<RedisValue>, Error=RedisError>> {
+  let key = key.into();
+  let field = field.into();
+
+  Box::new(utils::request_response(inner, move || {
+    let args: Vec<RedisValue> = vec![key.into(), field.into()];
+
+    Ok((RedisCommandKind::HGet, args))
+  }).and_then(|frame| {
+    let resp = protocol_utils::frame_to_single_result(frame)?;
+
+    match resp {
+      RedisValue::Null => Ok(None),
+      _ => Ok(Some(resp))
+    }
+  }))
+}
+
+pub fn hgetall<K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K) -> Box<Future<Item=HashMap<String, RedisValue>, Error=RedisError>> {
+  let key = key.into();
+
+  Box::new(utils::request_response(inner, move || {
+    let args: Vec<RedisValue> = vec![key.into()];
+
+    Ok((RedisCommandKind::HGetAll, args))
+  }).and_then(|frame| {
+    let mut resp = protocol_utils::frame_to_results(frame)?;
+
+    let mut map: HashMap<String, RedisValue> = HashMap::with_capacity(resp.len() / 2);
+
+    for mut chunk in resp.chunks_mut(2) {
+      let (key, val) = (chunk[0].take(), chunk[1].take());
+      let key = match key {
+        RedisValue::String(s) => s,
+        _ => return Err(RedisError::new(
+          RedisErrorKind::ProtocolError, "Invalid HGETALL response."
+        ))
+      };
+
+      map.insert(key, val);
+    }
+
+    Ok(map)
+  }))
+}
+
+pub fn hincrby<F: Into<RedisKey>, K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K, field: F, incr: i64) -> Box<Future<Item=i64, Error=RedisError>> {
+  let (key, field) = (key.into(), field.into());
+
+  let args: Vec<RedisValue> = vec![
+    key.into(),
+    field.into(),
+    incr.into()
+  ];
+
+  Box::new(utils::request_response(inner, move || {
+    Ok((RedisCommandKind::HIncrBy, args))
+  }).and_then(|frame| {
+    let resp = protocol_utils::frame_to_single_result(frame)?;
+
+    match resp {
+      RedisValue::Integer(num) => Ok(num as i64),
+      _ => Err(RedisError::new(
+        RedisErrorKind::ProtocolError, "Invalid HINCRBY response."
+      ))
+    }
+  }))
+}
+
+pub fn hincrbyfloat<K: Into<RedisKey>, F: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K, field: F, incr: f64) -> Box<Future<Item=f64, Error=RedisError>> {
+  let (key, field) = (key.into(), field.into());
+
+  let args = vec![
+    key.into(),
+    field.into(),
+    incr.to_string().into()
+  ];
+
+  Box::new(utils::request_response(inner, move || {
+    Ok((RedisCommandKind::HIncrByFloat, args))
+  }).and_then(|frame| {
+    let resp = protocol_utils::frame_to_single_result(frame)?;
+
+    match resp {
+      RedisValue::String(s) => match s.parse::<f64>() {
+        Ok(f) => Ok(f),
+        Err(e) => Err(RedisError::new(
+          RedisErrorKind::Unknown, format!("Invalid HINCRBYFLOAT response: {:?}", e)
+        ))
+      },
+      _ => Err(RedisError::new(
+        RedisErrorKind::InvalidArgument, "Invalid HINCRBYFLOAT response."
+      ))
+    }
+  }))
+}
+
+pub fn hkeys<K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K) -> Box<Future<Item=Vec<String>, Error=RedisError>> {
+  let key = key.into();
+
+  Box::new(utils::request_response(inner, move || {
+    Ok((RedisCommandKind::HKeys, vec![key.into()]))
+  }).and_then(|frame| {
+    let mut resp = protocol_utils::frame_to_results(frame)?;
+
+    let mut out = Vec::with_capacity(resp.len());
+    for val in resp.drain(..) {
+      let s = match val {
+        RedisValue::Null => "nil".to_owned(),
+        RedisValue::String(s) => s,
+        _ => return Err(RedisError::new(
+          RedisErrorKind::Unknown, "Invalid HKEYS response."
+        ))
+      };
+
+      out.push(s);
+    }
+
+    Ok(out)
+  }))
+}
+
+pub fn hlen<K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K) -> Box<Future<Item=usize, Error=RedisError>> {
+  let key = key.into();
+
+  Box::new(utils::request_response(inner, move || {
+    Ok((RedisCommandKind::HLen, vec![key.into()]))
+  }).and_then(|frame| {
+    let resp = protocol_utils::frame_to_single_result(frame)?;
+
+    match resp {
+      RedisValue::Integer(num) => Ok(num as usize),
+      _ => Err(RedisError::new(
+        RedisErrorKind::Unknown, "Invalid HLEN response."
+      ))
+    }
+  }))
+}
+
+pub fn hmget<F: Into<MultipleKeys>, K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K, fields: F) -> Box<Future<Item=Vec<RedisValue>, Error=RedisError>> {
+  let key = key.into();
+  let mut fields = fields.into().inner();
+
+  let mut args = Vec::with_capacity(fields.len() + 1);
+  args.push(key.into());
+
+  for field in fields.drain(..) {
+    args.push(field.into());
+  }
+
+  Box::new(utils::request_response(inner, move || {
+    Ok((RedisCommandKind::HMGet, args))
+  }).and_then(|frame| {
+    Ok(protocol_utils::frame_to_results(frame)?)
+  }))
+}
+
+pub fn hmset<V: Into<RedisValue>, F: Into<RedisKey> + Hash + Eq, K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K, mut values: HashMap<F, V>) -> Box<Future<Item=String, Error=RedisError>> {
+  let key = key.into();
+
+  let mut args = Vec::with_capacity(values.len() * 2 + 1);
+  args.push(key.into());
+
+  for (field, value) in values.drain() {
+    let field = field.into();
+    args.push(field.into());
+    args.push(value.into());
+  }
+
+  Box::new(utils::request_response(inner, move || {
+    Ok((RedisCommandKind::HMSet, args))
+  }).and_then(|frame| {
+    let resp = protocol_utils::frame_to_single_result(frame)?;
+
+    match resp {
+      RedisValue::String(s) => Ok(s),
+      _ => Err(RedisError::new(
+        RedisErrorKind::Unknown, "Invalid HMSET response."
+      ))
+    }
+  }))
+}
+
+pub fn hset<K: Into<RedisKey>, F: Into<RedisKey>, V: Into<RedisValue>> (inner: &Arc<RedisClientInner>, key: K, field: F, value: V) -> Box<Future<Item=usize, Error=RedisError>> {
+  let key = key.into();
+  let field = field.into();
+
+  Box::new(utils::request_response(inner, move || {
+    let args: Vec<RedisValue> = vec![key.into(), field.into(), value.into()];
+
+    Ok((RedisCommandKind::HSet, args))
+  }).and_then(|frame| {
+    let resp = protocol_utils::frame_to_single_result(frame)?;
+
+    let res = match resp {
+      RedisValue::Integer(num) => Ok(num as usize),
+      _ => Err(RedisError::new(
+        RedisErrorKind::Unknown , "Invalid HSET response."
+      ))
+    };
+
+    res
+  }))
+}
+
+pub fn hsetnx<K: Into<RedisKey>, F: Into<RedisKey>, V: Into<RedisValue>> (inner: &Arc<RedisClientInner>, key: K, field: F, value: V) -> Box<Future<Item=usize, Error=RedisError>> {
+  let (key, field, value) = (key.into(), field.into(), value.into());
+
+  Box::new(utils::request_response(inner, move || {
+    let args: Vec<RedisValue> = vec![key.into(), field.into(), value];
+
+    Ok((RedisCommandKind::HSetNx, args))
+  }).and_then(|frame| {
+    let resp = protocol_utils::frame_to_single_result(frame)?;
+
+    match resp {
+      RedisValue::Integer(num) => Ok(num as usize),
+      _ => Err(RedisError::new(
+        RedisErrorKind::Unknown , "Invalid HSETNX response."
+      ))
+    }
+  }))
+}
+
+pub fn hstrlen<K: Into<RedisKey>, F: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K, field: F) -> Box<Future<Item=usize, Error=RedisError>> {
+  let (key, field) = (key.into(), field.into());
+
+  Box::new(utils::request_response(inner, move || {
+    let args: Vec<RedisValue> = vec![key.into(), field.into()];
+
+    Ok((RedisCommandKind::HStrLen, args))
+  }).and_then(|frame| {
+    let resp = protocol_utils::frame_to_single_result(frame)?;
+
+    match resp {
+      RedisValue::Integer(num) => Ok(num as usize),
+      _ => Err(RedisError::new(
+        RedisErrorKind::Unknown , "Invalid HSTRLEN response."
+      ))
+    }
+  }))
+}
+
+pub fn hvals<K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K) -> Box<Future<Item=Vec<RedisValue>, Error=RedisError>> {
+  let key = key.into();
+
+  Box::new(utils::request_response(inner, move || {
+    Ok((RedisCommandKind::HVals, vec![key.into()]))
+  }).and_then(|frame| {
+    Ok(protocol_utils::frame_to_results(frame)?)
+  }))
+}
