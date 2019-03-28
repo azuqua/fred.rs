@@ -190,7 +190,6 @@ impl Multiplexer {
     };
 
     if request.kind == RedisCommandKind::Quit {
-      debug!("Writing Quit command.");
       self.sinks.quit(frame)
     }else{
       self.sinks.write_command(key, frame, no_cluster)

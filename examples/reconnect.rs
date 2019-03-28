@@ -30,6 +30,7 @@ fn main() {
   let policy = ReconnectPolicy::Constant {
     delay: 1000,
     attempts: 0,
+    // retry forever
     max_attempts: 0
   };
   let timer = Timer::default();
