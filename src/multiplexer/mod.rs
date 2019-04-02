@@ -230,6 +230,7 @@ impl Multiplexer {
 
       if frame.kind() == FrameKind::Moved || frame.kind() == FrameKind::Ask {
         // pause commands to refresh the cached cluster state
+        warn!("Recv MOVED or ASK error.");
         Err(RedisError::new(RedisErrorKind::Cluster, ""))
       }else{
         utils::process_frame(&inner, &last_request, &last_request_sent, &last_command_callback, frame);
@@ -238,9 +239,9 @@ impl Multiplexer {
     })
     .then(move |mut result| {
       if let Err(ref e) = result {
-        debug!("Multiplexer frame stream closed with error? {:?}", e);
+        warn!("Multiplexer frame stream closed with error? {:?}", e);
       }else{
-        debug!("Multiplexer frame stream closed without error.");
+        warn!("Multiplexer frame stream closed without error.");
       }
 
       if let Ok((ref inner, _, _, _)) = result {
