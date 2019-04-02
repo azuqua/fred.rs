@@ -349,8 +349,6 @@ pub fn decrby<V: Into<RedisValue>, K: Into<RedisKey>>(inner: &Arc<RedisClientInn
   }))
 }
 
-// TODO
-
 pub fn ping(inner: &Arc<RedisClientInner>) -> Box<Future<Item=String, Error=RedisError>> {
   debug!("Pinging Redis server.");
 
@@ -932,6 +930,123 @@ pub fn hvals<K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K) -> Box<F
 
   Box::new(utils::request_response(inner, move || {
     Ok((RedisCommandKind::HVals, vec![key.into()]))
+  }).and_then(|frame| {
+    Ok(protocol_utils::frame_to_results(frame)?)
+  }))
+}
+
+pub fn llen<K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K) -> Box<Future<Item=usize, Error=RedisError>> {
+  let key = key.into();
+
+  Box::new(utils::request_response(inner, move || {
+    Ok((RedisCommandKind::LLen, vec![key.into()]))
+  }).and_then(|frame| {
+    let resp = protocol_utils::frame_to_single_result(frame)?;
+
+    match resp {
+      RedisValue::Integer(num) => Ok(num as usize),
+      _ => Err(RedisError::new(
+        RedisErrorKind::Unknown, "Invalid LLEN response."
+      ))
+    }
+  }))
+}
+
+pub fn lpush<K: Into<RedisKey>, V: Into<RedisValue>> (inner: &Arc<RedisClientInner>, key: K, value: V) -> Box<Future<Item=usize, Error=RedisError>> {
+  let key = key.into();
+  let value = value.into();
+
+  Box::new(utils::request_response(inner, move || {
+    let args: Vec<RedisValue> = vec![key.into(), value.into()];
+
+    Ok((RedisCommandKind::LPush, args))
+  }).and_then(|frame| {
+    let resp = protocol_utils::frame_to_single_result(frame)?;
+
+    match resp {
+      RedisValue::Integer(num) => Ok(num as usize),
+      _ => Err(RedisError::new(
+        RedisErrorKind::Unknown , "Invalid LPUSH response."
+      ))
+    }
+  }))
+}
+
+pub fn lpop<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Box<Future<Item=Option<RedisValue>, Error=RedisError>> {
+  let key = key.into();
+
+  Box::new(utils::request_response(inner, move || {
+    let args: Vec<RedisValue> = vec![key.into()];
+
+    Ok((RedisCommandKind::LPop, args))
+  }).and_then(|frame| {
+    let resp = protocol_utils::frame_to_single_result(frame)?;
+
+    let resp = if resp.kind() == RedisValueKind::Null {
+      None
+    } else {
+      Some(resp)
+    };
+
+    Ok(resp)
+  }))
+}
+
+pub fn sadd<K: Into<RedisKey>, V: Into<MultipleValues>>(inner: &Arc<RedisClientInner>, key: K, values: V) -> Box<Future<Item=usize, Error=RedisError>> {
+  let key = key.into();
+  let value = values.into();
+
+  Box::new(utils::request_response(inner, move || {
+    let mut args = Vec::with_capacity(1 + value.len());
+    args.push(key.into());
+
+    for value in value.inner().into_iter() {
+      args.push(value);
+    }
+
+    Ok((RedisCommandKind::Sadd, args))
+  }).and_then(|frame| {
+    let resp = protocol_utils::frame_to_single_result(frame)?;
+
+    match resp {
+      RedisValue::Integer(num) => Ok(num as usize),
+      _ => Err(RedisError::new(
+        RedisErrorKind::Unknown , "Invalid SADD response."
+      ))
+    }
+  }))
+}
+
+pub fn srem<K: Into<RedisKey>, V: Into<MultipleValues>>(inner: &Arc<RedisClientInner>, key: K, values: V) -> Box<Future<Item=usize, Error=RedisError>> {
+  let key = key.into();
+  let value = values.into();
+
+  Box::new(utils::request_response(inner, move || {
+    let mut args = Vec::with_capacity(1 + value.len());
+    args.push(key.into());
+
+    for value in value.inner().into_iter() {
+      args.push(value);
+    }
+
+    Ok((RedisCommandKind::Srem, args))
+  }).and_then(|frame| {
+    let resp = protocol_utils::frame_to_single_result(frame)?;
+
+    match resp {
+      RedisValue::Integer(num) => Ok(num as usize),
+      _ => Err(RedisError::new(
+        RedisErrorKind::Unknown , "Invalid SREM response."
+      ))
+    }
+  }))
+}
+
+pub fn smembers<K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K) -> Box<Future<Item=Vec<RedisValue>, Error=RedisError>> {
+  let key = key.into();
+
+  Box::new(utils::request_response(inner, move || {
+    Ok((RedisCommandKind::Smembers, vec![key.into()]))
   }).and_then(|frame| {
     Ok(protocol_utils::frame_to_results(frame)?)
   }))

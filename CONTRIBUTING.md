@@ -96,5 +96,90 @@ A few more things to note:
 
 That's it.
 
-# Tests
+# Integration Tests
 
+The tests can be found inside `tests/integration`, and are separated between centralized and clustered tests, and separated further by the category of the command (hashes, lists, sets, pubsub, etc). The separation is designed to make it as easy as possible to perform the same test on both centralized and clustered deployments, and as a result you will need to implement the test once, and then wrap it twice to be called from the centralized and clustered wrappers.
+
+Using `hget` as an example:
+
+1 - Add a test in the `tests/integration/hashes/mod.rs` file for this. Put the test in whichever directory handles that category of commands.
+
+```rust
+pub fn should_set_and_get_simple_key(client: RedisClient) -> Box<Future<Item=(), Error=RedisError>> {
+  Box::new(client.hset("foo", "bar", "baz").and_then(|(client, _)| {
+    client.hget("foo", "bar")
+  })
+  .and_then(|(client, val)| {
+    let val = match val {
+      Some(v) => v,
+      None => panic!("Expected value for foo not found.")
+    };
+
+    assert_eq!(val.into_string().unwrap(), "baz");
+    client.hdel("foo", "bar")
+  })
+  .and_then(|(client, count)| {
+    assert_eq!(count, 1);
+    client.hget("foo", "bar")
+  })
+  .and_then(|(client, val)| {
+    assert!(val.is_none());
+    Ok(())
+  }))
+}
+```
+
+A few things to note: 
+
+* The test function follows a naming convention of `should_do_something`.
+* This function does *not* have a `#[test]` declaration above it.
+* All tests return a `Box<Future<Item=(), Error=RedisError>>`.
+* All tests are given their `RedisClient` instance as an argument, they don't create it.
+* Tests should panic when fatal errors are encountered.
+
+2 - Add a wrapper for the test in `tests/integration/centralized.rs`.
+
+```rust
+#[test]
+fn it_should_set_and_get_simple_key() {
+  let config = RedisConfig::default();
+  utils::setup_test_client(config, TIMER.clone(), |client| {
+    hashes_tests::should_set_and_get_simple_key(client)
+  });
+}
+```
+
+Note:
+
+* You may need to create an inlined wrapping module for the command category if one doesn't already exist.
+* This function does have a `#[test]` declaration above it.
+* This function uses the shared static `TIMER` variable declared at the top of the file.
+* A centralized config is used.
+* The `utils::setup_test_client` function is used to create the test client and manage the result of the test function created above.
+* The inner function just runs the test created above in step 1.
+
+3 - Add another wrapper for the test in `tests/integration/cluster.rs`.
+
+```rust
+#[test]
+fn it_should_set_and_get_simple_key() {
+  let config = RedisConfig::default_clustered();
+  utils::setup_test_client(config, TIMER.clone(), |client| {
+    hashes_tests::should_set_and_get_simple_key(client)
+  });
+}
+```
+
+The clustered test is identical to the centralized test, but uses a clustered config instead of a centralized one.
+
+That's it. Make sure a centralized redis instance and a clustered deployment are running on the default ports, then `cargo test -- --test-threads=1` or `RUST_LOG=fred=debug cargo test -- --test-threads=1 --nocapture` to see the results.
+
+If you're having trouble getting redis installed check out the `tests/scripts/install_redis_centralized.sh` and `tests/scripts/install_redis_clustered.sh` to see how the CI tool installs them.
+
+## Final Note
+
+Unless you're extremely careful with the keys you use in your tests you are likely to see failing tests due to key collisions. By default cargo runs tests using several threads and in a non-deterministic order, and when reading and writing to shared state, such as a Redis server, you're likely to see race conditions. As a result you probably want to run your tests with the `--test-threads=1` argv.
+
+```
+RUST_LOG=fred=debug cargo test -- --test-threads=1
+```

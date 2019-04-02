@@ -423,6 +423,52 @@ impl<T: Into<RedisKey>> From<VecDeque<T>> for MultipleKeys {
   }
 }
 
+
+/// Convenience struct for commands that take 1 or more values.
+pub struct MultipleValues {
+  values: Vec<RedisValue>
+}
+
+impl MultipleValues {
+
+  pub fn new() -> MultipleValues {
+    MultipleValues { values: Vec::new() }
+  }
+
+  pub fn inner(self) -> Vec<RedisValue> {
+    self.values
+  }
+
+  pub fn len(&self) -> usize {
+    self.values.len()
+  }
+
+}
+
+impl<T: Into<RedisValue>> From<T> for MultipleValues {
+  fn from(d: T) -> Self {
+    MultipleValues {
+      values: vec![d.into()]
+    }
+  }
+}
+
+impl<T: Into<RedisValue>> From<Vec<T>> for MultipleValues {
+  fn from(mut d: Vec<T>) -> Self {
+    MultipleValues {
+      values: d.into_iter().map(|k| k.into()).collect()
+    }
+  }
+}
+
+impl<T: Into<RedisValue>> From<VecDeque<T>> for MultipleValues {
+  fn from(mut d: VecDeque<T>) -> Self {
+    MultipleValues {
+      values: d.into_iter().map(|k| k.into()).collect()
+    }
+  }
+}
+
 /// The kind of value from Redis.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RedisValueKind {

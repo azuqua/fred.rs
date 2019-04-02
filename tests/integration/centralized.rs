@@ -42,6 +42,9 @@ use pretty_env_logger;
 use tokio_timer::Timer;
 
 use super::keys as keys_tests;
+use super::sets as sets_tests;
+use super::hashes as hashes_tests;
+use super::lists as lists_tests;
 
 lazy_static! {
 
@@ -142,20 +145,97 @@ pub mod keys {
 
 }
 
+
 pub mod hashes {
   use super::*;
 
+  #[test]
+  fn it_should_set_and_get_simple_key() {
+    let config = RedisConfig::default();
+    utils::setup_test_client(config, TIMER.clone(),|client| {
+      hashes_tests::should_set_and_get_simple_key(client)
+    });
+  }
+
+  #[test]
+  fn it_should_set_and_get_all_simple_key() {
+    let config = RedisConfig::default();
+    utils::setup_test_client(config, TIMER.clone(), |client| {
+      hashes_tests::should_set_and_get_all_simple_key(client)
+    });
+  }
+
+  #[test]
+  fn it_should_check_hexists() {
+    let config = RedisConfig::default();
+    utils::setup_test_client(config, TIMER.clone(),|client| {
+      hashes_tests::should_check_hexists(client)
+    });
+  }
+
+  #[test]
+  fn it_should_read_large_hash() {
+    let config = RedisConfig::default();
+    utils::setup_test_client(config, TIMER.clone(),|client| {
+      hashes_tests::should_read_large_hash(client)
+    });
+  }
 
 }
 
 pub mod lists {
   use super::*;
 
+  #[test]
+  fn it_should_llen_on_empty_list() {
+    let config = RedisConfig::default();
+    utils::setup_test_client(config, TIMER.clone(),|client| {
+      lists_tests::should_llen_on_empty_list(client)
+    });
+  }
 
+  #[test]
+  fn it_should_llen_on_list_with_elements() {
+    let config = RedisConfig::default();
+    utils::setup_test_client(config, TIMER.clone(),|client| {
+      lists_tests::should_llen_on_list_with_elements(client)
+    });
+  }
+
+  #[test]
+  fn it_should_lpush_and_lpop_to_list() {
+    let config = RedisConfig::default();
+    utils::setup_test_client(config, TIMER.clone(),|client| {
+      lists_tests::should_lpush_and_lpop_to_list(client)
+    });
+  }
 }
 
 pub mod sets {
   use super::*;
 
+  #[test]
+  fn it_should_sadd_members_to_set() {
+    let config = RedisConfig::default();
+    utils::setup_test_client(config, TIMER.clone(),|client| {
+      sets_tests::should_sadd_members_to_set(client)
+    });
+  }
+
+  #[test]
+  fn it_should_srem_members_of_set() {
+    let config = RedisConfig::default();
+    utils::setup_test_client(config, TIMER.clone(),|client| {
+      sets_tests::should_srem_members_of_set(client)
+    });
+  }
+
+  #[test]
+  fn it_should_smembers_of_set() {
+    let config = RedisConfig::default();
+    utils::setup_test_client(config, TIMER.clone(),|client| {
+      sets_tests::should_smembers_of_set(client)
+    });
+  }
 
 }
