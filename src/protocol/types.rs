@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 
 use bytes::{
   BytesMut
@@ -8,28 +7,23 @@ use futures::sync::oneshot::{
   Sender as OneshotSender
 };
 
-use tokio_io::codec::{
-  Encoder,
-  Decoder
-};
-
-use std::rc::Rc;
 use std::fmt;
 
 use super::utils as protocol_utils;
-use super::super::types::*;
-use super::super::error::{
+use crate::types::*;
+use crate::error::{
   RedisError,
   RedisErrorKind
 };
 
-use ::metrics;
-use ::metrics::{
-  SizeTracker
+use crate::metrics;
+use crate::metrics::{
+  SizeStats
 };
 use std::sync::Arc;
 use parking_lot::RwLock;
 use std::ops::{
+  Deref,
   DerefMut
 };
 
@@ -42,43 +36,14 @@ use redis_protocol::types::{
   FrameKind as ProtocolFrameKind,
   Frame as ProtocolFrame,
 };
-use redis_protocol::encode::encode_bytes;
-use redis_protocol::decode::decode_bytes;
+
 pub use redis_protocol::{
   CRLF,
   NULL,
   redis_keyslot
 };
 
-#[derive(Clone)]
-pub struct SplitCommand {
-  pub tx: Arc<RwLock<Option<OneshotSender<Result<Vec<RedisConfig>, RedisError>>>>>,
-  pub key: Option<String>
-}
-
-impl SplitCommand {
-
-  pub fn take(&mut self) -> (Option<OneshotSender<Result<Vec<RedisConfig>, RedisError>>>, Option<String>) {
-    let mut tx_guard = self.tx.write();
-    (tx_guard.deref_mut().take(), self.key.take())
-  }
-
-}
-
-impl fmt::Debug for SplitCommand {
-  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    write!(f, "[SplitCommand]")
-  }
-}
-
-impl PartialEq for SplitCommand {
-  fn eq(&self, other: &SplitCommand) -> bool {
-    self.key == other.key
-  }
-}
-
-impl Eq for SplitCommand {}
-
+use crate::multiplexer::types::SplitCommand;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RedisCommandKind {
@@ -273,8 +238,6 @@ pub enum RedisCommandKind {
   Hscan,
   Zscan,
   #[doc(hidden)]
-  _OnMessage,
-  #[doc(hidden)]
   _Close,
   #[doc(hidden)]
   _Split(Option<SplitCommand>)
@@ -285,6 +248,13 @@ impl RedisCommandKind {
   pub fn is_split(&self) -> bool {
     match *self {
       RedisCommandKind::_Split(_) => true,
+      _ => false
+    }
+  }
+
+  pub fn is_close(&self) -> bool {
+    match *self {
+      RedisCommandKind::_Close => true,
       _ => false
     }
   }
@@ -303,7 +273,7 @@ impl RedisCommandKind {
     }
   }
 
-  fn to_string(&self) -> &'static str {
+  fn to_str(&self) -> &'static str {
     match *self {
       RedisCommandKind::Append                          => "APPEND",
       RedisCommandKind::Auth                            => "AUTH",
@@ -400,7 +370,7 @@ impl RedisCommandKind {
       RedisCommandKind::LSet                            => "LSET",
       RedisCommandKind::LTrim                           => "LTRIM",
       RedisCommandKind::Mget                            => "MGET",
-      RedisCommandKind::Migrate                         => "MIGRATE",  
+      RedisCommandKind::Migrate                         => "MIGRATE",
       RedisCommandKind::Monitor                         => "MONITOR",
       RedisCommandKind::Move                            => "MOVE",
       RedisCommandKind::Mset                            => "MSET",
@@ -496,31 +466,30 @@ impl RedisCommandKind {
       RedisCommandKind::Hscan                           => "HSCAN",
       RedisCommandKind::Zscan                           => "ZSCAN",
       RedisCommandKind::_Close
-        | RedisCommandKind::_OnMessage
-        | RedisCommandKind::_Split(_)                   => panic!("unreachable")
+       | RedisCommandKind::_Split(_)                    => panic!("unreachable (redis command)")
     }
   }
 
   pub fn is_cluster_command(&self) -> bool {
     match *self {
       RedisCommandKind::ClusterAddSlots
-       | RedisCommandKind::ClusterCountFailureReports
-       | RedisCommandKind::ClusterCountKeysInSlot
-       | RedisCommandKind::ClusterDelSlots
-       | RedisCommandKind::ClusterFailOver
-       | RedisCommandKind::ClusterForget
-       | RedisCommandKind::ClusterGetKeysInSlot
-       | RedisCommandKind::ClusterInfo
-       | RedisCommandKind::ClusterKeySlot
-       | RedisCommandKind::ClusterMeet
-       | RedisCommandKind::ClusterNodes
-       | RedisCommandKind::ClusterReplicate
-       | RedisCommandKind::ClusterReset
-       | RedisCommandKind::ClusterSaveConfig
-       | RedisCommandKind::ClusterSetConfigEpoch
-       | RedisCommandKind::ClusterSetSlot
-       | RedisCommandKind::ClusterSlaves
-       | RedisCommandKind::ClusterSlots                 => true,
+      | RedisCommandKind::ClusterCountFailureReports
+      | RedisCommandKind::ClusterCountKeysInSlot
+      | RedisCommandKind::ClusterDelSlots
+      | RedisCommandKind::ClusterFailOver
+      | RedisCommandKind::ClusterForget
+      | RedisCommandKind::ClusterGetKeysInSlot
+      | RedisCommandKind::ClusterInfo
+      | RedisCommandKind::ClusterKeySlot
+      | RedisCommandKind::ClusterMeet
+      | RedisCommandKind::ClusterNodes
+      | RedisCommandKind::ClusterReplicate
+      | RedisCommandKind::ClusterReset
+      | RedisCommandKind::ClusterSaveConfig
+      | RedisCommandKind::ClusterSetConfigEpoch
+      | RedisCommandKind::ClusterSetSlot
+      | RedisCommandKind::ClusterSlaves
+      | RedisCommandKind::ClusterSlots                 => true,
       _ => false
     }
   }
@@ -554,11 +523,11 @@ impl RedisCommandKind {
   pub fn is_client_command(&self) -> bool {
     match *self {
       RedisCommandKind::ClientGetName
-        | RedisCommandKind::ClientKill
-        | RedisCommandKind::ClientList
-        | RedisCommandKind::ClientPause
-        | RedisCommandKind::ClientReply
-        | RedisCommandKind::ClientSetname => true,
+      | RedisCommandKind::ClientKill
+      | RedisCommandKind::ClientList
+      | RedisCommandKind::ClientPause
+      | RedisCommandKind::ClientReply
+      | RedisCommandKind::ClientSetname => true,
       _ => false
     }
   }
@@ -580,9 +549,9 @@ impl RedisCommandKind {
   pub fn is_config_command(&self) -> bool {
     match *self {
       RedisCommandKind::ConfigGet
-        | RedisCommandKind::ConfigRewrite
-        | RedisCommandKind::ConfigSet
-        | RedisCommandKind::ConfigResetStat            => true,
+      | RedisCommandKind::ConfigRewrite
+      | RedisCommandKind::ConfigSet
+      | RedisCommandKind::ConfigResetStat            => true,
       _ => false
     }
   }
@@ -601,233 +570,110 @@ impl RedisCommandKind {
 
   pub fn is_blocking(&self) -> bool {
     match *self {
-      RedisCommandKind::BlPop 
-        | RedisCommandKind::BrPop
-        | RedisCommandKind::BrPopLPush => true,
+      RedisCommandKind::BlPop
+      | RedisCommandKind::BrPop
+      | RedisCommandKind::BrPopLPush => true,
       _ => false
     }
   }
 
   pub fn is_read(&self) -> bool {
-    // TODO finish this
+    // TODO finish this and use for sending reads to slaves
     match *self {
       RedisCommandKind::Get
-        | RedisCommandKind::HGet
-        | RedisCommandKind::Exists
-        | RedisCommandKind::HExists => true,
+      | RedisCommandKind::HGet
+      | RedisCommandKind::Exists
+      | RedisCommandKind::HExists => true,
       _ => false
     }
   }
 
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum FrameKind {
-  SimpleString,
-  Error,
-  Integer,
-  BulkString,
-  Array,
-  Moved,
-  Ask,
-  Null,
-  Canceled
+
+/// Alias for a sender to notify the caller that a response was received.
+pub type ResponseSender = Option<OneshotSender<Result<Frame, RedisError>>>;
+/// Whether or not to refresh the cluster cache.
+pub type RefreshCache = bool;
+
+/// An arbitrary Redis command.
+pub struct RedisCommand {
+  pub kind: RedisCommandKind,
+  pub args: Vec<RedisValue>,
+  /// Sender for notifying the caller that a response was received.
+  pub tx: ResponseSender
 }
 
-impl FrameKind {
-
-  pub fn from_byte(d: u8) -> Option<FrameKind> {
-    match d as char {
-      '+' => Some(FrameKind::SimpleString),
-      '-' => Some(FrameKind::Error),
-      ':' => Some(FrameKind::Integer),
-      '$' => Some(FrameKind::BulkString),
-      '*' => Some(FrameKind::Array),
-      _   => None
-    }
-  }
-
-  pub fn to_byte(&self) -> u8 {
-    match *self {
-      FrameKind::SimpleString => '+' as u8,
-      FrameKind::Error 
-        | FrameKind::Moved
-        | FrameKind::Ask      
-        | FrameKind::Canceled => '-' as u8,
-      FrameKind::Integer      => ':' as u8,
-      FrameKind::BulkString 
-        | FrameKind::Null     => '$' as u8,
-      FrameKind::Array        => '*' as u8,
-    }
-  }
-
-}
-
-// padding CRLF is removed
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum Frame {
-  SimpleString(String),
-  Error(String),
-  Integer(i64),
-  BulkString(Vec<u8>),
-  Array(Vec<Frame>),
-  Moved(String),
-  Ask(String),
-  Null,
-  // used to gracefully close streams
-  Canceled
-}
-
-impl From<ProtocolFrame> for Frame {
-  fn from(f: ProtocolFrame) -> Self {
-    use self::ProtocolFrame::*;
-
-    match f {
-      SimpleString(s) => Frame::SimpleString(s),
-      Error(s) => Frame::Error(s),
-      Integer(i) => Frame::Integer(i),
-      BulkString(b) => Frame::BulkString(b),
-      Array(f) => Frame::Array(f.into_iter().map(|f| f.into()).collect()),
-      Moved(s) => Frame::Moved(s),
-      Ask(s) => Frame::Ask(s),
-      Null => Frame::Null
-    }
+impl fmt::Debug for RedisCommand {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    write!(f, "[RedisCommand Kind: {:?}, Args: {:?}]", &self.kind, &self.args)
   }
 }
 
-impl From<Frame> for ProtocolFrame {
-  fn from(f: Frame) -> Self {
-    use self::Frame::*;
+impl RedisCommand {
 
-    match f {
-      SimpleString(s) => ProtocolFrame::SimpleString(s),
-      Error(s) => ProtocolFrame::Error(s),
-      Integer(i) => ProtocolFrame::Integer(i),
-      BulkString(b) => ProtocolFrame::BulkString(b),
-      Array(f) => ProtocolFrame::Array(f.into_iter().map(|f| f.into()).collect()),
-      Moved(s) => ProtocolFrame::Moved(s),
-      Ask(s) => ProtocolFrame::Ask(s),
-      Null | Canceled => ProtocolFrame::Null
-    }
-  }
-}
-
-impl Frame {
-
-  pub fn into_error(self) -> Option<RedisError> {
-    match self {
-      Frame::Canceled => Some(RedisError::new_canceled()),
-      Frame::Error(s) => Some(protocol_utils::better_error(s)),
-      _ => None
+  pub fn new(kind: RedisCommandKind, args: Vec<RedisValue>, tx: ResponseSender) -> RedisCommand {
+    RedisCommand {
+      kind, args, tx
     }
   }
 
-  pub fn is_canceled(&self) -> bool {
-    self.kind() == FrameKind::Canceled
+  /// Convert to a single frame with an array of bulk strings (or null).
+  ///
+  /// This consumes the arguments array but does not take the response sender.
+  pub fn to_frame(&self) -> Result<Frame, RedisError> {
+    let mut bulk_strings: Vec<Frame> = Vec::with_capacity(self.args.len() + 1);
+
+    let cmd = self.kind.to_str().as_bytes();
+    bulk_strings.push(ProtocolFrame::BulkString(cmd.to_vec()));
+
+    if let Some(frame) = protocol_utils::command_args(&self.kind) {
+      bulk_strings.push(frame);
+    }
+
+    for value in self.args.iter() {
+      let frame: Frame = match value {
+        RedisValue::Integer(i) => ProtocolFrame::BulkString(i.to_string().as_bytes().to_vec()),
+        RedisValue::String(s) => ProtocolFrame::BulkString(s.as_bytes().to_vec()),
+        RedisValue::Null => ProtocolFrame::Null
+      };
+
+      bulk_strings.push(frame);
+    }
+
+    Ok(Frame::Array(bulk_strings))
   }
 
-  pub fn is_error(&self) -> bool {
-    match self.kind() {
-      FrameKind::Error
-        | FrameKind::Canceled => true,
+  /// Commands that do not need to run on a specific host in a cluster.
+  pub fn no_cluster(&self) -> bool {
+    match self.kind {
+      RedisCommandKind::Publish
+      | RedisCommandKind::Subscribe
+      | RedisCommandKind::Unsubscribe
+      | RedisCommandKind::Ping
+      | RedisCommandKind::Info
+      | RedisCommandKind::FlushAll
+      | RedisCommandKind::FlushDB => true,
       _ => false
     }
   }
 
-  pub fn is_pubsub_message(&self) -> bool {
-    if let Frame::Array(ref frames) = *self {
-      frames.len() == 3 
-        && frames[0].kind() == FrameKind::BulkString 
-        && frames[0].to_string().unwrap_or(String::new()) == "message" 
-    }else{
-      false
+  pub fn extract_key(&self) -> Option<&str> {
+    if self.no_cluster() {
+      return None;
     }
-  }
 
-  pub fn kind(&self) -> FrameKind {
-    match *self {
-      Frame::SimpleString(_) => FrameKind::SimpleString,
-      Frame::Error(_)        => FrameKind::Error,
-      Frame::Integer(_)      => FrameKind::Integer,
-      Frame::BulkString(_)   => FrameKind::BulkString,
-      Frame::Array(_)        => FrameKind::Array,
-      Frame::Moved(_)        => FrameKind::Moved,
-      Frame::Ask(_)          => FrameKind::Ask,
-      Frame::Null            => FrameKind::Null,
-      Frame::Canceled        => FrameKind::Canceled
-    }
-  }
-
-  // mostly used for ClusterNodes command
-  pub fn to_string(&self) -> Option<String> {
-    match *self {
-      Frame::SimpleString(ref s) => Some(s.clone()),
-      Frame::BulkString(ref b) => {
-        match String::from_utf8(b.to_vec()) {
-          Ok(s) => Some(s),
-          Err(_) => None
-        }
+    match self.args.first() {
+      Some(arg) => match *arg {
+        RedisValue::String(ref s) => Some(s),
+        _ => None
       },
-      _ => None
+      None => None
     }
-  }
-
-  pub fn into_results(self) -> Result<Vec<RedisValue>, RedisError> {
-    match self {
-      Frame::SimpleString(s) => Ok(vec![s.into()]),
-      Frame::Integer(i) => Ok(vec![i.into()]),
-      Frame::BulkString(b) => {
-        match String::from_utf8(b) {
-          Ok(s) => Ok(vec![s.into()]),
-          Err(e) => Err(e.into())
-        }
-      },
-      Frame::Array(mut frames) => {
-        let mut out = Vec::with_capacity(frames.len());
-        for frame in frames.drain(..) {
-          // there shouldn't be errors buried in arrays...
-          let mut res = frame.into_results()?;
-          if res.len() > 1 {
-            // nor should there be more than one layer of nested arrays
-            return Err(RedisError::new(
-              RedisErrorKind::ProtocolError, "Invalid nested array."
-            ));
-          }else if res.len() == 0 {
-            // shouldn't be possible...
-            return Err(RedisError::new(
-              RedisErrorKind::Unknown, "Invalid empty frame."
-            ));
-          }
-
-          out.push(res.pop().unwrap())
-        }
-
-        Ok(out)
-      },
-      Frame::Null => Ok(vec![RedisValue::Null]),
-      Frame::Error(s) => Err(protocol_utils::better_error(s)),
-      _ => Err(RedisError::new(
-        RedisErrorKind::ProtocolError, "Invalid frame."
-      ))
-    }
-  }
-
-  pub fn into_single_result(self) -> Result<RedisValue, RedisError> {
-    let mut results = match self.into_results() {
-      Ok(r) => r,
-      Err(e) => {
-        return Err(e);
-      }
-    };
-
-    if results.len() != 1 {
-      return Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid results."))
-    }
-
-    Ok(results.pop().unwrap())
   }
 
 }
+
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SlaveNodes {
@@ -839,7 +685,7 @@ impl SlaveNodes {
 
   pub fn new(servers: Vec<String>) -> SlaveNodes {
     SlaveNodes {
-      servers: servers,
+      servers,
       next: 0
     }
   }
@@ -878,7 +724,7 @@ pub struct SlotRange {
 
 #[derive(Debug, Clone)]
 pub struct ClusterKeyCache {
-  data: Vec<Rc<SlotRange>>
+  data: Vec<Arc<SlotRange>>
 }
 
 impl ClusterKeyCache {
@@ -905,10 +751,10 @@ impl ClusterKeyCache {
     self.data.clear();
     for (_, ranges) in parsed.drain() {
       for slot in ranges {
-        self.data.push(Rc::new(slot));
+        self.data.push(Arc::new(slot));
       }
     }
-    
+
     self.data.sort_by(|lhs, rhs| {
       lhs.start.cmp(&rhs.start)
     });
@@ -917,19 +763,19 @@ impl ClusterKeyCache {
     Ok(())
   }
 
-  pub fn get_server(&self, slot: u16) -> Option<Rc<SlotRange>> {
+  pub fn get_server(&self, slot: u16) -> Option<Arc<SlotRange>> {
     protocol_utils::binary_search(&self.data, slot)
   }
- 
+
   pub fn len(&self) -> usize {
     self.data.len()
   }
 
-  pub fn slots(&self) -> &Vec<Rc<SlotRange>> {
+  pub fn slots(&self) -> &Vec<Arc<SlotRange>> {
     &self.data
   }
 
-  pub fn random_slot(&self) -> Option<Rc<SlotRange>> {
+  pub fn random_slot(&self) -> Option<Arc<SlotRange>> {
     // for now just grab the first one, maybe in the future use a random slot.
     // at the very least if this starts causing errors it'll be easier to find due to this choice,
     // since debugging anything that depends on randomness is a nightmare
@@ -942,165 +788,3 @@ impl ClusterKeyCache {
   }
 
 }
-
-/// Alias for a sender to notify the caller that a response was received.
-pub type ResponseSender = Option<OneshotSender<Result<Frame, RedisError>>>;
-/// Whether or not to refresh the cluster cache.
-pub type RefreshCache = bool;
-
-pub struct RedisCommand {
-  pub kind: RedisCommandKind, 
-  pub args: Vec<RedisValue>,
-  /// Sender for notifying the caller that a response was received.
-  pub tx: ResponseSender
-}
-
-impl fmt::Debug for RedisCommand {
-  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    write!(f, "[RedisCommand Kind: {:?}, Args: {:?}]", &self.kind, &self.args)
-  }
-}
-
-impl RedisCommand {
-
-  pub fn new(kind: RedisCommandKind, args: Vec<RedisValue>, tx: ResponseSender) -> RedisCommand {
-    RedisCommand {
-      kind: kind,
-      args: args,
-      tx: tx
-    }
-  }
-  
-  // Convert to a single frame with an array of bulk strings (or null).
-  // This consumes the arguments array
-  pub fn to_frame(&mut self) -> Result<Frame, RedisError> {
-    let mut bulk_strings: Vec<Frame> = Vec::with_capacity(self.args.len() + 1);
-
-    let cmd = self.kind.to_string().as_bytes();
-    bulk_strings.push(Frame::BulkString(cmd.to_vec()));
-
-    if let Some(frame) = protocol_utils::command_args(&self.kind) {
-      bulk_strings.push(frame);
-    }
-    
-    for value in self.args.drain(..) {
-      let frame: Frame = match value {
-        RedisValue::Integer(i) => {
-          Frame::BulkString(i.to_string().into_bytes())
-        },
-        RedisValue::String(s) => {
-          Frame::BulkString(s.into_bytes())
-        },
-        RedisValue::Null => {
-          Frame::Null
-        }, 
-        _ => return Err(RedisError::new(
-          RedisErrorKind::ProtocolError, format!("Unencodable redis value: {:?}.", value.kind())
-        ))
-      };
-
-      bulk_strings.push(frame);
-    }
-
-    Ok(Frame::Array(bulk_strings))
-  }
-
-  /// Commands that do not need to run on a specific host in a cluster.
-  pub fn no_cluster(&self) -> bool {
-    match self.kind {
-      RedisCommandKind::Publish 
-        | RedisCommandKind::Subscribe
-        | RedisCommandKind::Unsubscribe
-        | RedisCommandKind::Ping
-        | RedisCommandKind::Info
-        | RedisCommandKind::FlushAll
-        | RedisCommandKind::FlushDB => true,
-      _ => false
-    }
-  }
-
-  pub fn extract_key(&self) -> Option<&str> {
-    if self.no_cluster() {
-      return None;
-    }
-
-    match self.args.first() {
-      Some(arg) => match *arg {
-        RedisValue::String(ref s) => Some(s),
-        _ => None
-      },
-      None => None
-    }
-  }
-
-}
-
-pub struct RedisCodec {
-  pub max_size: Option<usize>,
-  pub size_stats: Arc<RwLock<SizeTracker>>
-}
-
-impl RedisCodec {
-
-  pub fn new(max_size: Option<usize>, size_stats: Arc<RwLock<SizeTracker>>) -> RedisCodec {
-    RedisCodec { max_size, size_stats, }
-  }
-
-}
-
-impl Encoder for RedisCodec {
-  type Item = Frame;
-  type Error = RedisError;
-
-  fn encode(&mut self, mut msg: Frame, buf: &mut BytesMut) -> Result<(), RedisError> {
-    let proto_frame: ProtocolFrame = msg.into();
-
-    let offset = buf.len();
-    let res = encode_bytes(buf, &proto_frame)?;
-    trace!("Encoded {} bytes", res.saturating_sub(offset));
-
-    metrics::sample_size(&self.size_stats, (res.saturating_sub(offset)) as u64);
-
-    Ok(())
-  }
-
-}
-
-impl Decoder for RedisCodec {
-  type Item = Frame;
-  type Error = RedisError;
-
-  fn decode(&mut self, buf: &mut BytesMut) -> Result<Option<Frame>, RedisError> {
-    trace!("Recv {:?} bytes.", buf.len());
-
-    if buf.len() < 1 {
-      return Ok(None);
-    }
-
-    let (frame, amt) = decode_bytes(buf)?;
-
-    if let Some(frame) = frame {
-      trace!("Parsed {:?} bytes.", amt);
-      buf.split_to(amt);
-      metrics::sample_size(&self.size_stats, amt as u64);
-
-      Ok(Some(protocol_utils::check_auth_error(frame.into())))
-    }else{
-      Ok(None)
-    }
-  }
-
-}
-
-#[cfg(test)]
-mod test{
-  #![allow(unused_imports)]
-  use super::*;
-
-
-}
-
-
-
-
-

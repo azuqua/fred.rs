@@ -8,6 +8,7 @@ use fred::error::{
 };
 use fred::types::*;
 use fred::RedisClient;
+use fred::owned::RedisClientOwned;
 
 use super::utils;
 
@@ -25,17 +26,17 @@ pub fn should_llen_on_list_with_elements(client: RedisClient) -> Box<Future<Item
 
     client.lpush("foo", 2)
   })
- .and_then(|(client, len)| {
+  .and_then(|(client, len)| {
     assert_eq!(len, 2);
 
     client.lpush("foo", 3)
   })
- .and_then(|(client, len)| {
+  .and_then(|(client, len)| {
     assert_eq!(len, 3);
 
     client.llen("foo")
   })
- .and_then(|(client, len)| {
+  .and_then(|(client, len)| {
     assert_eq!(len, 3);
 
     Ok(())

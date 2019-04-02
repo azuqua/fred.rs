@@ -6,6 +6,7 @@ extern crate tokio_core;
 extern crate futures;
 
 use fred::RedisClient;
+use fred::owned::RedisClientOwned;
 use fred::types::*;
 use fred::error::*;
 
@@ -22,7 +23,7 @@ fn main() {
 
   println!("Connecting to {:?}...", config);
 
-  let client = RedisClient::new(config);
+  let client = RedisClient::new(config, None);
   let connection = client.connect(&handle);
 
   let commands = client.on_connect().and_then(|client| {

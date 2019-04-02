@@ -15,6 +15,7 @@ use fred::error::{
 };
 use fred::types::*;
 use fred::RedisClient;
+use fred::owned::RedisClientOwned;
 
 use super::utils;
 

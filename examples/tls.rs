@@ -8,6 +8,7 @@ extern crate tokio_core;
 extern crate futures;
 
 use fred::RedisClient;
+use fred::owned::RedisClientOwned;
 use fred::types::*;
 
 use tokio_core::reactor::Core;
@@ -20,8 +21,7 @@ fn main() {
     port: 6379,
     key: Some("key".into()),
     // if compiled without `enable-tls` setting this to `true` does nothing, which is done to avoid requiring TLS dependencies unless necessary
-    tls: true,
-    max_value_size: None
+    tls: true
   };
 
   // otherwise usage is the same as the non-tls client...
@@ -31,7 +31,7 @@ fn main() {
 
   println!("Connecting to {:?}...", config);
 
-  let client = RedisClient::new(config);
+  let client = RedisClient::new(config, None);
   let connection = client.connect(&handle);
 
   let commands = client.on_connect().and_then(|client| {

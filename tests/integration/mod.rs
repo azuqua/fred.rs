@@ -1,8 +1,8 @@
 #[macro_use]
 mod utils;
 
-mod hashes;
 mod keys;
+mod hashes;
 mod lists;
 mod pubsub;
 mod sets;

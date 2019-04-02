@@ -1,554 +1,311 @@
-#![allow(dead_code)]
-#![allow(unused_imports)]
 
+pub mod types;
 pub mod utils;
+pub mod connection;
+pub mod init;
 
-mod multiplexer;
-
-use std::sync::Arc;
-
-use types::*;
-use protocol::types::*;
-
-use super::RedisClient;
-use self::multiplexer::Multiplexer;
-
-use error::{
-  RedisError,
-  RedisErrorKind
+use futures::{
+  Future,
+  Stream,
+  Sink
 };
-
-use super::utils as client_utils;
-
-use futures::future::{
-  loop_fn,
-  Loop,
-  lazy
-};
-use futures::Future;
+use futures::sync::mpsc::UnboundedSender;
 use futures::sync::oneshot::{
   Sender as OneshotSender,
-};
-use futures::sync::mpsc::{
-  UnboundedSender,
-  UnboundedReceiver,
-  unbounded
-};
-use futures::stream::Stream;
-use futures::sink::Sink;
-use futures::future::Either;
-
-use ::protocol::types::Frame;
-
-use tokio_core::reactor::{
-  Handle
+  channel as oneshot_channel
 };
 
-use tokio_core::net::{
-  TcpStream
-};
-use tokio_timer::Timer;
+use crate::utils as client_utils;
 
-use parking_lot::{
-  RwLock
+use std::ops::{
+  Deref,
+  DerefMut
 };
 
-use std::net::{
-  ToSocketAddrs,
-  SocketAddr
+use redis_protocol::prelude::*;
+use crate::error::*;
+use crate::types::{
+  RedisConfig,
+  RedisValue,
+  RedisKey,
+  ClientState
 };
+use crate::protocol::types::{RedisCommand, ClusterKeyCache, RedisCommandKind};
 
-use tokio_io::codec::Framed;
-
-use futures::stream::{
-  SplitSink,
-  SplitStream
-};
-
-use std::ops::Deref;
-
+use std::fmt;
 use std::rc::Rc;
 use std::cell::RefCell;
-use std::collections::VecDeque;
 
-use ::metrics::{
-  SizeTracker,
-  LatencyTracker
+use std::collections::{
+  BTreeMap,
+  VecDeque
 };
 
-/// A future that resolves when the connection to the Redis server closes.
-pub type ConnectionFuture = Box<Future<Item=Option<RedisError>, Error=RedisError>>;
-
-#[cfg(feature="enable-tls")]
-use tokio_tls::{
-  TlsConnector as TlsConnectorAsync,
-  TlsStream
-};
-#[cfg(feature="enable-tls")]
-use native_tls::{
-  TlsConnector
+use crate::protocol::types::ResponseSender;
+use crate::client::RedisClientInner;
+use crate::multiplexer::types::{
+  Streams,
+  Sinks
 };
 
-#[cfg(feature="enable-tls")]
-type TlsTransports = Vec<(String, Framed<TlsStream<TcpStream>, RedisCodec>)>;
+use std::sync::Arc;
+use parking_lot::RwLock;
+use std::time::Instant;
+use crate::protocol::types::RedisCommandKind::Multi;
 
-#[cfg(not(feature="enable-tls"))]
-type TlsTransports = Vec<(String, Framed<TcpStream, RedisCodec>)>;
+pub type LastCommandCaller = OneshotSender<Option<(RedisCommand, RedisError)>>;
 
-
-type TcpTransports = Vec<(String, Framed<TcpStream, RedisCodec>)>;
-
-#[cfg(feature="enable-tls")]
-fn init_tls_transports(config: Rc<RefCell<RedisConfig>>, handle: Handle, key: Option<String>, size_stats: Arc<RwLock<SizeTracker>>, cache: ClusterKeyCache)
- -> Box<Future<Item=(Either<TlsTransports, TcpTransports>, ClusterKeyCache), Error=RedisError>>
-{
-  debug!("Initialize clustered tls transports.");
-
-  Box::new(utils::create_all_transports_tls(config, handle, &cache, key, size_stats).map(move |result| {
-    (Either::A(result), cache)
-  }))
+/// A struct for multiplexing frames in and out of the TCP socket based on the semantics supported by the Redis API.
+///
+/// As opposed to the `RedisClient`, this struct directly references the socket(s) and therefore cannot move between threads.
+///
+/// Most commands in the Redis API follow a simple request-response pattern, however the publish-subscribe
+/// interface and bl* commands do not. Due to the fact that a client can switch between these interfaces at will
+/// a more complex multiplexing layer is needed than is currently supported via the generic pipelined/multiplexed
+/// interfaces supported by tokio-proto.
+pub struct Multiplexer {
+  /// Whether or not the multiplexer is interacting with a clustered Redis deployment.
+  pub clustered: bool,
+  /// The inner client state.
+  pub inner: Arc<RedisClientInner>,
+  /// A reference to the last request sent to the server, including a reference to the oneshot channel used to notify the caller of the response.
+  pub last_request: Rc<RefCell<Option<RedisCommand>>>,
+  /// The timestamp of the last request sent.
+  pub last_request_sent: Rc<RefCell<Option<Instant>>>,
+  /// A oneshot sender for the command stream to be notified when it can start processing the next request.
+  ///
+  /// In the event of a connection reset the listener stream will send the last request and error to the caller to decide whether or not
+  /// to replay the last request and/or to backoff and reconnect based on the kind of error surfaced by the network layer.
+  pub last_command_callback: Rc<RefCell<Option<LastCommandCaller>>>,
+  /// The incoming stream of frames from the Redis server.
+  pub streams: Streams,
+  /// Outgoing sinks to the Redis server.
+  pub sinks: Sinks,
 }
 
-#[cfg(not(feature="enable-tls"))]
-fn init_tls_transports(config: Rc<RefCell<RedisConfig>>, handle: Handle, key: Option<String>, size_stats: Arc<RwLock<SizeTracker>>, cache: ClusterKeyCache)
-   -> Box<Future<Item=(Either<TlsTransports, TcpTransports>, ClusterKeyCache), Error=RedisError>>
-{
-  Box::new(utils::create_all_transports(config, handle, &cache, key, size_stats).map(move |result| {
-    (Either::B(result), cache)
-  }))
-}
 
-
-fn init_clustered(
-  client: RedisClient,
-  handle: Handle,
-  config: Rc<RefCell<RedisConfig>>,
-  state: Arc<RwLock<ClientState>>,
-  error_tx: Rc<RefCell<VecDeque<UnboundedSender<RedisError>>>>,
-  message_tx: Rc<RefCell<VecDeque<UnboundedSender<(String, RedisValue)>>>>,
-  command_tx: Rc<RefCell<Option<UnboundedSender<RedisCommand>>>>,
-  connect_tx: Rc<RefCell<VecDeque<OneshotSender<Result<RedisClient, RedisError>>>>>,
-  reconnect_tx: Rc<RefCell<VecDeque<UnboundedSender<RedisClient>>>>,
-  remote_tx: Rc<RefCell<VecDeque<OneshotSender<Result<(), RedisError>>>>>,
-  cmd_queue: Rc<RefCell<VecDeque<RedisCommand>>>,
-)
-  -> ConnectionFuture
-{
-  Box::new(lazy(move || {
-
-    let memo = (
-      client,
-      handle,
-      config,
-      state,
-      error_tx,
-      message_tx,
-      command_tx,
-      connect_tx,
-      reconnect_tx,
-      remote_tx
-    );
-
-    // TODO change this to queue up commands while the cluster's state is being refreshed
-    loop_fn(memo, move |(client, handle, config, state, error_tx, message_tx, command_tx, connect_tx, reconnect_tx, remote_tx)| {
-
-      let cluster_handle = handle.clone();
-      let key = utils::read_auth_key(&config);
-
-      let mult_client = client.clone();
-      let mult_config = config.clone();
-      let mult_message_tx = message_tx.clone();
-      let mult_error_tx = error_tx.clone();
-      let mult_command_tx = command_tx.clone();
-      let mult_state = state.clone();
-      let mult_connect_tx = connect_tx.clone();
-      let mult_reconnect_tx = reconnect_tx.clone();
-      let mult_remote_tx = remote_tx.clone();
-      let mult_cmd_queue = cmd_queue.clone();
-
-      let cluster_config = config.clone();
-      let (latency_stats, size_stats) = client.metrics_trackers_cloned();
-      let init_size_stats = size_stats.clone();
-
-      let uses_tls = config.borrow().tls();
-
-      let init_handle = handle.clone();
-
-      utils::build_cluster_cache(handle.clone(), &config, size_stats.clone()).and_then(move |cache: ClusterKeyCache| {
-        if uses_tls {
-          init_tls_transports(cluster_config, cluster_handle, key, init_size_stats, cache)
-        }else{
-          Box::new(utils::create_all_transports(cluster_config, cluster_handle, &cache, key, init_size_stats).map(move |result| {
-            (Either::B(result), cache)
-          }))
-        }
-      })
-      .and_then(move |(mut transports, cache)| {
-        let (tx, rx): (UnboundedSender<RedisCommand>, UnboundedReceiver<RedisCommand>) = unbounded();
-        let cmd_queue_tx = tx.clone();
-
-        let (multiplexer_ft, commands_ft) = match transports {
-          Either::A(transports) => {
-            let multiplexer = Multiplexer::new(
-              mult_config.clone(),
-              mult_message_tx.clone(),
-              mult_error_tx.clone(),
-              mult_command_tx.clone(),
-              mult_state.clone(),
-              latency_stats,
-              size_stats,
-              mult_cmd_queue.clone()
-            );
-            multiplexer.sinks.set_cluster_cache(cache);
-
-            for (server, transport) in transports.into_iter() {
-              let (sink, stream) = transport.split();
-
-              multiplexer.sinks.set_clustered_sink(server, sink);
-              multiplexer.streams.add_stream(stream);
-            }
-
-            // resolves when inbound responses stop
-            let multiplexer_ft = utils::create_multiplexer_ft(multiplexer.clone(), mult_state.clone());
-            // resolves when outbound requests stop
-            let commands_ft = utils::create_commands_ft(rx, mult_error_tx, multiplexer.clone(), mult_state.clone());
-
-            utils::set_command_tx(&mult_command_tx, tx);
-            multiplexer.drain_cmd_queue(cmd_queue_tx);
-
-            (multiplexer_ft, commands_ft)
-          },
-          Either::B(transports) => {
-            let multiplexer = Multiplexer::new(
-              mult_config.clone(),
-              mult_message_tx.clone(),
-              mult_error_tx.clone(),
-              mult_command_tx.clone(),
-              mult_state.clone(),
-              latency_stats,
-              size_stats,
-              mult_cmd_queue.clone()
-            );
-            multiplexer.sinks.set_cluster_cache(cache);
-
-            for (server, transport) in transports.into_iter() {
-              let (sink, stream) = transport.split();
-
-              multiplexer.sinks.set_clustered_sink(server, sink);
-              multiplexer.streams.add_stream(stream);
-            }
-
-            // resolves when inbound responses stop
-            let multiplexer_ft = utils::create_multiplexer_ft(multiplexer.clone(), mult_state.clone());
-            // resolves when outbound requests stop
-            let commands_ft = utils::create_commands_ft(rx, mult_error_tx, multiplexer.clone(), mult_state.clone());
-
-            utils::set_command_tx(&mult_command_tx, tx);
-            multiplexer.drain_cmd_queue(cmd_queue_tx);
-
-            (multiplexer_ft, commands_ft)
-          }
-        };
-
-        let init_state = mult_state.clone();
-        init_handle.spawn_fn(move || {
-          utils::emit_connect(&mult_connect_tx, mult_remote_tx, &mult_client);
-          let _ = utils::emit_reconnect(&mult_reconnect_tx, &mult_client);
-          client_utils::set_client_state(&init_state, ClientState::Connected);
-
-          Ok::<_, ()>(())
-        });
-
-        utils::create_connection_ft(commands_ft, multiplexer_ft, mult_state)
-      })
-      .then(move |result| {
-        match result {
-          Ok(_) => Ok::<Loop<_, _>, RedisError>(Loop::Break(None)),
-          Err(e) => match *e.kind() {
-            RedisErrorKind::Cluster => {
-              Ok(Loop::Continue((client, handle, config, state, error_tx, message_tx, command_tx, connect_tx, reconnect_tx, remote_tx)))
-            },
-            _ => {
-              utils::emit_connect_error(&connect_tx, remote_tx, &e);
-
-              Ok(Loop::Break(Some(e)))
-            }
-          }
-        }
-      })
-    }).from_err::<RedisError>()
-  }))
-}
-
-#[cfg(feature="enable-tls")]
-type TlsTransportSink = SplitSink<Framed<TlsStream<TcpStream>, RedisCodec>>;
-#[cfg(feature="enable-tls")]
-type TlsTransportStream = SplitStream<Framed<TlsStream<TcpStream>, RedisCodec>>;
-
-#[cfg(not(feature="enable-tls"))]
-type TlsTransportSink = SplitSink<Framed<TcpStream, RedisCodec>>;
-#[cfg(not(feature="enable-tls"))]
-type TlsTransportStream = SplitStream<Framed<TcpStream, RedisCodec>>;
-
-type TcpTransportSink = SplitSink<Framed<TcpStream, RedisCodec>>;
-type TcpTransportStream = SplitStream<Framed<TcpStream, RedisCodec>>;
-
-type SplitTlsTransport = (TlsTransportSink, TlsTransportStream);
-type SplitTcpTransport = (TcpTransportSink, TcpTransportStream);
-
-#[cfg(feature="enable-tls")]
-fn create_centralized_transport_tls(addr: &SocketAddr, handle: &Handle, config: Rc<RefCell<RedisConfig>>, state: Arc<RwLock<ClientState>>, size_stats: Arc<RwLock<SizeTracker>>)
-  -> Box<Future<Item=Either<SplitTlsTransport, SplitTcpTransport>, Error=RedisError>>
-{
-  Box::new(utils::create_transport_tls(&addr, &handle, config, state, size_stats).map(|(sink, stream)| {
-    Either::A((sink, stream))
-  }))
-}
-
-#[cfg(not(feature="enable-tls"))]
-fn create_centralized_transport_tls(addr: &SocketAddr, handle: &Handle, config: Rc<RefCell<RedisConfig>>, state: Arc<RwLock<ClientState>>, size_stats: Arc<RwLock<SizeTracker>>)
-  -> Box<Future<Item=Either<SplitTlsTransport, SplitTcpTransport>, Error=RedisError>>
-{
-  Box::new(utils::create_transport_tls(&addr, &handle, config, state, size_stats).map(|(sink, stream)| {
-    Either::A((sink, stream))
-  }))
-}
-
-fn create_centralized_transport(addr: &SocketAddr, handle: &Handle, config: Rc<RefCell<RedisConfig>>, state: Arc<RwLock<ClientState>>, size_stats: Arc<RwLock<SizeTracker>>)
-  -> Box<Future<Item=Either<SplitTlsTransport, SplitTcpTransport>, Error=RedisError>>
-{
-  Box::new(utils::create_transport(&addr, &handle, config, state, size_stats).map(|(sink, stream)| {
-    Either::B((sink, stream))
-  }))
-}
-
-fn init_centralized(
-  client: RedisClient,
-  handle: &Handle,
-  config: Rc<RefCell<RedisConfig>>,
-  state: Arc<RwLock<ClientState>>,
-  error_tx: Rc<RefCell<VecDeque<UnboundedSender<RedisError>>>>,
-  message_tx: Rc<RefCell<VecDeque<UnboundedSender<(String, RedisValue)>>>>,
-  command_tx: Rc<RefCell<Option<UnboundedSender<RedisCommand>>>>,
-  connect_tx: Rc<RefCell<VecDeque<OneshotSender<Result<RedisClient, RedisError>>>>>,
-  reconnect_tx: Rc<RefCell<VecDeque<UnboundedSender<RedisClient>>>>,
-  remote_tx: Rc<RefCell<VecDeque<OneshotSender<Result<(), RedisError>>>>>,
-  cmd_queue: Rc<RefCell<VecDeque<RedisCommand>>>)
-  -> ConnectionFuture
-{
-  let addr_str = fry!(utils::read_centralized_host(&config));
-  let mut addr = fry!(addr_str.to_socket_addrs());
-
-  let addr = match addr.next() {
-    Some(a) => a,
-    None => return client_utils::future_error(RedisError::new(
-      RedisErrorKind::Unknown, format!("Could not resolve hostname {}.", addr_str)
-    ))
-  };
-
-  let init_handle = handle.clone();
-  client_utils::set_client_state(&state, ClientState::Connecting);
-
-  let error_connect_tx = connect_tx.clone();
-  let error_remote_tx = remote_tx.clone();
-  let (latency_stats, size_stats) = client.metrics_trackers_cloned();
-
-  let transport_ft = if config.borrow().tls() {
-    create_centralized_transport_tls(&addr, &handle, config.clone(), state.clone(), size_stats.clone())
-  }else{
-    create_centralized_transport(&addr, &handle, config.clone(), state.clone(), size_stats.clone())
-  };
-
-  Box::new(transport_ft.and_then(move |transport| {
-    let (tx, rx): (UnboundedSender<RedisCommand>, UnboundedReceiver<RedisCommand>) = unbounded();
-    let cmd_queue_tx = tx.clone();
-
-    let (multiplexer_ft, commands_ft) = match transport {
-      Either::A((redis_sink, redis_stream)) => {
-        let multiplexer = Multiplexer::new(
-          config.clone(),
-          message_tx.clone(),
-          error_tx.clone(),
-          command_tx.clone(),
-          state.clone(),
-          latency_stats,
-          size_stats,
-          cmd_queue.clone()
-        );
-
-        multiplexer.sinks.set_centralized_sink(redis_sink);
-        multiplexer.streams.add_stream(redis_stream);
-
-        // resolves when inbound responses stop
-        let multiplexer_ft = utils::create_multiplexer_ft(multiplexer.clone(), state.clone());
-        // resolves when outbound requests stop
-        let commands_ft = utils::create_commands_ft(rx, error_tx, multiplexer.clone(), state.clone());
-
-        debug!("Redis client successfully connected.");
-        utils::set_command_tx(&command_tx, tx);
-        multiplexer.drain_cmd_queue(cmd_queue_tx);
-
-        (multiplexer_ft, commands_ft)
-      },
-      Either::B((redis_sink, redis_stream)) => {
-        let multiplexer = Multiplexer::new(
-          config.clone(),
-          message_tx.clone(),
-          error_tx.clone(),
-          command_tx.clone(),
-          state.clone(),
-          latency_stats,
-          size_stats,
-          cmd_queue.clone()
-        );
-
-        multiplexer.sinks.set_centralized_sink(redis_sink);
-        multiplexer.streams.add_stream(redis_stream);
-
-        // resolves when inbound responses stop
-        let multiplexer_ft = utils::create_multiplexer_ft(multiplexer.clone(), state.clone());
-        // resolves when outbound requests stop
-        let commands_ft = utils::create_commands_ft(rx, error_tx, multiplexer.clone(), state.clone());
-
-        debug!("Redis client successfully connected.");
-        utils::set_command_tx(&command_tx, tx);
-        multiplexer.drain_cmd_queue(cmd_queue_tx);
-
-        (multiplexer_ft, commands_ft)
-      }
-    };
-
-    let init_state = state.clone();
-    init_handle.spawn_fn(move || {
-      utils::emit_connect(&connect_tx, remote_tx, &client);
-      let _ = utils::emit_reconnect(&reconnect_tx, &client);
-      client_utils::set_client_state(&init_state, ClientState::Connected);
-
-      Ok::<_, ()>(())
-    });
-
-    // resolves when both sides of the channel stop
-    // resolve the outer future when the socket is connected and authenticated
-    // the inner future `connection_ft` resolves when the connection is closed by either end
-    utils::create_connection_ft(commands_ft, multiplexer_ft, state)
-  })
-  .then(move |result| {
-    debug!("Centralized connection future closed with result {:?}.", result);
-
-    if let Err(ref e) = result {
-      utils::emit_connect_error(&error_connect_tx, error_remote_tx, &e);
+impl Clone for Multiplexer {
+  fn clone(&self) -> Self {
+    Multiplexer {
+      clustered: self.clustered.clone(),
+      inner: self.inner.clone(),
+      last_request: self.last_request.clone(),
+      last_request_sent: self.last_request_sent.clone(),
+      last_command_callback: self.last_command_callback.clone(),
+      streams: self.streams.clone(),
+      sinks: self.sinks.clone()
     }
-
-    result
-  }))
-}
-
-#[cfg(not(feature="mock"))]
-pub fn init(
-  client: RedisClient,
-  handle: &Handle,
-  config: Rc<RefCell<RedisConfig>>,
-  state: Arc<RwLock<ClientState>>,
-  error_tx: Rc<RefCell<VecDeque<UnboundedSender<RedisError>>>>,
-  message_tx: Rc<RefCell<VecDeque<UnboundedSender<(String, RedisValue)>>>>,
-  command_tx: Rc<RefCell<Option<UnboundedSender<RedisCommand>>>>,
-  connect_tx: Rc<RefCell<VecDeque<OneshotSender<Result<RedisClient, RedisError>>>>>,
-  reconnect_tx: Rc<RefCell<VecDeque<UnboundedSender<RedisClient>>>>,
-  remote_tx: Rc<RefCell<VecDeque<OneshotSender<Result<(), RedisError>>>>>,
-  cmd_queue: Rc<RefCell<VecDeque<RedisCommand>>>
-) -> ConnectionFuture
-{
-  let is_clustered = {
-    let config_ref = config.borrow();
-
-    match *config_ref {
-      RedisConfig::Centralized { .. } => false,
-      RedisConfig::Clustered { .. } => true
-    }
-  };
-
-  if is_clustered {
-    init_clustered(client,handle.clone(), config, state, error_tx, message_tx, command_tx, connect_tx, reconnect_tx, remote_tx, cmd_queue)
-  }else{
-    init_centralized(client,handle, config, state, error_tx, message_tx, command_tx, connect_tx, reconnect_tx, remote_tx, cmd_queue)
   }
 }
 
-#[cfg(not(feature="mock"))]
-pub fn init_with_policy(
-  client: RedisClient,
-  handle: &Handle,
-  config: Rc<RefCell<RedisConfig>>,
-  state: Arc<RwLock<ClientState>>,
-  closed: Arc<RwLock<bool>>,
-  error_tx: Rc<RefCell<VecDeque<UnboundedSender<RedisError>>>>,
-  message_tx: Rc<RefCell<VecDeque<UnboundedSender<(String, RedisValue)>>>>,
-  command_tx: Rc<RefCell<Option<UnboundedSender<RedisCommand>>>>,
-  reconnect_tx: Rc<RefCell<VecDeque<UnboundedSender<RedisClient>>>>,
-  connect_tx: Rc<RefCell<VecDeque<OneshotSender<Result<RedisClient, RedisError>>>>>,
-  remote_tx: Rc<RefCell<VecDeque<OneshotSender<Result<(), RedisError>>>>>,
-  cmd_queue: Rc<RefCell<VecDeque<RedisCommand>>>,
-  policy: ReconnectPolicy,
-) -> Box<Future<Item=(), Error=RedisError>> {
+impl fmt::Debug for Multiplexer {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    write!(f, "[Redis Multiplexer]")
+  }
+}
 
-  let handle = handle.clone();
-  let timer = Timer::default();
+impl Multiplexer {
 
-  Box::new(lazy(move || {
+  pub fn new(inner: &Arc<RedisClientInner>) -> Multiplexer {
+    let inner = inner.clone();
 
-    loop_fn((handle, timer, policy), move |(handle, timer, policy)| {
+    let (streams, sinks, clustered) = {
+      let config_guard = inner.config.read();
+      let config_ref = config_guard.deref();
 
-      let (_client, _config, _state, _error_tx, _message_tx, _command_tx, _connect_tx, _reconnect_tx, _remote_tx, _cmd_queue) = (
-        client.clone(),
-        config.clone(),
-        state.clone(),
-        error_tx.clone(),
-        message_tx.clone(),
-        command_tx.clone(),
-        connect_tx.clone(),
-        reconnect_tx.clone(),
-        remote_tx.clone(),
-        cmd_queue.clone()
-      );
+      let mut clustered = false;
 
-      let reconnect_tx_copy = reconnect_tx.clone();
-      let command_tx_copy = command_tx.clone();
-      let state_copy = state.clone();
-      let error_tx_copy = error_tx.clone();
-      let client_copy = client.clone();
-      let connect_tx_copy = connect_tx.clone();
-      let message_tx_copy = message_tx.clone();
-      let closed_copy = closed.clone();
-      let remote_tx_copy = remote_tx.clone();
+      let streams = match *config_ref {
+        RedisConfig::Centralized { .. } => Streams::Centralized(Rc::new(RefCell::new(None))),
+        RedisConfig::Clustered { .. } => Streams::Clustered(Rc::new(RefCell::new(Vec::new())))
+      };
+      let sinks = match *config_ref {
+        RedisConfig::Centralized { .. } => {
+          Sinks::Centralized(Rc::new(RefCell::new(None)))
+        },
+        RedisConfig::Clustered { .. } => {
+          clustered = true;
 
-      let is_clustered = {
-        let config_ref = _config.borrow();
-        match *config_ref {
-          RedisConfig::Centralized {..} => false,
-          RedisConfig::Clustered {..} => true
+          Sinks::Clustered {
+            // safe b/c when the first arg is None nothing runs that could return an error.
+            // see the `ClusterKeyCache::new()` definition
+            cluster_cache: Rc::new(RefCell::new(ClusterKeyCache::new(None).unwrap())),
+            sinks: Rc::new(RefCell::new(BTreeMap::new()))
+          }
         }
       };
 
-      let connection_ft = if is_clustered {
-        Box::new(init_clustered(client_copy, handle.clone(), _config, _state,
-          _error_tx, _message_tx, _command_tx, _connect_tx, _reconnect_tx, _remote_tx, _cmd_queue))
-      }else{
-        Box::new(init_centralized(client_copy, &handle, _config, _state, _error_tx,
-          _message_tx, _command_tx, _connect_tx, _reconnect_tx, _remote_tx, _cmd_queue))
-      };
+      (streams, sinks, clustered)
+    };
+    let last_request = Rc::new(RefCell::new(None));
+    let last_request_sent = Rc::new(RefCell::new(None));
+    let last_command_callback = Rc::new(RefCell::new(None));
 
-      Box::new(connection_ft.then(move |result| {
-        utils::reconnect(handle, timer, policy, state_copy, closed_copy,error_tx_copy, message_tx_copy,
-         command_tx_copy, reconnect_tx_copy, connect_tx_copy, remote_tx_copy, result)
-      }))
+    Multiplexer {
+      inner,
+      streams,
+      sinks,
+      clustered,
+      last_command_callback,
+      last_request,
+      last_request_sent
+    }
+  }
+
+  pub fn is_clustered(&self) -> bool {
+    self.clustered
+  }
+
+  pub fn set_last_command_callback(&self, caller: Option<LastCommandCaller>) {
+    utils::set_option(&self.last_command_callback, caller);
+  }
+
+  pub fn take_last_command_callback(&self) -> Option<LastCommandCaller> {
+    utils::take_last_command_callback(&self.last_command_callback)
+  }
+
+  pub fn set_last_request(&self, cmd: Option<RedisCommand>) {
+    utils::set_option(&self.last_request_sent, Some(Instant::now()));
+    utils::set_option(&self.last_request, cmd);
+  }
+
+  pub fn take_last_request(&self) -> Option<RedisCommand> {
+    utils::take_last_request(&self.last_request_sent, &self.inner, &self.last_request)
+  }
+
+  /// Send a command to the Redis server(s).
+  pub fn write_command(&self, request: &RedisCommand) -> Box<Future<Item=(), Error=RedisError>> {
+    trace!("Multiplexer sending command {:?}", request.kind);
+
+    let no_cluster = request.no_cluster();
+    let key = if self.is_clustered() {
+      request.extract_key().map(|s| s.to_owned())
+    }else{
+      None
+    };
+
+    let frame = match request.to_frame() {
+      Ok(f) => f,
+      Err(e) => return client_utils::future_error(e)
+    };
+
+    if request.kind == RedisCommandKind::Quit {
+      self.sinks.quit(frame)
+    }else{
+      self.sinks.write_command(key, frame, no_cluster)
+    }
+  }
+
+  /// Listen on the TCP socket(s) for incoming frames. Since the multiplexer instance is used for managing
+  /// both incoming and outgoing frames it's necessary for this function to use an `Rc<Multiplexer>` instead
+  /// of `self`. The `new()` function returns a `Rc<Multiplexer>` instead of just a `Multiplexer` for
+  /// this reason.
+  ///
+  /// The future returned here resolves when the socket is closed.
+  pub fn listen(&self) -> Box<Future<Item=(), Error=()>> {
+    let frame_stream = match self.streams.listen() {
+      Ok(stream) => stream,
+      Err(e) => {
+        // notify the last caller on the command stream that the new stream couldn't be initialized
+
+        unimplemented!()
+      }
+    };
+    let final_self = self.clone();
+    let final_inner = self.inner.clone();
+
+    let inner = self.inner.clone();
+    let last_request = self.last_request.clone();
+    let last_request_sent = self.last_request_sent.clone();
+    let last_command_callback = self.last_command_callback.clone();
+    let streams = self.streams.clone();
+    let sinks = self.sinks.clone();
+
+    let final_last_request = last_request.clone();
+    let final_last_command_callback = last_command_callback.clone();
+
+    Box::new(frame_stream.fold((inner, last_request, last_request_sent, last_command_callback), |memo, frame: Frame| {
+      let (inner, last_request, last_request_sent, last_command_callback) = memo;
+      trace!("Multiplexer stream recv frame.");
+
+      if frame.kind() == FrameKind::Moved || frame.kind() == FrameKind::Ask {
+        // pause commands to refresh the cached cluster state
+        warn!("Recv MOVED or ASK error.");
+        Err(RedisError::new(RedisErrorKind::Cluster, ""))
+      }else{
+        utils::process_frame(&inner, &last_request, &last_request_sent, &last_command_callback, frame);
+        Ok((inner, last_request, last_request_sent, last_command_callback))
+      }
     })
-    .map(|_: ()| ())
-  })
-  .from_err::<RedisError>())
+    .then(move |mut result| {
+      if let Err(ref e) = result {
+        warn!("Multiplexer frame stream closed with error? {:?}", e);
+      }else{
+        warn!("Multiplexer frame stream closed without error.");
+      }
+
+      if let Ok((ref inner, _, _, _)) = result {
+        if client_utils::read_client_state(&inner.state) != ClientState::Disconnecting {
+          // if the connection died but the state is not Disconnecting then the user didn't `quit`, so this should be handled as an error so a reconnect occurs
+          result = Err(RedisError::new(RedisErrorKind::IO, "Connection closed abruptly."));
+        }
+      }
+      client_utils::set_client_state(&final_inner.state, ClientState::Disconnected);
+
+      streams.close();
+      sinks.close();
+
+      match result {
+        Ok(_) => {
+          // notify the caller that this future has finished via the last callback
+          let last_command_callback = match final_last_command_callback.borrow_mut().take() {
+            Some(tx) => tx,
+            None => return Ok(())
+          };
+
+          if let Err(e) = last_command_callback.send(None) {
+            warn!("Error notifying last command callback of the incoming message stream ending.");
+          }
+          Ok(())
+        },
+        Err(e) => {
+          debug!("Handling error on multiplexer frame stream: {:?}", e);
+
+          // send a message to the command stream processing loop with the last message and the error when the stream closed
+          let last_command_callback = match final_last_command_callback.borrow_mut().take() {
+            Some(tx) => tx,
+            None => {
+              debug!("Couldn't find last command callback on error in multiplexer frame stream.");
+
+              // since there's no request pending in the command stream we have to send a message via the message queue in order to force a reconnect event to occur.
+              if let Some(ref tx) = final_inner.command_tx.read().deref() {
+                tx.unbounded_send(RedisCommand::new(RedisCommandKind::_Close, vec![], None));
+              }
+
+              return Ok(());
+            }
+          };
+          let last_command = match final_last_request.borrow_mut().take() {
+            Some(cmd) => cmd,
+            None => {
+              warn!("Couldn't find last command on error in multiplexer frame stream.");
+              return Ok(());
+            }
+          };
+
+          if let Err(e) = last_command_callback.send(Some((last_command, e))) {
+            error!("Error notifying the last command callback of the incoming message stream ending with an error.");
+          }
+          Ok(())
+        }
+      }
+    }))
+  }
+
+
 }
 
-#[cfg(feature="mock")]
-pub use mocks::init;
-#[cfg(feature="mock")]
-pub use mocks::init_with_policy;
+
+
+
 
