@@ -51,7 +51,6 @@ use crate::multiplexer::types::{
 use std::sync::Arc;
 use parking_lot::RwLock;
 use std::time::Instant;
-use crate::protocol::types::RedisCommandKind::Multi;
 
 pub type LastCommandCaller = OneshotSender<Option<(RedisCommand, RedisError)>>;
 
@@ -62,7 +61,8 @@ pub type LastCommandCaller = OneshotSender<Option<(RedisCommand, RedisError)>>;
 /// Most commands in the Redis API follow a simple request-response pattern, however the publish-subscribe
 /// interface and bl* commands do not. Due to the fact that a client can switch between these interfaces at will
 /// a more complex multiplexing layer is needed than is currently supported via the generic pipelined/multiplexed
-/// interfaces supported by tokio-proto.
+/// interfaces in tokio-proto.
+#[derive(Clone)]
 pub struct Multiplexer {
   /// Whether or not the multiplexer is interacting with a clustered Redis deployment.
   pub clustered: bool,
@@ -81,21 +81,6 @@ pub struct Multiplexer {
   pub streams: Streams,
   /// Outgoing sinks to the Redis server.
   pub sinks: Sinks,
-}
-
-
-impl Clone for Multiplexer {
-  fn clone(&self) -> Self {
-    Multiplexer {
-      clustered: self.clustered.clone(),
-      inner: self.inner.clone(),
-      last_request: self.last_request.clone(),
-      last_request_sent: self.last_request_sent.clone(),
-      last_command_callback: self.last_command_callback.clone(),
-      streams: self.streams.clone(),
-      sinks: self.sinks.clone()
-    }
-  }
 }
 
 impl fmt::Debug for Multiplexer {
@@ -196,30 +181,44 @@ impl Multiplexer {
     }
   }
 
-  /// Listen on the TCP socket(s) for incoming frames. Since the multiplexer instance is used for managing
-  /// both incoming and outgoing frames it's necessary for this function to use an `Rc<Multiplexer>` instead
-  /// of `self`. The `new()` function returns a `Rc<Multiplexer>` instead of just a `Multiplexer` for
-  /// this reason.
+  /// Listen on the TCP socket(s) for incoming frames.
   ///
   /// The future returned here resolves when the socket is closed.
   pub fn listen(&self) -> Box<Future<Item=(), Error=()>> {
-    let frame_stream = match self.streams.listen() {
-      Ok(stream) => stream,
-      Err(e) => {
-        // notify the last caller on the command stream that the new stream couldn't be initialized
-
-        unimplemented!()
-      }
-    };
-    let final_self = self.clone();
-    let final_inner = self.inner.clone();
-
     let inner = self.inner.clone();
     let last_request = self.last_request.clone();
     let last_request_sent = self.last_request_sent.clone();
     let last_command_callback = self.last_command_callback.clone();
     let streams = self.streams.clone();
     let sinks = self.sinks.clone();
+
+    let frame_stream = match self.streams.listen() {
+      Ok(stream) => stream,
+      Err(e) => {
+        // notify the last caller on the command stream that the new stream couldn't be initialized
+        error!("Could not listen for protocol frames: {:?}", e);
+
+        let last_command_callback = match self.last_command_callback.borrow_mut().take() {
+          Some(tx) => tx,
+          None => return client_utils::future_error_generic(())
+        };
+        let last_command = match self.last_request.borrow_mut().take() {
+          Some(cmd) => cmd,
+          None => {
+            warn!("Couldn't find last command on error in multiplexer frame stream.");
+            RedisCommand::new(RedisCommandKind::Ping, vec![], None)
+          }
+        };
+
+        if let Err(e) = last_command_callback.send(Some((last_command, e))) {
+          warn!("Error notifying last command callback of the incoming message stream ending.");
+        }
+
+        return client_utils::future_error_generic(());
+      }
+    };
+    let final_self = self.clone();
+    let final_inner = self.inner.clone();
 
     let final_last_request = last_request.clone();
     let final_last_command_callback = last_command_callback.clone();
