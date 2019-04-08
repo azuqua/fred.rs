@@ -60,6 +60,8 @@ use std::net::{
   SocketAddr
 };
 
+use crate::error::*;
+
 use tokio_io::codec::Framed;
 use crate::protocol::RedisCodec;
 
@@ -407,7 +409,7 @@ fn build_clustered_multiplexer(handle: Handle, inner: Arc<RedisClientInner>, mul
 
 /// Rebuild the connection and attempt to send the last command until it succeeds or the max number of reconnects are hit.
 fn rebuild_connection(handle: Handle, inner: Arc<RedisClientInner>, multiplexer: Multiplexer, force_no_backoff: bool, last_command: RedisCommand) -> Box<Future<Item=(Handle, Arc<RedisClientInner>, Multiplexer, Option<RedisError>), Error=RedisError>> {
-  Box::new(loop_fn((handle, inner, multiplexer, force_no_backoff, last_command), move |(handle, inner, multiplexer, force_no_backoff, last_command)| {
+  Box::new(loop_fn((handle, inner, multiplexer, force_no_backoff, last_command), move |(handle, inner, multiplexer, force_no_backoff, mut last_command)| {
     multiplexer.sinks.close();
     multiplexer.streams.close();
 
@@ -427,17 +429,32 @@ fn rebuild_connection(handle: Handle, inner: Arc<RedisClientInner>, multiplexer:
       };
       client_utils::set_client_state(&inner.state, ClientState::Connected);
 
+      if last_command.max_attempts_exceeded() {
+        warn!("Not retrying command after multiple failed attempts sending: {:?}", last_command.kind);
+        if let Some(tx) = last_command.tx.take() {
+          let _ = tx.send(Err(RedisError::new(RedisErrorKind::Unknown, "Max write attempts exceeded.")));
+        }
+
+        return client_utils::future_ok((handle, inner, multiplexer, None));
+      }
+
       debug!("Retry sending last command after building connection: {:?}", last_command.kind);
 
       let (tx, rx) = oneshot_channel();
       multiplexer.set_last_command_callback(Some(tx));
 
-      let write_ft = multiplexer.write_command(&last_command);
+      let write_ft = multiplexer.write_command(&mut last_command);
       multiplexer.set_last_request(Some(last_command));
 
-      Box::new(write_ft.then(move |result| Ok((handle, inner, multiplexer, rx, result))))
+      Box::new(write_ft.then(move |result| Ok((handle, inner, multiplexer, Some((rx, result))))))
     })
-    .and_then(move |(handle, inner, multiplexer, rx, result)| {
+    .and_then(move |(handle, inner, multiplexer, result)| {
+      let (rx, result) = match result {
+        Some((rx, result)) => (rx, result),
+        // we didnt attempt to send the last command again, so break out
+        None => return client_utils::future_ok(Loop::Break((handle, inner, multiplexer, None)))
+      };
+
       if let Err(e) = result {
         warn!("Error writing command: {:?}", e);
         if let Some(ref mut p) = inner.policy.write().deref_mut() {
@@ -530,7 +547,7 @@ fn create_commands_ft(handle: Handle, inner: Arc<RedisClientInner>) -> Box<Futur
         let (tx, rx) = oneshot_channel();
         multiplexer.set_last_command_callback(Some(tx));
 
-        let write_ft = multiplexer.write_command(&command);
+        let write_ft = multiplexer.write_command(&mut command);
         multiplexer.set_last_request(Some(command));
 
         Box::new(write_ft.then(move |result| {

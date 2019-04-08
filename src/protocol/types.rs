@@ -31,6 +31,7 @@ pub const CR: char = '\r';
 pub const LF: char = '\n';
 
 pub const REDIS_CLUSTER_SLOTS: u16 = 16384;
+pub const MAX_COMMAND_ATTEMPTS: usize = 3;
 
 use redis_protocol::types::{
   FrameKind as ProtocolFrameKind,
@@ -601,7 +602,9 @@ pub struct RedisCommand {
   pub kind: RedisCommandKind,
   pub args: Vec<RedisValue>,
   /// Sender for notifying the caller that a response was received.
-  pub tx: ResponseSender
+  pub tx: ResponseSender,
+  /// Number of times the request was sent to the server.
+  pub attempted: usize
 }
 
 impl fmt::Debug for RedisCommand {
@@ -614,8 +617,17 @@ impl RedisCommand {
 
   pub fn new(kind: RedisCommandKind, args: Vec<RedisValue>, tx: ResponseSender) -> RedisCommand {
     RedisCommand {
-      kind, args, tx
+      kind, args, tx,
+      attempted: 0
     }
+  }
+
+  pub fn incr_attempted(&mut self) {
+    self.attempted += 1;
+  }
+
+  pub fn max_attempts_exceeded(&self) -> bool {
+    self.attempted >= MAX_COMMAND_ATTEMPTS
   }
 
   /// Convert to a single frame with an array of bulk strings (or null).

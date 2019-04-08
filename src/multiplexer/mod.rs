@@ -159,8 +159,9 @@ impl Multiplexer {
   }
 
   /// Send a command to the Redis server(s).
-  pub fn write_command(&self, request: &RedisCommand) -> Box<Future<Item=(), Error=RedisError>> {
+  pub fn write_command(&self, request: &mut RedisCommand) -> Box<Future<Item=(), Error=RedisError>> {
     trace!("Multiplexer sending command {:?}", request.kind);
+    request.incr_attempted();
 
     let no_cluster = request.no_cluster();
     let key = if self.is_clustered() {
