@@ -97,6 +97,8 @@ pub trait RedisClientBorrowed {
 
   fn expire_at<K: Into<RedisKey>>(&self, key: K, timestamp: i64) -> Box<Future<Item=bool, Error=RedisError>>;
 
+  fn persist<K: Into<RedisKey>>(&self, key: K) -> Box<Future<Item=bool, Error=RedisError>>;
+
   fn flushdb(&self, _async: bool) -> Box<Future<Item=String, Error=RedisError>>;
 
   fn getrange<K: Into<RedisKey>>(&self, key: K, start: usize, end: usize) -> Box<Future<Item=String, Error=RedisError>>;
@@ -355,6 +357,15 @@ impl RedisClientBorrowed for RedisClient {
   /// <https://redis.io/commands/expireat>
   fn expire_at<K: Into<RedisKey>>(&self, key: K, timestamp: i64) -> Box<Future<Item=bool, Error=RedisError>> {
     commands::expire_at(&self.inner, key, timestamp)
+  }
+
+  /// Remove the existing timeout on key, turning the key from volatile (a key with an expire set) 
+  /// to persistent (a key that will never expire as no timeout is associated).
+  /// Return `true` if timeout was removed, `false` if key does not exist
+  /// 
+  /// <https://redis.io/commands/persist>
+  fn persist<K: Into<RedisKey>>(&self, key: K) -> Box<Future<Item=bool, Error=RedisError>>{
+    commands::persist(&self.inner, key)
   }
 
   /// Delete all the keys in the currently selected database.
