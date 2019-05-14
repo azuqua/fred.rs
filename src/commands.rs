@@ -88,6 +88,7 @@ pub fn flushall(inner: &Arc<RedisClientInner>, _async: bool) -> Box<Future<Item=
   }))
 }
 
+
 pub fn get<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Box<Future<Item=Option<RedisValue>, Error=RedisError>> {
   let key = key.into();
 
@@ -515,8 +516,6 @@ pub fn exists<K: Into<MultipleKeys>>(inner: &Arc<RedisClientInner>, keys: K) -> 
     }
   }))
 }
-
-
 
 pub fn expire<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, seconds: i64) -> Box<Future<Item=bool, Error=RedisError>> {
   let key = key.into();

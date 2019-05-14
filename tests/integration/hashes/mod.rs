@@ -80,8 +80,6 @@ pub fn should_check_hexists(client: RedisClient) -> Box<Future<Item=(), Error=Re
   }))
 }
 
-
-
 pub fn should_read_large_hash(client: RedisClient) -> Box<Future<Item=(), Error=RedisError>> {
   // set 1000 4k strings in a hashmap, then read in hkeys and hvals
   let mut keys = Vec::with_capacity(1000);
