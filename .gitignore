@@ -5,8 +5,8 @@ Cargo.lock
 lib/openssl_*/*
 !lib/openssl_*/.gitkeep
 
-test/tmp/*
-!test/tmp/.gitkeep
+tests/tmp/*
+!tests/tmp/.gitkeep
 
 .vscode
 .idea
