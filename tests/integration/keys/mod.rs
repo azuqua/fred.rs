@@ -100,3 +100,26 @@ pub fn should_set_and_get_random_keys(client: RedisClient) -> Box<Future<Item=()
   })
   .map(|_| ()))
 }
+
+pub fn should_expire_and_persist(client: RedisClient)-> Box<Future<Item=(), Error=RedisError>>{
+  Box::new(client.set("foo", "bar", None, None).and_then(|(client, _)| {
+    client.get("foo")
+  })
+  .and_then(|(client, val)| {
+    let val = match val {
+      Some(v) => v,
+      None => panic!("Expected value for foo not found.")
+    };
+
+    assert_eq!(val.into_string().unwrap(), "bar");
+    client.expire("foo",10)
+  })
+  .and_then(|(client, success)| {
+    assert!(success);
+    client.persist("foo")
+  })
+  .and_then(|(client, success)| {
+    assert!(success);
+    Ok(())
+  }))
+}

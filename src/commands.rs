@@ -568,6 +568,29 @@ pub fn expire_at<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, times
   }))
 }
 
+pub fn persist<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Box<Future<Item=bool, Error=RedisError>> {
+  let key = key.into();
+
+  Box::new(utils::request_response(inner, move ||{
+    Ok((RedisCommandKind::Persist,vec![key.into()]))
+  }).and_then(|frame| {
+    let resp = protocol_utils::frame_to_single_result(frame)?;
+
+    match resp {
+      RedisValue::Integer(num) => match num {
+        0 => Ok(false),
+        1 => Ok(true),
+        _ => Err(RedisError::new(
+          RedisErrorKind::ProtocolError, "Invalid PERSIST response value."
+        ))
+      },
+      _ => Err(RedisError::new(
+        RedisErrorKind::ProtocolError, "Invalid PERSIST response."
+      ))
+    }
+  }))
+}
+
 pub fn flushdb(inner: &Arc<RedisClientInner>, _async: bool) -> Box<Future<Item=String, Error=RedisError>> {
   let args = if _async {
     vec![ASYNC.into()]

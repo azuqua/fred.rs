@@ -141,6 +141,14 @@ pub mod keys {
     })
   }
 
+  #[test]
+  fn it_should_expire_and_persist(){
+    let config = RedisConfig::default_clustered();
+    utils::setup_test_client(config, TIMER.clone(),|client| {
+      keys_tests::should_expire_and_persist(client)
+    });
+  }
+
 }
 
 pub mod hashes {
