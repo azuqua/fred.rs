@@ -37,13 +37,20 @@ use crate::multiplexer::init;
 
 use std::sync::atomic::AtomicUsize;
 
+use std::borrow::Cow;
+use std::mem;
+
+const EMPTY_STR: &'static str = "";
 const SPLIT_TIMEOUT_MS: u64 = 30_000;
 
 #[macro_use]
 use crate::utils;
 
+
 #[doc(hidden)]
 pub struct RedisClientInner {
+  /// The client ID as seen by the server.
+  pub id: RwLock<String>,
   /// The state of the underlying connection.
   pub state: RwLock<ClientState>,
   /// The redis config used for initializing connections.
@@ -72,7 +79,32 @@ pub struct RedisClientInner {
   /// A timer for handling timeouts and reconnection delays.
   pub timer: Timer,
   /// Command queue buffer size.
-  pub cmd_buffer_len: Arc<AtomicUsize>
+  pub cmd_buffer_len: Arc<AtomicUsize>,
+  /// Number of message redeliveries.
+  pub redeliver_count: Arc<AtomicUsize>
+}
+
+impl RedisClientInner {
+
+  pub fn log_client_name(&self, level: log::Level) -> Cow<'static, str> {
+    if log_enabled!(level) {
+      Cow::Owned(self.id.read().deref().to_owned())
+    }else{
+      Cow::Borrowed(EMPTY_STR)
+    }
+  }
+
+  pub fn change_client_name(&self, id: String) {
+    let mut guard = self.id.write();
+    let mut guard_ref = guard.deref_mut();
+
+    mem::replace(guard_ref, id);
+  }
+
+  pub fn client_name(&self) -> String {
+    self.id.read().deref().clone()
+  }
+
 }
 
 /// A Redis client struct.
@@ -105,8 +137,10 @@ impl RedisClient {
     let latency = LatencyStats::default();
     let req_size = SizeStats::default();
     let res_size = SizeStats::default();
+    let init_id = format!("fred-{}", utils::random_string(10));
 
     let inner = Arc::new(RedisClientInner {
+      id: RwLock::new(init_id),
       config: RwLock::new(config),
       policy: RwLock::new(None),
       state: RwLock::new(state),
@@ -120,10 +154,21 @@ impl RedisClient {
       req_size_stats: Arc::new(RwLock::new(req_size)),
       res_size_stats: Arc::new(RwLock::new(res_size)),
       timer: timer.unwrap_or(Timer::default()),
-      cmd_buffer_len: Arc::new(AtomicUsize::new(0))
+      cmd_buffer_len: Arc::new(AtomicUsize::new(0)),
+      redeliver_count: Arc::new(AtomicUsize::new(0))
     });
 
     RedisClient { inner }
+  }
+
+  /// Read the number of request redeliveries.
+  pub fn read_redelivery_count(&self) -> usize {
+    utils::read_atomic(&self.inner.redeliver_count)
+  }
+
+  /// Read and reset the number of request redeliveries.
+  pub fn take_redelivery_count(&self) -> usize {
+    utils::set_atomic(&self.inner.redeliver_count, 0)
   }
 
   /// Read the state of the underlying connection.
@@ -173,7 +218,7 @@ impl RedisClient {
     fry!(utils::check_client_state(&self.inner.state, ClientState::Disconnected));
     fry!(utils::check_and_set_closed_flag(&self.inner.closed, false));
 
-    debug!("Connecting to Redis server.");
+    debug!("{} Connecting to Redis server.", n!(self.inner));
 
     init::connect(handle, self.inner.clone())
   }
@@ -194,7 +239,7 @@ impl RedisClient {
     policy.reset_attempts();
     utils::set_reconnect_policy(&self.inner.policy, policy);
 
-    debug!("Connecting to Redis server with reconnect policy.");
+    debug!("{} Connecting to Redis server with reconnect policy.", n!(self.inner));
     init::connect(handle, self.inner.clone())
   }
 

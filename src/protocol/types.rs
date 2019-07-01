@@ -45,6 +45,42 @@ pub use redis_protocol::{
 };
 
 use crate::multiplexer::types::SplitCommand;
+use futures::sync::mpsc::UnboundedSender;
+use std::collections::VecDeque;
+
+#[derive(Clone)]
+pub enum ResponseKind {
+  Blocking {
+    tx: Option<UnboundedSender<Frame>>
+  },
+  Multiple {
+    count: usize,
+    buffer: VecDeque<Frame>
+  }
+}
+
+impl fmt::Debug for ResponseKind {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    write!(f, "[Response Kind]")
+  }
+}
+
+impl PartialEq for ResponseKind {
+  fn eq(&self, other: &ResponseKind) -> bool {
+    match *self {
+      ResponseKind::Blocking {..} => match *other {
+        ResponseKind::Blocking {..} => true,
+        ResponseKind::Multiple {..} => false
+      },
+      ResponseKind::Multiple {..} => match *other {
+        ResponseKind::Blocking {..} => false,
+        ResponseKind::Multiple {..} => true
+      }
+    }
+  }
+}
+
+impl Eq for ResponseKind {}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RedisCommandKind {
@@ -56,9 +92,9 @@ pub enum RedisCommandKind {
   BitField,
   BitOp,
   BitPos,
-  BlPop,
-  BrPop,
-  BrPopLPush,
+  BlPop(ResponseKind),
+  BrPop(ResponseKind),
+  BrPopLPush(ResponseKind),
   ClientKill,
   ClientList,
   ClientGetName,
@@ -158,11 +194,11 @@ pub enum RedisCommandKind {
   Pfmerge,
   Ping,
   Psetex,
-  Psubscribed,
+  Psubscribe(ResponseKind),
   Pubsub,
   Pttl,
   Publish,
-  Punsubscribe,
+  Punsubscribe(ResponseKind),
   Quit,
   Randomkey,
   Readonly,
@@ -246,6 +282,56 @@ pub enum RedisCommandKind {
 
 impl RedisCommandKind {
 
+  pub fn has_response_kind(&self) -> bool {
+    match *self {
+      RedisCommandKind::Punsubscribe(_)
+        | RedisCommandKind::Psubscribe(_)
+        | RedisCommandKind::BlPop(_)
+        | RedisCommandKind::BrPop(_)
+        | RedisCommandKind::BrPopLPush(_) => true,
+      _ => false
+    }
+  }
+
+  pub fn has_multiple_response_kind(&self) -> bool {
+    match *self {
+      RedisCommandKind::Punsubscribe(_)
+      | RedisCommandKind::Psubscribe(_) => true,
+      _ => false
+    }
+  }
+
+  pub fn has_blocking_response_kind(&self) -> bool {
+    match *self {
+      RedisCommandKind::BlPop(_)
+      | RedisCommandKind::BrPop(_)
+      | RedisCommandKind::BrPopLPush(_) => true,
+      _ => false
+    }
+  }
+
+  pub fn response_kind(&self) -> Option<&ResponseKind> {
+    match *self {
+      RedisCommandKind::Punsubscribe(ref k)
+      | RedisCommandKind::Psubscribe(ref k)
+      | RedisCommandKind::BlPop(ref k)
+      | RedisCommandKind::BrPop(ref k)
+      | RedisCommandKind::BrPopLPush(ref k) => Some(k),
+      _ => None
+    }
+  }
+
+  pub fn response_kind_mut(&mut self) -> Option<&mut ResponseKind> {
+    match *self {
+      RedisCommandKind::Punsubscribe(ref mut k)
+      | RedisCommandKind::Psubscribe(ref mut k)
+      | RedisCommandKind::BlPop(ref mut k)
+      | RedisCommandKind::BrPop(ref mut k)
+      | RedisCommandKind::BrPopLPush(ref mut k) => Some(k),
+      _ => None
+    }
+  }
+
   pub fn is_split(&self) -> bool {
     match *self {
       RedisCommandKind::_Split(_) => true,
@@ -284,9 +370,9 @@ impl RedisCommandKind {
       RedisCommandKind::BitField                        => "BITFIELD",
       RedisCommandKind::BitOp                           => "BITOP",
       RedisCommandKind::BitPos                          => "BITPOS",
-      RedisCommandKind::BlPop                           => "BLPOP",
-      RedisCommandKind::BrPop                           => "BRPOP",
-      RedisCommandKind::BrPopLPush                      => "BRPOPLPUSH",
+      RedisCommandKind::BlPop(_)                        => "BLPOP",
+      RedisCommandKind::BrPop(_)                        => "BRPOP",
+      RedisCommandKind::BrPopLPush(_)                   => "BRPOPLPUSH",
       RedisCommandKind::ClientKill                      => "CLIENT",
       RedisCommandKind::ClientList                      => "CLIENT",
       RedisCommandKind::ClientGetName                   => "CLIENT",
@@ -386,11 +472,11 @@ impl RedisCommandKind {
       RedisCommandKind::Pfmerge                         => "PFMERGE",
       RedisCommandKind::Ping                            => "PING",
       RedisCommandKind::Psetex                          => "PSETEX",
-      RedisCommandKind::Psubscribed                     => "PSUBSCRIBED",
+      RedisCommandKind::Psubscribe(_)                   => "PSUBSCRIBE",
       RedisCommandKind::Pubsub                          => "PUBSUB",
       RedisCommandKind::Pttl                            => "PTTL",
       RedisCommandKind::Publish                         => "PUBLISH",
-      RedisCommandKind::Punsubscribe                    => "PUNSUBSCRIBE",
+      RedisCommandKind::Punsubscribe(_)                 => "PUNSUBSCRIBE",
       RedisCommandKind::Quit                            => "QUIT",
       RedisCommandKind::Randomkey                       => "RANDOMKEY",
       RedisCommandKind::Readonly                        => "READONLY",
@@ -571,9 +657,9 @@ impl RedisCommandKind {
 
   pub fn is_blocking(&self) -> bool {
     match *self {
-      RedisCommandKind::BlPop
-      | RedisCommandKind::BrPop
-      | RedisCommandKind::BrPopLPush => true,
+      RedisCommandKind::BlPop(_)
+      | RedisCommandKind::BrPop(_)
+      | RedisCommandKind::BrPopLPush(_) => true,
       _ => false
     }
   }
@@ -662,6 +748,8 @@ impl RedisCommand {
       RedisCommandKind::Publish
       | RedisCommandKind::Subscribe
       | RedisCommandKind::Unsubscribe
+      | RedisCommandKind::Psubscribe(_)
+      | RedisCommandKind::Punsubscribe(_)
       | RedisCommandKind::Ping
       | RedisCommandKind::Info
       | RedisCommandKind::FlushAll

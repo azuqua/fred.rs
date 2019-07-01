@@ -29,6 +29,7 @@ use crate::multiplexer::{Multiplexer, LastCommandCaller};
 use crate::error::*;
 use crate::utils as client_utils;
 use crate::protocol::utils as protocol_utils;
+use crate::protocol::types::ResponseKind;
 
 use std::collections::{
   BTreeMap,
@@ -64,7 +65,6 @@ pub fn sample_latency(sent: &Rc<RefCell<Option<Instant>>>, tracker: &RwLock<Late
   let dur = Instant::now().duration_since(sent);
   let dur_ms = cmp::max(0, (dur.as_secs() * 1000) + dur.subsec_millis() as u64) as i64;
 
-  trace!("Sampled latency of {} ms.", dur_ms);
   tracker.write().deref_mut().sample(dur_ms);
 }
 
@@ -229,6 +229,46 @@ pub fn emit_connect_error(connect_tx: &RwLock<VecDeque<OneshotSender<Result<Redi
   }
 }
 
+pub fn last_command_has_multiple_response(last_request: &Rc<RefCell<Option<RedisCommand>>>) -> bool {
+  last_request.borrow()
+    .deref()
+    .as_ref()
+    .map(|c| c.kind.has_multiple_response_kind())
+    .unwrap_or(false)
+}
+
+pub fn last_command_has_blocking_response(last_request: &Rc<RefCell<Option<RedisCommand>>>) -> bool {
+  last_request.borrow()
+    .deref()
+    .as_ref()
+    .map(|c| c.kind.has_blocking_response_kind())
+    .unwrap_or(false)
+}
+
+pub fn merge_multiple_frames(frames: &mut VecDeque<Frame>) -> Frame {
+  let inner_len = frames.iter().fold(0, |count, frame| {
+    count + match frame {
+      Frame::Array(ref inner) => inner.len(),
+      _ => 1
+    }
+  });
+
+  let mut out = Vec::with_capacity(inner_len);
+
+  for frame in frames.drain(..) {
+    match frame {
+      Frame::Array(inner) => {
+        for inner_frame in inner.into_iter() {
+          out.push(inner_frame);
+        }
+      },
+      _ => out.push(frame)
+    };
+  }
+
+  Frame::Array(out)
+}
+
 pub fn process_frame(inner: &Arc<RedisClientInner>,
                      last_request: &Rc<RefCell<Option<RedisCommand>>>,
                      last_request_sent: &Rc<RefCell<Option<Instant>>>,
@@ -236,6 +276,8 @@ pub fn process_frame(inner: &Arc<RedisClientInner>,
                      frame: Frame)
 {
   if frame.is_pubsub_message() {
+    trace!("{} Processing pubsub message", n!(inner));
+
     let (channel, message) = match protocol_utils::frame_to_pubsub(frame) {
       Ok((c, m)) => (c, m),
       // TODO or maybe send to error stream
@@ -284,9 +326,64 @@ pub fn process_frame(inner: &Arc<RedisClientInner>,
 
       mem::replace(message_tx_ref, new_listeners);
     }
+  }else if last_command_has_multiple_response(last_request) {
+    let frames = {
+      let mut last_request_ref = last_request.borrow_mut();
+
+      if let Some(ref mut last_request) = last_request_ref.deref_mut() {
+        let mut response_kind = match last_request.kind.response_kind_mut() {
+          Some(k) => k,
+          None => {
+            warn!("{} Tried to read response kind but it didn't exist.", nw!(inner));
+            return;
+          }
+        };
+
+        if let ResponseKind::Multiple { ref count, ref mut buffer } = response_kind {
+          buffer.push_back(frame);
+
+          if buffer.len() < *count {
+            // move on
+            trace!("{} Waiting for {} more frames from request with multiple responses.", n!(inner), count - buffer.len());
+            None
+          }else{
+            trace!("{} Merging {} frames into one.", n!(inner), buffer.len());
+            // consolidate all the frames into one array frame
+            Some(merge_multiple_frames(buffer))
+          }
+        }else {
+          warn!("{} Invalid multiple response kind on last command.", nw!(inner));
+          return;
+        }
+      }else{
+        warn!("{} Tried to borrow last request when it didn't exist.", nw!(inner));
+        return;
+      }
+    };
+
+    if let Some(frames) = frames {
+      if let Some(m_tx) = take_last_command_callback(last_command_callback) {
+        trace!("{} Found last caller from multiplexer after multiple frames.", n!(inner));
+        let _ = m_tx.send(None);
+      }
+
+      let last_request_tx = match take_last_request(last_request_sent, inner, last_request) {
+        Some(s) => match s.tx {
+          Some(tx) => tx,
+          None => return
+        },
+        None => return
+      };
+      trace!("{} Responding to last request with frame containing multiple frames.", n!(inner));
+
+      let _ = last_request_tx.send(Ok(frames));
+    }
+  }else if last_command_has_blocking_response(last_request) {
+
+    error!("{} Using unimplemented blocking response kind.", ne!(inner));
   }else{
     if let Some(m_tx) = take_last_command_callback(last_command_callback) {
-      trace!("Found last caller from multiplexer.");
+      trace!("{} Found last caller from multiplexer.", n!(inner));
       let _ = m_tx.send(None);
     }
 
@@ -297,7 +394,7 @@ pub fn process_frame(inner: &Arc<RedisClientInner>,
       },
       None => return
     };
-    trace!("Responding to last request with frame.");
+    trace!("{} Responding to last request with frame.", n!(inner));
 
     let _ = last_request_tx.send(Ok(frame));
   }

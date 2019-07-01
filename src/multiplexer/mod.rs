@@ -85,7 +85,7 @@ pub struct Multiplexer {
 
 impl fmt::Debug for Multiplexer {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    write!(f, "[Redis Multiplexer]")
+    write!(f, "{} [Redis Multiplexer]", n!(self.inner))
   }
 }
 
@@ -159,8 +159,12 @@ impl Multiplexer {
   }
 
   /// Send a command to the Redis server(s).
-  pub fn write_command(&self, request: &mut RedisCommand) -> Box<Future<Item=(), Error=RedisError>> {
-    trace!("Multiplexer sending command {:?}", request.kind);
+  pub fn write_command(&self, inner: &Arc<RedisClientInner>, request: &mut RedisCommand) -> Box<Future<Item=(), Error=RedisError>> {
+    trace!("{} Multiplexer sending command {:?}", n!(inner), request.kind);
+    if request.attempted > 0 {
+      client_utils::incr_atomic(&inner.redeliver_count);
+    }
+
     request.incr_attempted();
 
     let no_cluster = request.no_cluster();
@@ -197,7 +201,7 @@ impl Multiplexer {
       Ok(stream) => stream,
       Err(e) => {
         // notify the last caller on the command stream that the new stream couldn't be initialized
-        error!("Could not listen for protocol frames: {:?}", e);
+        error!("{} Could not listen for protocol frames: {:?}", ne!(inner), e);
 
         let last_command_callback = match self.last_command_callback.borrow_mut().take() {
           Some(tx) => tx,
@@ -206,13 +210,13 @@ impl Multiplexer {
         let last_command = match self.last_request.borrow_mut().take() {
           Some(cmd) => cmd,
           None => {
-            warn!("Couldn't find last command on error in multiplexer frame stream.");
+            warn!("{} Couldn't find last command on error in multiplexer frame stream.", nw!(inner));
             RedisCommand::new(RedisCommandKind::Ping, vec![], None)
           }
         };
 
         if let Err(e) = last_command_callback.send(Some((last_command, e))) {
-          warn!("Error notifying last command callback of the incoming message stream ending.");
+          warn!("{} Error notifying last command callback of the incoming message stream ending.", nw!(inner));
         }
 
         return client_utils::future_error_generic(());
@@ -226,11 +230,11 @@ impl Multiplexer {
 
     Box::new(frame_stream.fold((inner, last_request, last_request_sent, last_command_callback), |memo, frame: Frame| {
       let (inner, last_request, last_request_sent, last_command_callback) = memo;
-      trace!("Multiplexer stream recv frame.");
+      trace!("{} Multiplexer stream recv frame.", n!(inner));
 
       if frame.kind() == FrameKind::Moved || frame.kind() == FrameKind::Ask {
         // pause commands to refresh the cached cluster state
-        warn!("Recv MOVED or ASK error.");
+        warn!("{} Recv MOVED or ASK error.", nw!(inner));
         Err(RedisError::new(RedisErrorKind::Cluster, ""))
       }else{
         utils::process_frame(&inner, &last_request, &last_request_sent, &last_command_callback, frame);
@@ -239,9 +243,9 @@ impl Multiplexer {
     })
     .then(move |mut result| {
       if let Err(ref e) = result {
-        warn!("Multiplexer frame stream closed with error? {:?}", e);
+        warn!("{} Multiplexer frame stream closed with error? {:?}", nw!(final_inner), e);
       }else{
-        warn!("Multiplexer frame stream closed without error.");
+        warn!("{} Multiplexer frame stream closed without error.", nw!(final_inner));
       }
 
       if let Ok((ref inner, _, _, _)) = result {
@@ -264,18 +268,18 @@ impl Multiplexer {
           };
 
           if let Err(e) = last_command_callback.send(None) {
-            warn!("Error notifying last command callback of the incoming message stream ending.");
+            warn!("{} Error notifying last command callback of the incoming message stream ending.", nw!(final_inner));
           }
           Ok(())
         },
         Err(e) => {
-          debug!("Handling error on multiplexer frame stream: {:?}", e);
+          debug!("{} Handling error on multiplexer frame stream: {:?}", n!(final_inner), e);
 
           // send a message to the command stream processing loop with the last message and the error when the stream closed
           let last_command_callback = match final_last_command_callback.borrow_mut().take() {
             Some(tx) => tx,
             None => {
-              debug!("Couldn't find last command callback on error in multiplexer frame stream.");
+              debug!("{} Couldn't find last command callback on error in multiplexer frame stream.", n!(final_inner));
 
               // since there's no request pending in the command stream we have to send a message via the message queue in order to force a reconnect event to occur.
               if let Some(ref tx) = final_inner.command_tx.read().deref() {
@@ -288,13 +292,13 @@ impl Multiplexer {
           let last_command = match final_last_request.borrow_mut().take() {
             Some(cmd) => cmd,
             None => {
-              warn!("Couldn't find last command on error in multiplexer frame stream.");
+              warn!("{} Couldn't find last command on error in multiplexer frame stream.", nw!(final_inner));
               return Ok(());
             }
           };
 
           if let Err(e) = last_command_callback.send(Some((last_command, e))) {
-            error!("Error notifying the last command callback of the incoming message stream ending with an error.");
+            error!("{} Error notifying the last command callback of the incoming message stream ending with an error.", ne!(final_inner));
           }
           Ok(())
         }
