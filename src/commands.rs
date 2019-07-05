@@ -1077,7 +1077,7 @@ pub fn smembers<K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K) -> Bo
   }))
 }
 
-pub fn psubscribe<K: Into<MultipleKeys>>(inner: &Arc<RedisClientInner>, patterns: K) -> Box<Future<Item=(), Error=RedisError>> {
+pub fn psubscribe<K: Into<MultipleKeys>>(inner: &Arc<RedisClientInner>, patterns: K) -> Box<Future<Item=Vec<usize>, Error=RedisError>> {
   let patterns = patterns.into().inner();
 
   Box::new(utils::request_response(inner, move || {
@@ -1095,13 +1095,11 @@ pub fn psubscribe<K: Into<MultipleKeys>>(inner: &Arc<RedisClientInner>, patterns
     Ok((kind, keys))
   }).and_then(|frame| {
     let result = protocol_utils::frame_to_results(frame)?;
-    println!("psubscribe results {:?}", result);
-
-    Ok(())
+    utils::pattern_pubsub_counts(result)
   }))
 }
 
-pub fn punsubscribe<K: Into<MultipleKeys>>(inner: &Arc<RedisClientInner>, patterns: K) -> Box<Future<Item=(), Error=RedisError>> {
+pub fn punsubscribe<K: Into<MultipleKeys>>(inner: &Arc<RedisClientInner>, patterns: K) -> Box<Future<Item=Vec<usize>, Error=RedisError>> {
   let patterns = patterns.into().inner();
 
   Box::new(utils::request_response(inner, move || {
@@ -1119,8 +1117,6 @@ pub fn punsubscribe<K: Into<MultipleKeys>>(inner: &Arc<RedisClientInner>, patter
     Ok((kind, keys))
   }).and_then(|frame| {
     let result = protocol_utils::frame_to_results(frame)?;
-    println!("punsubscribe results {:?}", result);
-
-    Ok(())
+    utils::pattern_pubsub_counts(result)
   }))
 }

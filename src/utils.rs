@@ -338,3 +338,24 @@ pub fn random_string(len: usize) -> String {
     .take(len)
     .collect()
 }
+
+pub fn pattern_pubsub_counts(result: Vec<RedisValue>) -> Result<Vec<usize>, RedisError> {
+  let mut out = Vec::with_capacity(result.len() / 3);
+
+  if result.len() > 0 {
+    let mut idx = 2;
+    while idx < result.len() {
+      out.push(match result[idx] {
+        RedisValue::Integer(ref i) => if *i < 0 {
+          return Err(RedisError::new(RedisErrorKind::Unknown, "Invalid pattern pubsub channel count response."));
+        }else{
+          *i as usize
+        },
+        _ => return Err(RedisError::new(RedisErrorKind::Unknown, "Invalid pattern pubsub response."))
+      });
+      idx += 3;
+    }
+  }
+
+  Ok(out)
+}

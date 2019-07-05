@@ -145,9 +145,9 @@ pub trait RedisClientBorrowed {
 
   fn smembers<K: Into<RedisKey>>(&self, key: K) -> Box<Future<Item=Vec<RedisValue>, Error=RedisError>>;
 
-  fn psubscribe<K: Into<MultipleKeys>>(&self, patterns: K) -> Box<Future<Item=(), Error=RedisError>>;
+  fn psubscribe<K: Into<MultipleKeys>>(&self, patterns: K) -> Box<Future<Item=Vec<usize>, Error=RedisError>>;
 
-  fn punsubscribe<K: Into<MultipleKeys>>(&self, patterns: K) -> Box<Future<Item=(), Error=RedisError>>;
+  fn punsubscribe<K: Into<MultipleKeys>>(&self, patterns: K) -> Box<Future<Item=Vec<usize>, Error=RedisError>>;
 
 }
 
@@ -562,15 +562,19 @@ impl RedisClientBorrowed for RedisClient {
 
   /// Subscribes the client to the given patterns.
   ///
+  /// Returns the subscription count for each of the provided patterns.
+  ///
   /// <https://redis.io/commands/psubscribe>
-  fn psubscribe<K: Into<MultipleKeys>>(&self, patterns: K) -> Box<Future<Item=(), Error=RedisError>> {
+  fn psubscribe<K: Into<MultipleKeys>>(&self, patterns: K) -> Box<Future<Item=Vec<usize>, Error=RedisError>> {
     commands::psubscribe(&self.inner, patterns)
   }
 
   /// Unsubscribes the client from the given patterns, or from all of them if none is given.
   ///
+  /// Returns the subscription count for each of the provided patterns.
+  ///
   /// <https://redis.io/commands/punsubscribe>
-  fn punsubscribe<K: Into<MultipleKeys>>(&self, patterns: K) -> Box<Future<Item=(), Error=RedisError>> {
+  fn punsubscribe<K: Into<MultipleKeys>>(&self, patterns: K) -> Box<Future<Item=Vec<usize>, Error=RedisError>> {
     commands::punsubscribe(&self.inner, patterns)
   }
 

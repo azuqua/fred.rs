@@ -56,6 +56,15 @@ pub fn create_core() -> Core {
   Core::new().unwrap()
 }
 
+
+pub fn future_error<T: 'static>(err: RedisError) -> Box<Future<Item = T, Error = RedisError>> {
+  Box::new(future::err(err))
+}
+
+pub fn future_ok<T: 'static>(d: T) -> Box<Future<Item = T, Error = RedisError>> {
+  Box::new(future::ok(d))
+}
+
 pub fn setup_test_client<F: FnOnce(RedisClient) -> TestFuture>(config: RedisConfig, timer: Timer, func: F) {
   let mut core = Core::new().unwrap();
   let handle = core.handle();
