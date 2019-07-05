@@ -1,5 +1,5 @@
 use crate::types::*;
-use crate::protocol::types::RedisCommandKind;
+use crate::protocol::types::{RedisCommandKind, ResponseKind};
 
 use futures::{
   Future,
@@ -23,12 +23,12 @@ use std::ops::{
 };
 
 use std::hash::Hash;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 const ASYNC: &'static str = "ASYNC";
 
 pub fn quit(inner: &Arc<RedisClientInner>) -> Box<Future<Item=(), Error=RedisError>> {
-  debug!("Closing Redis connection with Quit command.");
+  debug!("{} Closing Redis connection with Quit command.", n!(inner));
 
   // need to lock the closed flag so any reconnect logic running in another thread doesn't screw this up,
   // but we also don't want to hold the lock if the client is connected
@@ -36,7 +36,7 @@ pub fn quit(inner: &Arc<RedisClientInner>) -> Box<Future<Item=(), Error=RedisErr
     let mut closed_guard = inner.closed.write();
     let mut closed_ref = closed_guard.deref_mut();
 
-    debug!("Checking client state in quit command: {:?}", utils::read_client_state(&inner.state));
+    debug!("{} Checking client state in quit command: {:?}", n!(inner), utils::read_client_state(&inner.state));
     if utils::read_client_state(&inner.state) != ClientState::Connected {
       if *closed_ref {
         // client is already waiting to quit
@@ -58,7 +58,7 @@ pub fn quit(inner: &Arc<RedisClientInner>) -> Box<Future<Item=(), Error=RedisErr
   multiplexer_utils::close_connect_tx(&inner.connect_tx);
 
   if exit_early {
-    debug!("Exit early in quit command.");
+    debug!("{} Exit early in quit command.", n!(inner));
     utils::future_ok(())
   }else{
     Box::new(utils::request_response(&inner, || {
@@ -129,7 +129,7 @@ pub fn set<K: Into<RedisKey>, V: Into<RedisValue>>(inner: &Arc<RedisClientInner>
 }
 
 pub fn select(inner: &Arc<RedisClientInner>, db: u8) -> Box<Future<Item=(), Error=RedisError>> {
-  debug!("Selecting Redis database {}", db);
+  debug!("{} Selecting Redis database {}", n!(inner), db);
 
   Box::new(utils::request_response(inner, || {
     Ok((RedisCommandKind::Select, vec![RedisValue::from(db)]))
@@ -215,7 +215,7 @@ pub fn subscribe<T: Into<String>>(inner: &Arc<RedisClientInner>, channel: T) -> 
 
 pub fn unsubscribe<T: Into<String>>(inner: &Arc<RedisClientInner>, channel: T) -> Box<Future<Item=usize, Error=RedisError>> {
   // note: if this ever changes to take in more than one channel then some additional work must be done
-  // in the multiplexer to associate mutliple responses with a single request
+  // in the multiplexer to associate multiple responses with a single request
   let channel = channel.into();
 
   Box::new(utils::request_response(inner, move || {
@@ -350,12 +350,13 @@ pub fn decrby<V: Into<RedisValue>, K: Into<RedisKey>>(inner: &Arc<RedisClientInn
 }
 
 pub fn ping(inner: &Arc<RedisClientInner>) -> Box<Future<Item=String, Error=RedisError>> {
-  debug!("Pinging Redis server.");
+  let inner = inner.clone();
+  debug!("{} Pinging Redis server.", n!(inner));
 
-  Box::new(utils::request_response(inner, move || {
+  Box::new(utils::request_response(&inner, move || {
     Ok((RedisCommandKind::Ping, vec![]))
-  }).and_then(|frame| {
-    debug!("Received Redis ping response.");
+  }).and_then(move |frame| {
+    debug!("{} Received Redis ping response.", n!(inner));
 
     match protocol_utils::frame_to_single_result(frame) {
       Ok(resp) => {
@@ -452,6 +453,7 @@ pub fn client_getname(inner: &Arc<RedisClientInner>) -> Box<Future<Item=Option<S
 
 pub fn client_setname<V: Into<String>>(inner: &Arc<RedisClientInner>, name: V) -> Box<Future<Item=Option<String>, Error=RedisError>> {
   let name = name.into();
+  inner.change_client_name(name.clone());
 
   Box::new(utils::request_response(inner, move || {
     Ok((RedisCommandKind::ClientSetname, vec![name.into()]))
@@ -1072,5 +1074,49 @@ pub fn smembers<K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K) -> Bo
     Ok((RedisCommandKind::Smembers, vec![key.into()]))
   }).and_then(|frame| {
     Ok(protocol_utils::frame_to_results(frame)?)
+  }))
+}
+
+pub fn psubscribe<K: Into<MultipleKeys>>(inner: &Arc<RedisClientInner>, patterns: K) -> Box<Future<Item=Vec<usize>, Error=RedisError>> {
+  let patterns = patterns.into().inner();
+
+  Box::new(utils::request_response(inner, move || {
+    let mut keys = Vec::with_capacity(patterns.len());
+
+    for pattern in patterns.into_iter() {
+      keys.push(pattern.into());
+    }
+
+    let kind = RedisCommandKind::Psubscribe(ResponseKind::Multiple {
+      count: keys.len(),
+      buffer: VecDeque::new()
+    });
+
+    Ok((kind, keys))
+  }).and_then(|frame| {
+    let result = protocol_utils::frame_to_results(frame)?;
+    utils::pattern_pubsub_counts(result)
+  }))
+}
+
+pub fn punsubscribe<K: Into<MultipleKeys>>(inner: &Arc<RedisClientInner>, patterns: K) -> Box<Future<Item=Vec<usize>, Error=RedisError>> {
+  let patterns = patterns.into().inner();
+
+  Box::new(utils::request_response(inner, move || {
+    let mut keys = Vec::with_capacity(patterns.len());
+
+    for pattern in patterns.into_iter() {
+      keys.push(pattern.into());
+    }
+
+    let kind = RedisCommandKind::Punsubscribe(ResponseKind::Multiple {
+      count: keys.len(),
+      buffer: VecDeque::new()
+    });
+
+    Ok((kind, keys))
+  }).and_then(|frame| {
+    let result = protocol_utils::frame_to_results(frame)?;
+    utils::pattern_pubsub_counts(result)
   }))
 }

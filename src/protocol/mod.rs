@@ -24,16 +24,17 @@ use tokio_io::codec::{
 };
 
 
-#[derive(Clone)]
 pub struct RedisCodec {
+  name: String,
   req_size_stats: Arc<RwLock<SizeStats>>,
   res_size_stats: Arc<RwLock<SizeStats>>,
 }
 
 impl RedisCodec {
 
-  pub fn new(req_size_stats: Arc<RwLock<SizeStats>>, res_size_stats: Arc<RwLock<SizeStats>>) -> Self {
+  pub fn new(name: String, req_size_stats: Arc<RwLock<SizeStats>>, res_size_stats: Arc<RwLock<SizeStats>>) -> Self {
     RedisCodec {
+      name,
       req_size_stats,
       res_size_stats
     }
@@ -46,7 +47,7 @@ impl Decoder for RedisCodec {
   type Error = RedisError;
 
   fn decode(&mut self, buf: &mut BytesMut) -> Result<Option<ProtocolFrame>, RedisError> {
-    trace!("Recv {} bytes.", buf.len());
+    trace!("{} Recv {} bytes.", self.name, buf.len());
 
     if buf.len() < 1 {
       return Ok(None);
@@ -55,7 +56,7 @@ impl Decoder for RedisCodec {
     let (frame, amt) = decode_bytes(buf)?;
 
     if let Some(frame) = frame {
-      trace!("Parsed {} bytes.", amt);
+      trace!("{} Parsed {} bytes.", self.name, amt);
 
       buf.split_to(amt);
       self.res_size_stats.write().deref_mut().sample(amt as u64);
@@ -78,7 +79,7 @@ impl Encoder for RedisCodec {
     let res = encode_bytes(buf, &frame)?;
     let len = res.saturating_sub(offset);
 
-    trace!("Encoded {} bytes. Buffer len: {}", len, res);
+    trace!("{} Encoded {} bytes. Buffer len: {}", self.name, len, res);
     self.req_size_stats.write().deref_mut().sample(len as u64);
 
     Ok(())

@@ -15,6 +15,7 @@ extern crate redis_protocol;
 extern crate float_cmp;
 extern crate tokio_timer_patched as tokio_timer;
 extern crate tokio_io;
+extern crate rand;
 
 #[macro_use]
 extern crate log;

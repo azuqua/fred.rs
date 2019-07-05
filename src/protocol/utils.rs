@@ -191,45 +191,8 @@ pub fn pretty_error(resp: String) -> RedisError {
 }
 
 pub fn frame_to_pubsub(frame: ProtocolFrame) -> Result<(String, RedisValue), RedisError> {
-  if let ProtocolFrame::Array(mut frames) = frame {
-    if frames.len() != 3 {
-      return Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid pubsub message frames."));
-    }
-
-    let payload = frames.pop().unwrap();
-    let channel = frames.pop().unwrap();
-    let message_type = frames.pop().unwrap();
-
-    let message_type = match message_type.to_string() {
-      Some(s) => s,
-      None => {
-        return Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid pubsub message type frame."))
-      }
-    };
-
-    if message_type == "message" {
-      let channel = match channel.to_string() {
-        Some(c) => c,
-        None => {
-          return Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid pubsub channel frame."))
-        }
-      };
-
-      // the payload is a bulk string on pubsub messages
-      if payload.kind() == ProtocolFrameKind::BulkString {
-        let payload = frame_to_single_result(payload)?;
-
-        if !payload.is_string() {
-          Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid pubsub channel payload."))
-        }else{
-          Ok((channel, payload))
-        }
-      }else{
-        Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid pubsub payload frame type."))
-      }
-    }else{
-      Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid pubsub message type."))
-    }
+  if let Ok((channel, message)) = frame.parse_as_pubsub() {
+   Ok((channel, RedisValue::String(message)))
   }else{
     Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid pubsub message frame."))
   }
@@ -375,13 +338,13 @@ pub fn reconnect(handle: Handle, inner: Arc<RedisClientInner>, mut result: Resul
     ));
   }
 
-  debug!("Starting reconnect logic from error {:?}...", result);
+  debug!("{} Starting reconnect logic from error {:?}...", n!(inner), result);
 
   match result {
     Ok(err) => {
       if let Some(err) = err {
         // socket was closed unintentionally
-        debug!("Redis client closed abruptly.");
+        debug!("{} Redis client closed abruptly.", n!(inner));
         multiplexer_utils::emit_error(&inner.error_tx, &err);
 
         let delay = match multiplexer_utils::next_reconnect_delay(&inner.policy) {
@@ -389,7 +352,7 @@ pub fn reconnect(handle: Handle, inner: Arc<RedisClientInner>, mut result: Resul
           None => return client_utils::future_ok(Loop::Break(()))
         };
 
-        debug!("Waiting for {} ms before attempting to reconnect...", delay);
+        debug!("{} Waiting for {} ms before attempting to reconnect...", n!(inner), delay);
 
         Box::new(inner.timer.sleep(Duration::from_millis(delay as u64)).from_err::<RedisError>().and_then(move |_| {
           if client_utils::read_closed_flag(&inner.closed) {
@@ -404,7 +367,7 @@ pub fn reconnect(handle: Handle, inner: Arc<RedisClientInner>, mut result: Resul
         }))
       } else {
         // socket was closed via Quit command
-        debug!("Redis client closed via Quit.");
+        debug!("{} Redis client closed via Quit.", n!(inner));
 
         client_utils::set_client_state(&inner.state, ClientState::Disconnected);
 
@@ -424,7 +387,7 @@ pub fn reconnect(handle: Handle, inner: Arc<RedisClientInner>, mut result: Resul
         None => return client_utils::future_ok(Loop::Break(()))
       };
 
-      debug!("Waiting for {} ms before attempting to reconnect...", delay);
+      debug!("{} Waiting for {} ms before attempting to reconnect...", n!(inner), delay);
 
       Box::new(inner.timer.sleep(Duration::from_millis(delay as u64)).from_err::<RedisError>().and_then(move |_| {
         if client_utils::read_closed_flag(&inner.closed) {

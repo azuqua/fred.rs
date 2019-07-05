@@ -85,6 +85,8 @@ use std::ops::{
   Deref
 };
 
+use futures::lazy;
+
 pub const OK: &'static str = "OK";
 
 fn should_disable_cert_verification() -> bool {
@@ -124,7 +126,9 @@ pub fn create_transport_tls(addr: &SocketAddr, handle: &Handle, inner: &Arc<Redi
 pub fn create_transport_tls(addr: &SocketAddr, handle: &Handle, inner: &Arc<RedisClientInner>)
   -> Box<Future<Item=(SplitSink<Framed<TlsStream<TcpStream>, RedisCodec>>, SplitStream<Framed<TlsStream<TcpStream>, RedisCodec>>), Error=RedisError>>
 {
-  let codec = RedisCodec::new(inner.req_size_stats.clone(), inner.res_size_stats.clone());
+  let codec = RedisCodec::new(inner.client_name(),
+                              inner.req_size_stats.clone(),
+                              inner.res_size_stats.clone());
   let addr_str = fry!(multiplexer_utils::read_centralized_host(&inner.config));
 
   let domain = match addr_str.split(":").next() {
@@ -135,7 +139,7 @@ pub fn create_transport_tls(addr: &SocketAddr, handle: &Handle, inner: &Arc<Redi
   };
 
   let inner = inner.clone();
-  debug!("Creating redis tls transport to {:?} with domain {}", &addr, domain);
+  debug!("{} Creating redis tls transport to {:?} with domain {}", n!(inner), &addr, domain);
 
   Box::new(TcpStream::connect(&addr, handle)
     .from_err::<RedisError>()
@@ -151,7 +155,7 @@ pub fn create_transport_tls(addr: &SocketAddr, handle: &Handle, inner: &Arc<Redi
     })
     .and_then(move |socket| Ok(socket.framed(codec)))
     .and_then(move |transport| {
-      authenticate(transport, multiplexer_utils::read_auth_key(&inner.config))
+      authenticate(transport, inner.client_name(), multiplexer_utils::read_auth_key(&inner.config))
         .map(move |t| (inner, t))
     })
     .and_then(move |(inner, transport)| {
@@ -165,15 +169,17 @@ pub fn create_transport_tls(addr: &SocketAddr, handle: &Handle, inner: &Arc<Redi
 pub fn create_transport(addr: &SocketAddr, handle: &Handle, inner: &Arc<RedisClientInner>)
   -> Box<Future<Item=(SplitSink<Framed<TcpStream, RedisCodec>>, SplitStream<Framed<TcpStream, RedisCodec>>), Error=RedisError>>
 {
-  debug!("Creating redis transport to {:?}", &addr);
-  let codec = RedisCodec::new(inner.req_size_stats.clone(), inner.res_size_stats.clone());
+  debug!("{} Creating redis transport to {:?}", n!(inner), &addr);
+  let codec = RedisCodec::new(inner.client_name(),
+                              inner.req_size_stats.clone(),
+                              inner.res_size_stats.clone());
 
   let inner = inner.clone();
   Box::new(TcpStream::connect(&addr, handle)
     .map_err(|e| e.into())
     .and_then(move |socket| Ok(socket.framed(codec)))
     .and_then(move |transport| {
-      authenticate(transport, multiplexer_utils::read_auth_key(&inner.config))
+      authenticate(transport, inner.client_name(), multiplexer_utils::read_auth_key(&inner.config))
         .map(move |t| (inner, t))
     })
     .and_then(move |(inner, transport)| {
@@ -203,33 +209,57 @@ pub fn request_response<T>(transport: Framed<T, RedisCodec>, request: &RedisComm
     }))
 }
 
-pub fn authenticate<T>(transport: Framed<T, RedisCodec>, key: Option<String>) -> Box<Future<Item=Framed<T, RedisCodec>, Error=RedisError>>
+pub fn authenticate<T>(transport: Framed<T, RedisCodec>, name: String, key: Option<String>) -> Box<Future<Item=Framed<T, RedisCodec>, Error=RedisError>>
   where T: AsyncRead + AsyncWrite + 'static
 {
-  let key = match key {
-    Some(k) => k,
-    None => return client_utils::future_ok(transport)
-  };
+  Box::new(lazy(move || {
+    if let Some(key) = key {
+      let command = RedisCommand::new(RedisCommandKind::Auth, vec![key.into()], None);
 
-  let command = RedisCommand::new(RedisCommandKind::Auth, vec![key.into()], None);
+      debug!("{} Authenticating Redis client...", name);
 
-  debug!("Authenticating Redis client...");
+      Box::new(request_response(transport, &command).and_then(|(frame, transport)| {
+        let inner = match frame {
+          Frame::SimpleString(s) => s,
+          _ => return Err(RedisError::new(
+            RedisErrorKind::ProtocolError, format!("Invalid auth response {:?}.", frame)
+          ))
+        };
 
-  Box::new(request_response(transport, &command).and_then(|(frame, transport)| {
-    let inner = match frame {
-      Frame::SimpleString(s) => s,
-      _ => return Err(RedisError::new(
-        RedisErrorKind::ProtocolError, format!("Invalid auth response {:?}.", frame)
-      ))
-    };
+        if inner == OK {
+          debug!("{} Successfully authenticated Redis client.", name);
 
-    if inner == OK {
-      debug!("Successfully authenticated Redis client.");
+          Ok((name, transport))
+        }else{
+          Err(RedisError::new(RedisErrorKind::Auth, inner))
+        }
+      }))
+    }else{
+      client_utils::future_ok((name, transport))
+    }
+  })
+  .and_then(move |(name, transport)| {
+    debug!("{} Changing client name to {}", name, name);
+
+    let command = RedisCommand::new(RedisCommandKind::ClientSetname, vec![name.clone().into()], None);
+
+    request_response(transport, &command).and_then(move |(frame, transport)| {
+      let inner = match frame {
+        Frame::SimpleString(s) => s,
+        _ => {
+          warn!("{} Error trying to set the client name: {:?}", name, frame);
+          return Ok(transport);
+        }
+      };
+
+      if inner == OK {
+        debug!("{} Successfully set Redis client name.", name);
+      }else{
+        warn!("{} Unexpected response to client-setname: {}", name, inner);
+      }
 
       Ok(transport)
-    }else{
-      Err(RedisError::new(RedisErrorKind::Auth, inner))
-    }
+    })
   }))
 }
 
@@ -264,9 +294,12 @@ pub fn create_initial_transport_tls(handle: Handle, inner: &Arc<RedisClientInner
       };
 
       let key = multiplexer_utils::read_auth_key(&inner.config);
-      let codec = RedisCodec::new(inner.req_size_stats.clone(), inner.res_size_stats.clone());
+      let codec = RedisCodec::new(inner.client_name(),
+                                  inner.req_size_stats.clone(),
+                                  inner.res_size_stats.clone());
+      let client_name = inner.client_name();
 
-      debug!("Creating clustered redis tls transport to {:?}", &addr);
+      debug!("{} Creating clustered redis tls transport to {:?}", client_name, &addr);
 
       Box::new(TcpStream::connect(&addr, &handle)
         .from_err::<RedisError>()
@@ -282,7 +315,7 @@ pub fn create_initial_transport_tls(handle: Handle, inner: &Arc<RedisClientInner
         })
         .and_then(move |socket| Ok(socket.framed(codec)))
         .and_then(move |transport| {
-          authenticate(transport, key)
+          authenticate(transport, client_name, key)
         })
         .and_then(move |transport| {
           Ok((Some(transport), handle))
@@ -320,15 +353,18 @@ pub fn create_initial_transport(handle: Handle, inner: &Arc<RedisClientInner>) -
       };
 
       let key = multiplexer_utils::read_auth_key(&inner.config);
-      let codec = RedisCodec::new(inner.req_size_stats.clone(), inner.res_size_stats.clone());
+      let codec = RedisCodec::new(inner.client_name(),
+                                  inner.req_size_stats.clone(),
+                                  inner.res_size_stats.clone());
+      let client_name = inner.client_name();
 
-      debug!("Creating clustered redis transport to {:?}", &addr);
+      debug!("{} Creating clustered redis transport to {:?}", client_name, &addr);
 
       Box::new(TcpStream::connect(&addr, &handle)
         .from_err::<RedisError>()
         .and_then(move |socket| Ok(socket.framed(codec)))
         .and_then(move |transport| {
-          authenticate(transport, key)
+          authenticate(transport, client_name, key)
         })
         .and_then(move |transport| {
           Ok((Some(transport), handle))
@@ -375,7 +411,10 @@ pub fn create_all_transports_tls(handle: Handle, cache: &ClusterKeyCache, key: O
     };
 
     let key = key.clone();
-    let codec = RedisCodec::new(inner.req_size_stats.clone(), inner.res_size_stats.clone());
+    let codec = RedisCodec::new(inner.client_name(),
+                                inner.req_size_stats.clone(),
+                                inner.res_size_stats.clone());
+    let client_name = inner.client_name();
 
     let domain = match addr_str.split(":").next() {
       Some(d) => d.to_owned(),
@@ -384,7 +423,7 @@ pub fn create_all_transports_tls(handle: Handle, cache: &ClusterKeyCache, key: O
       ))
     };
 
-    debug!("Creating clustered tls transport to {:?} with domain {}", addr, domain);
+    debug!("{} Creating clustered tls transport to {:?} with domain {}", client_name, addr, domain);
 
     Box::new(TcpStream::connect(&addr, &handle)
       .from_err::<RedisError>()
@@ -400,7 +439,7 @@ pub fn create_all_transports_tls(handle: Handle, cache: &ClusterKeyCache, key: O
       })
       .and_then(move |socket| Ok(socket.framed(codec)))
       .and_then(move |transport| {
-        authenticate(transport, key)
+        authenticate(transport, client_name, key)
       })
       .and_then(move |transport| {
         // when using TLS the FQDN must be used, so the IP string isn't used here like it is below.
@@ -439,15 +478,18 @@ pub fn create_all_transports(handle: Handle, cache: &ClusterKeyCache, key: Optio
     let ip_str = format!("{}:{}", addr.ip(), addr.port());
 
     let key = key.clone();
-    let codec = RedisCodec::new(inner.req_size_stats.clone(), inner.res_size_stats.clone());
+    let codec = RedisCodec::new(inner.client_name(),
+                                inner.req_size_stats.clone(),
+                                inner.res_size_stats.clone());
+    let client_name = inner.client_name();
 
-    debug!("Creating clustered transport to {:?}", addr);
+    debug!("{} Creating clustered transport to {:?}", client_name, addr);
 
     Box::new(TcpStream::connect(&addr, &handle)
       .from_err::<RedisError>()
       .and_then(move |socket| Ok(socket.framed(codec)))
       .and_then(move |transport| {
-        authenticate(transport, key)
+        authenticate(transport, client_name, key)
       })
       .and_then(move |transport| {
         transports.push((ip_str, transport));
@@ -459,7 +501,9 @@ pub fn create_all_transports(handle: Handle, cache: &ClusterKeyCache, key: Optio
 
 #[cfg(feature="enable-tls")]
 fn read_cluster_cache_tls(handle: Handle, inner: &Arc<RedisClientInner>) -> Box<Future<Item=Frame, Error=RedisError>> {
-  Box::new(create_initial_transport_tls(handle, inner).and_then(|transport| {
+  let inner = inner.clone();
+
+  Box::new(create_initial_transport_tls(handle, &inner).and_then(move |transport| {
     let transport = match transport {
       Some(t) => t,
       None => return client_utils::future_error(RedisError::new(
@@ -468,7 +512,7 @@ fn read_cluster_cache_tls(handle: Handle, inner: &Arc<RedisClientInner>) -> Box<
     };
 
     let command = RedisCommand::new(RedisCommandKind::ClusterNodes, vec![], None);
-    debug!("Reading cluster state...");
+    debug!("{} Reading cluster state...", n!(inner));
 
     Box::new(request_response(transport, &command).map(|(frame, mut transport)| {
       let _ = transport.close();
@@ -483,7 +527,9 @@ fn read_cluster_cache_tls(handle: Handle, inner: &Arc<RedisClientInner>) -> Box<
 }
 
 fn read_cluster_cache(handle: Handle, inner: &Arc<RedisClientInner>) -> Box<Future<Item=Frame, Error=RedisError>> {
-  Box::new(create_initial_transport(handle, inner).and_then(|transport| {
+  let inner = inner.clone();
+
+  Box::new(create_initial_transport(handle, &inner).and_then(move |transport| {
     let transport = match transport {
       Some(t) => t,
       None => return client_utils::future_error(RedisError::new(
@@ -492,7 +538,7 @@ fn read_cluster_cache(handle: Handle, inner: &Arc<RedisClientInner>) -> Box<Futu
     };
 
     let command = RedisCommand::new(RedisCommandKind::ClusterNodes, vec![], None);
-    debug!("Reading cluster state...");
+    debug!("{} Reading cluster state...", n!(inner));
 
     Box::new(request_response(transport, &command).map(|(frame, mut transport)| {
       let _ = transport.close();
@@ -509,8 +555,9 @@ pub fn build_cluster_cache(handle: &Handle, inner: &Arc<RedisClientInner>) -> Bo
   }else{
     read_cluster_cache(handle.clone(), inner)
   };
+  let inner = inner.clone();
 
-  Box::new(ft.and_then(|frame| {
+  Box::new(ft.and_then(move |frame| {
     let response = if frame.is_error() {
       match protocol_utils::frame_to_error(frame) {
         Some(e) => return Err(e),
@@ -527,7 +574,7 @@ pub fn build_cluster_cache(handle: &Handle, inner: &Arc<RedisClientInner>) -> Bo
       }
     };
 
-    trace!("Cluster state: {}", response);
+    trace!("{} Cluster state: {}", n!(inner), response);
     ClusterKeyCache::new(Some(response))
   }))
 }

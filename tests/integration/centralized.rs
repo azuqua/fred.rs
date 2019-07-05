@@ -45,6 +45,7 @@ use super::keys as keys_tests;
 use super::sets as sets_tests;
 use super::hashes as hashes_tests;
 use super::lists as lists_tests;
+use super::pubsub as pubsub_tests;
 
 lazy_static! {
 
@@ -243,6 +244,27 @@ pub mod sets {
     let config = RedisConfig::default();
     utils::setup_test_client(config, TIMER.clone(),|client| {
       sets_tests::should_smembers_of_set(client)
+    });
+  }
+
+}
+
+pub mod pubsub {
+  use super::*;
+
+  #[test]
+  fn it_should_psubscribe_to_multiple_channels() {
+    let config = RedisConfig::default();
+    utils::setup_two_test_clients(config, TIMER.clone(),|client_1, client_2| {
+      pubsub_tests::should_psubscribe_on_multiple_channels(client_1, client_2)
+    });
+  }
+
+  #[test]
+  fn it_should_punsubscribe_to_multiple_channels() {
+    let config = RedisConfig::default();
+    utils::setup_two_test_clients(config, TIMER.clone(),|client_1, client_2| {
+      pubsub_tests::should_punsubscribe_on_multiple_channels(client_1, client_2)
     });
   }
 

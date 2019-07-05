@@ -16,6 +16,9 @@ use futures::stream::{
   Stream
 };
 
+use rand;
+use rand::Rng;
+
 use std::time::Duration;
 
 use std::i64;
@@ -69,6 +72,23 @@ macro_rules! fry {
   })
 }
 
+macro_rules! n(
+  ($inner:expr) => {
+    $inner.log_client_name(log::Level::Debug)
+  }
+);
+
+macro_rules! ne(
+  ($inner:expr) => {
+    $inner.log_client_name(log::Level::Error)
+  }
+);
+
+macro_rules! nw(
+  ($inner:expr) => {
+    $inner.log_client_name(log::Level::Warn)
+  }
+);
 
 pub fn decr_atomic(size: &Arc<AtomicUsize>) -> usize {
   size.fetch_sub(1, Ordering::SeqCst).saturating_sub(1)
@@ -80,6 +100,10 @@ pub fn incr_atomic(size: &Arc<AtomicUsize>) -> usize {
 
 pub fn read_atomic(size: &Arc<AtomicUsize>) -> usize {
   size.load(Ordering::SeqCst)
+}
+
+pub fn set_atomic(size: &Arc<AtomicUsize>, val: usize) -> usize {
+  size.swap(val, Ordering::SeqCst)
 }
 
 pub fn check_client_state(actual: &RwLock<ClientState>, expected: ClientState) -> Result<(), RedisError> {
@@ -308,3 +332,30 @@ pub fn split(inner: &Arc<RedisClientInner>, handle: &Handle, timeout: u64) -> Bo
   }))
 }
 
+pub fn random_string(len: usize) -> String {
+  rand::thread_rng()
+    .gen_ascii_chars()
+    .take(len)
+    .collect()
+}
+
+pub fn pattern_pubsub_counts(result: Vec<RedisValue>) -> Result<Vec<usize>, RedisError> {
+  let mut out = Vec::with_capacity(result.len() / 3);
+
+  if result.len() > 0 {
+    let mut idx = 2;
+    while idx < result.len() {
+      out.push(match result[idx] {
+        RedisValue::Integer(ref i) => if *i < 0 {
+          return Err(RedisError::new(RedisErrorKind::Unknown, "Invalid pattern pubsub channel count response."));
+        }else{
+          *i as usize
+        },
+        _ => return Err(RedisError::new(RedisErrorKind::Unknown, "Invalid pattern pubsub response."))
+      });
+      idx += 3;
+    }
+  }
+
+  Ok(out)
+}

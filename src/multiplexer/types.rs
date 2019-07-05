@@ -289,8 +289,6 @@ impl Sinks {
 
   #[allow(deprecated)]
   pub fn quit(&self, frame: Frame) -> Box<Future<Item=(), Error=RedisError>> {
-    debug!("Sending quit command.");
-
     match *self {
       Sinks::Centralized(_) => {
         self.write_command(None, frame, false)
