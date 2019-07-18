@@ -10,10 +10,14 @@ use std::rc::Rc;
 
 use std::collections::BTreeMap;
 
+use crate::protocol::types::*;
 
-pub fn log_unimplemented() -> Result<Frame, RedisError> {
-  error!("Unimplemented redis command in mocking layer.");
-  Err(RedisError::new(RedisErrorKind::InvalidCommand, "Unimplemented redis command in mocking layer."))
+
+pub fn log_unimplemented(command: &RedisCommand) -> Result<Frame, RedisError> {
+  Err(RedisError::new(
+    RedisErrorKind::InvalidCommand,
+    format!("Unimplemented redis command {} in mocking layer.", command.kind.to_str())
+  ))
 }
 
 pub fn auth(data: &mut DataSet, mut args: Vec<RedisValue>) -> Result<Frame, RedisError> {
@@ -265,6 +269,20 @@ pub fn expire(data: &mut DataSet, mut args: Vec<RedisValue>) -> Result<Frame, Re
   }else{
     Ok(Frame::Integer(0))
   }
+}
+
+pub fn persist(data: &mut DataSet, mut args: Vec<RedisValue>) -> Result<Frame, RedisError> {
+  args.reverse();
+
+  let key = match args.pop() {
+    Some(RedisValue::String(s)) => s,
+    Some(RedisValue::Integer(i)) => i.to_string(),
+    _ => return utils::null()
+  };
+  let key = utils::get_key(&*data, key);
+
+  let count = data.expirations.borrow_mut().del(&key)?;
+  Ok(Frame::Integer(count as i64))
 }
 
 pub fn hget(data: &mut DataSet, mut args: Vec<RedisValue>) -> Result<Frame, RedisError> {

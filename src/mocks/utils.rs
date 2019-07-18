@@ -129,8 +129,10 @@ pub fn handle_command(inner: &Arc<RedisClientInner>, data: &mut DataSet, command
     RedisCommandKind::DecrBy   => commands::decrby(data, command.args),
     RedisCommandKind::Ping     => commands::ping(data, command.args),
     RedisCommandKind::Info     => commands::info(data, command.args),
-    RedisCommandKind::FlushAll => commands::flushall(&mut state, command.args),
+    RedisCommandKind::FlushAll => commands::flushall(data, command.args),
+    RedisCommandKind::Persist  => commands::persist(data, command.args),
 
-    _ => commands::log_unimplemented()
+
+    _ => commands::log_unimplemented(&command)
   }
 }
