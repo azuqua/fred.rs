@@ -105,10 +105,11 @@ variable `RUST_LOG` with a value of `trace`, `debug`, `warn`, `error`, or `info`
 
 ## Features
 
-|    Name            | Default | Description                                                                        |
-|------------------- |---------|----------------------------------------------------------------------------------- |
-| enable-tls         |         | Enable TLS support.                                                                |
-| ignore-auth-error  |    x    | Ignore auth errors that occur when a password is supplied but not required.        |
+|    Name            | Default | Description                                                                              |
+|------------------- |---------|----------------------------------------------------------------------------------------- |
+| enable-tls         |         | Enable TLS support.                                                                      |
+| ignore-auth-error  |    x    | Ignore auth errors that occur when a password is supplied but not required.              |
+| mocks              |         | Enable the mocking layer, which will use local memory instead of an actual redis server. |
 
 ## Tests
 

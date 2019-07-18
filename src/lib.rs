@@ -31,6 +31,9 @@ mod utils;
 mod protocol;
 mod multiplexer;
 
+#[cfg(feature="mocks")]
+mod mocks;
+
 /// Error handling types.
 pub mod error;
 /// Configuration options, return value types, etc.
