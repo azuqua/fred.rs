@@ -12,6 +12,9 @@ use futures::sync::oneshot::{
   channel as oneshot_channel
 };
 
+#[cfg(feature="mocks")]
+use crate::mocks;
+
 use crate::utils as client_utils;
 use crate::multiplexer::utils;
 use crate::multiplexer::connection;
@@ -604,10 +607,30 @@ fn create_commands_ft(handle: Handle, inner: Arc<RedisClientInner>) -> Box<Futur
 }
 
 /// Initialize a connection to the Redis server.
+#[cfg(not(feature="mocks"))]
 pub fn connect(handle: &Handle, inner: Arc<RedisClientInner>) -> Box<Future<Item=Option<RedisError>, Error=RedisError>> {
   client_utils::set_client_state(&inner.state, ClientState::Connecting);
 
   Box::new(create_commands_ft(handle.clone(), inner.clone()).then(move |result| {
+    if let Err(ref e) = result {
+      if e.is_canceled() {
+        debug!("{} Suppressing canceled redis error: {:?}", n!(inner), e);
+
+        Ok(None)
+      }else{
+        result
+      }
+    }else{
+      result
+    }
+  }))
+}
+
+#[cfg(feature="mocks")]
+pub fn connect(handle: &Handle, inner: Arc<RedisClientInner>) -> Box<Future<Item=Option<RedisError>, Error=RedisError>> {
+  client_utils::set_client_state(&inner.state, ClientState::Connected);
+
+  Box::new(mocks::create_commands_ft(handle.clone(), inner.clone()).then(move |result| {
     if let Err(ref e) = result {
       if e.is_canceled() {
         debug!("{} Suppressing canceled redis error: {:?}", n!(inner), e);

@@ -360,7 +360,7 @@ impl RedisCommandKind {
     }
   }
 
-  fn to_str(&self) -> &'static str {
+  pub(crate) fn to_str(&self) -> &'static str {
     match *self {
       RedisCommandKind::Append                          => "APPEND",
       RedisCommandKind::Auth                            => "AUTH",
