@@ -47,6 +47,7 @@ pub use redis_protocol::{
 use crate::multiplexer::types::SplitCommand;
 use futures::sync::mpsc::UnboundedSender;
 use std::collections::VecDeque;
+use std::rc::Rc;
 
 #[derive(Clone)]
 pub enum ResponseKind {
