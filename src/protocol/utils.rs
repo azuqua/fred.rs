@@ -512,35 +512,234 @@ b8553a4fae8ae99fca716d423b14875ebb10fefe quux.use2.cache.amazonaws.com:6379@1122
         slaves: None,
       }
     ]);
-    // d9aeabb1525e5656c98545a0ed42c8c99bbacae1 baz.use2.cache.amazonaws.com:6379@1122 master - 0 1565908729402 2956 connected 1697 1815-2291 3657-4089 5861-6770 7531-7713 13154-13197
     expected.insert("baz.use2.cache.amazonaws.com:6379".into(), vec![
-
-
+      SlotRange {
+        start: 1697,
+        end: 1697,
+        server: "baz.use2.cache.amazonaws.com:6379".into(),
+        id: "d9aeabb1525e5656c98545a0ed42c8c99bbacae1".into(),
+        slaves: None,
+      },
+      SlotRange {
+        start: 1815,
+        end: 2291,
+        server: "baz.use2.cache.amazonaws.com:6379".into(),
+        id: "d9aeabb1525e5656c98545a0ed42c8c99bbacae1".into(),
+        slaves: None,
+      },
+      SlotRange {
+        start: 3657,
+        end: 4089,
+        server: "baz.use2.cache.amazonaws.com:6379".into(),
+        id: "d9aeabb1525e5656c98545a0ed42c8c99bbacae1".into(),
+        slaves: None,
+      },
+      SlotRange {
+        start: 5861,
+        end: 6770,
+        server: "baz.use2.cache.amazonaws.com:6379".into(),
+        id: "d9aeabb1525e5656c98545a0ed42c8c99bbacae1".into(),
+        slaves: None,
+      },
+      SlotRange {
+        start: 7531,
+        end: 7713,
+        server: "baz.use2.cache.amazonaws.com:6379".into(),
+        id: "d9aeabb1525e5656c98545a0ed42c8c99bbacae1".into(),
+        slaves: None,
+      },
+      SlotRange {
+        start: 13154,
+        end: 13197,
+        server: "baz.use2.cache.amazonaws.com:6379".into(),
+        id: "d9aeabb1525e5656c98545a0ed42c8c99bbacae1".into(),
+        slaves: None,
+      }
     ]);
-    // 5671f02def98d0279224f717aba0f95874e5fb89 wibble.use2.cache.amazonaws.com:6379@1122 master - 0 1565908728391 2953 connected 7900-8125 12427 13198-13760 15126-16383
     expected.insert("wibble.use2.cache.amazonaws.com:6379".into(), vec![
-
-
+      SlotRange {
+        start: 7900,
+        end: 8125,
+        server: "wibble.use2.cache.amazonaws.com:6379".into(),
+        id: "5671f02def98d0279224f717aba0f95874e5fb89".into(),
+        slaves: None,
+      },
+      SlotRange {
+        start: 12427,
+        end: 12427,
+        server: "wibble.use2.cache.amazonaws.com:6379".into(),
+        id: "5671f02def98d0279224f717aba0f95874e5fb89".into(),
+        slaves: None,
+      },
+      SlotRange {
+        start: 13198,
+        end: 13760,
+        server: "wibble.use2.cache.amazonaws.com:6379".into(),
+        id: "5671f02def98d0279224f717aba0f95874e5fb89".into(),
+        slaves: None,
+      },
+      SlotRange {
+        start: 15126,
+        end: 16383,
+        server: "wibble.use2.cache.amazonaws.com:6379".into(),
+        id: "5671f02def98d0279224f717aba0f95874e5fb89".into(),
+        slaves: None,
+      }
     ]);
-    // 0b1923e386f6f6f3adc1b6deb250ef08f937e9b5 wobble.use2.cache.amazonaws.com:6379@1122 master - 0 1565908731000 2954 connected 5462-5860 6771-7382 8133-8151 10113-10922 12686-12893
     expected.insert("wobble.use2.cache.amazonaws.com:6379".into(), vec![
-
-
+      SlotRange {
+        start: 5462,
+        end: 5860,
+        server: "wobble.use2.cache.amazonaws.com:6379".into(),
+        id: "0b1923e386f6f6f3adc1b6deb250ef08f937e9b5".into(),
+        slaves: None,
+      },
+      SlotRange {
+        start: 6771,
+        end: 7382,
+        server: "wobble.use2.cache.amazonaws.com:6379".into(),
+        id: "0b1923e386f6f6f3adc1b6deb250ef08f937e9b5".into(),
+        slaves: None,
+      },
+      SlotRange {
+        start: 8133,
+        end: 8151,
+        server: "wobble.use2.cache.amazonaws.com:6379".into(),
+        id: "0b1923e386f6f6f3adc1b6deb250ef08f937e9b5".into(),
+        slaves: None,
+      },
+      SlotRange {
+        start: 10113,
+        end: 10922,
+        server: "wobble.use2.cache.amazonaws.com:6379".into(),
+        id: "0b1923e386f6f6f3adc1b6deb250ef08f937e9b5".into(),
+        slaves: None,
+      },
+      SlotRange {
+        start: 12686,
+        end: 12893,
+        server: "wobble.use2.cache.amazonaws.com:6379".into(),
+        id: "0b1923e386f6f6f3adc1b6deb250ef08f937e9b5".into(),
+        slaves: None,
+      }
     ]);
-    // 1c5d99e3d6fca2090d0903d61d4e51594f6dcc05 qux.use2.cache.amazonaws.com:6379@1122 master - 0 1565908732462 2949 connected 2292-3656 7383-7530 8896-9202 12347-12426 12428-12575
     expected.insert("qux.use2.cache.amazonaws.com:6379".into(), vec![
-
-
+      SlotRange {
+        start: 2292,
+        end: 3656,
+        server: "qux.use2.cache.amazonaws.com:6379".into(),
+        id: "1c5d99e3d6fca2090d0903d61d4e51594f6dcc05".into(),
+        slaves: None,
+      },
+      SlotRange {
+        start: 7383,
+        end: 7530,
+        server: "qux.use2.cache.amazonaws.com:6379".into(),
+        id: "1c5d99e3d6fca2090d0903d61d4e51594f6dcc05".into(),
+        slaves: None,
+      },
+      SlotRange {
+        start: 8896,
+        end: 9202,
+        server: "qux.use2.cache.amazonaws.com:6379".into(),
+        id: "1c5d99e3d6fca2090d0903d61d4e51594f6dcc05".into(),
+        slaves: None,
+      },
+      SlotRange {
+        start: 12347,
+        end: 12426,
+        server: "qux.use2.cache.amazonaws.com:6379".into(),
+        id: "1c5d99e3d6fca2090d0903d61d4e51594f6dcc05".into(),
+        slaves: None,
+      },
+      SlotRange {
+        start: 12428,
+        end: 12575,
+        server: "qux.use2.cache.amazonaws.com:6379".into(),
+        id: "1c5d99e3d6fca2090d0903d61d4e51594f6dcc05".into(),
+        slaves: None,
+      }
     ]);
-    // b8553a4fae8ae99fca716d423b14875ebb10fefe quux.use2.cache.amazonaws.com:6379@1122 master - 0 1565908730439 2951 connected 8246 8440-8895 12919-13144 13761-15125
     expected.insert("quux.use2.cache.amazonaws.com:6379".into(), vec![
-
-
+      SlotRange {
+        start: 8246,
+        end: 8246,
+        server: "quux.use2.cache.amazonaws.com:6379".into(),
+        id: "b8553a4fae8ae99fca716d423b14875ebb10fefe".into(),
+        slaves: None,
+      },
+      SlotRange {
+        start: 8440,
+        end: 8895,
+        server: "quux.use2.cache.amazonaws.com:6379".into(),
+        id: "b8553a4fae8ae99fca716d423b14875ebb10fefe".into(),
+        slaves: None,
+      },
+      SlotRange {
+        start: 12919,
+        end: 13144,
+        server: "quux.use2.cache.amazonaws.com:6379".into(),
+        id: "b8553a4fae8ae99fca716d423b14875ebb10fefe".into(),
+        slaves: None,
+      },
+      SlotRange {
+        start: 13761,
+        end: 15125,
+        server: "quux.use2.cache.amazonaws.com:6379".into(),
+        id: "b8553a4fae8ae99fca716d423b14875ebb10fefe".into(),
+        slaves: None,
+      }
     ]);
-    // 4a58ba550f37208c9a9909986ce808cdb058e31f quuz.use2.cache.amazonaws.com:6379@1122 myself,master - 0 1565908730000 2955 connected 0-331 1698-1814 4090-5461 7714-7899 8126-8132 12894-12918 13145-13153
     expected.insert("quuz.use2.cache.amazonaws.com:6379".into(), vec![
-
-
+      SlotRange {
+        start: 0,
+        end: 331,
+        server: "quuz.use2.cache.amazonaws.com:6379".into(),
+        id: "4a58ba550f37208c9a9909986ce808cdb058e31f".into(),
+        slaves: None,
+      },
+      SlotRange {
+        start: 1698,
+        end: 1814,
+        server: "quuz.use2.cache.amazonaws.com:6379".into(),
+        id: "4a58ba550f37208c9a9909986ce808cdb058e31f".into(),
+        slaves: None,
+      },
+      SlotRange {
+        start: 4090,
+        end: 5461,
+        server: "quuz.use2.cache.amazonaws.com:6379".into(),
+        id: "4a58ba550f37208c9a9909986ce808cdb058e31f".into(),
+        slaves: None,
+      },
+      SlotRange {
+        start: 7714,
+        end: 7899,
+        server: "quuz.use2.cache.amazonaws.com:6379".into(),
+        id: "4a58ba550f37208c9a9909986ce808cdb058e31f".into(),
+        slaves: None,
+      },
+      SlotRange {
+        start: 8126,
+        end: 8132,
+        server: "quuz.use2.cache.amazonaws.com:6379".into(),
+        id: "4a58ba550f37208c9a9909986ce808cdb058e31f".into(),
+        slaves: None,
+      },
+      SlotRange {
+        start: 12894,
+        end: 12918,
+        server: "quuz.use2.cache.amazonaws.com:6379".into(),
+        id: "4a58ba550f37208c9a9909986ce808cdb058e31f".into(),
+        slaves: None,
+      },
+      SlotRange {
+        start: 13145,
+        end: 13153,
+        server: "quuz.use2.cache.amazonaws.com:6379".into(),
+        id: "4a58ba550f37208c9a9909986ce808cdb058e31f".into(),
+        slaves: None,
+      }
     ]);
 
     let actual = match parse_cluster_nodes(status.to_owned()) {
@@ -550,10 +749,14 @@ b8553a4fae8ae99fca716d423b14875ebb10fefe quux.use2.cache.amazonaws.com:6379@1122
     assert_eq!(actual, expected);
 
     let cache = ClusterKeyCache::new(Some(status.to_owned())).expect("Failed to build cluster cache");
-    let server = cache.get_server(8246);
-    assert_eq!(server, "quux.use2.cache.amazonaws.com:6379".into());
-    let server = cache.get_server(1697);
-    assert_eq!(server, "baz.use2.cache.amazonaws.com:6379".into());
+    let slot = cache.get_server(8246).unwrap();
+    assert_eq!(slot.server, "quux.use2.cache.amazonaws.com:6379".to_owned());
+    let slot = cache.get_server(1697).unwrap();
+    assert_eq!(slot.server, "baz.use2.cache.amazonaws.com:6379".to_owned());
+    let slot = cache.get_server(12427).unwrap();
+    assert_eq!(slot.server, "wibble.use2.cache.amazonaws.com:6379".to_owned());
+    let slot = cache.get_server(8445).unwrap();
+    assert_eq!(slot.server, "quux.use2.cache.amazonaws.com:6379".to_owned());
   }
 
   #[test]
