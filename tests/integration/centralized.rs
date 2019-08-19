@@ -46,6 +46,7 @@ use super::sets as sets_tests;
 use super::hashes as hashes_tests;
 use super::lists as lists_tests;
 use super::pubsub as pubsub_tests;
+use super::other as other_tests;
 
 lazy_static! {
 
@@ -267,5 +268,29 @@ pub mod pubsub {
       pubsub_tests::should_punsubscribe_on_multiple_channels(client_1, client_2)
     });
   }
+
+}
+
+pub mod other {
+  use super::*;
+
+  #[test]
+  fn it_should_scan_simple_database() {
+    pretty_env_logger::init();
+
+    let config = RedisConfig::default_centralized();
+    utils::setup_test_client(config, TIMER.clone(), |client| {
+      other_tests::scan::should_scan_simple_database(client)
+    });
+  }
+
+  #[test]
+  fn it_should_hscan_simple_database() {
+    let config = RedisConfig::default_centralized();
+    utils::setup_test_client(config, TIMER.clone(), |client| {
+      other_tests::hscan::should_hscan_simple_database(client)
+    });
+  }
+
 
 }

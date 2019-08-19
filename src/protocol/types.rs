@@ -15,6 +15,7 @@ use crate::error::{
   RedisError,
   RedisErrorKind
 };
+use crate::utils as utils;
 
 use crate::metrics;
 use crate::metrics::{
@@ -46,8 +47,9 @@ pub use redis_protocol::{
 
 use crate::multiplexer::types::SplitCommand;
 use futures::sync::mpsc::UnboundedSender;
-use std::collections::VecDeque;
+use std::collections::{VecDeque, HashMap};
 use std::rc::Rc;
+use std::cell::RefCell;
 
 #[derive(Clone)]
 pub enum ResponseKind {
@@ -83,7 +85,97 @@ impl PartialEq for ResponseKind {
 
 impl Eq for ResponseKind {}
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct KeyScanInner {
+  pub cursor: String,
+  pub tx: UnboundedSender<Result<ScanResult, RedisError>>
+}
+
+impl PartialEq for KeyScanInner {
+  fn eq(&self, other: &KeyScanInner) -> bool {
+    self.cursor == other.cursor
+  }
+}
+
+impl Eq for KeyScanInner {}
+
+pub enum ValueScanResult {
+  SScan(SScanResult),
+  HScan(HScanResult),
+  ZScan(ZScanResult)
+}
+
+pub struct ValueScanInner {
+  pub cursor: String,
+  pub tx: UnboundedSender<Result<ValueScanResult, RedisError>>
+}
+
+impl PartialEq for ValueScanInner {
+  fn eq(&self, other: &ValueScanInner) -> bool {
+    self.cursor == other.cursor
+  }
+}
+
+impl Eq for ValueScanInner {}
+
+impl ValueScanInner {
+
+  pub fn transform_hscan_result(mut data: Vec<RedisValue>) -> Result<HashMap<RedisKey, RedisValue>, RedisError> {
+    if data.is_empty() {
+      return Ok(HashMap::new());
+    }
+    if data.len() % 2 != 0 {
+      return Err(RedisError::new(
+        RedisErrorKind::ProtocolError, "Invalid HSCAN result. Expected array with an even number of elements."
+      ));
+    }
+
+    let mut out = HashMap::with_capacity(data.len() / 2);
+
+    for mut chunk in data.chunks_exact_mut(2) {
+      let key = match chunk[0].take() {
+        RedisValue::String(s) => RedisKey::new(s),
+        _ => return Err(RedisError::new(
+          RedisErrorKind::ProtocolError, "Invalid HSCAN result. Expected redis key."
+        ))
+      };
+
+      out.insert(key, chunk[1].take());
+    }
+
+    Ok(out)
+  }
+
+  pub fn transform_zscan_result(mut data: Vec<RedisValue>) -> Result<Vec<(RedisValue, f64)>, RedisError> {
+    if data.is_empty() {
+      return Ok(Vec::new());
+    }
+    if data.len() % 2 != 0 {
+      return Err(RedisError::new(
+        RedisErrorKind::ProtocolError, "Invalid ZSCAN result. Expected array with an even number of elements."
+      ));
+    }
+
+    let mut out = Vec::with_capacity(data.len() / 2);
+
+    for mut chunk in data.chunks_exact_mut(2) {
+      let value = chunk[0].take();
+      let score = match chunk[1].take() {
+        RedisValue::String(s) => utils::redis_string_to_f64(&s)?,
+        RedisValue::Integer(i) => i as f64,
+        RedisValue::Null => return Err(RedisError::new(
+          RedisErrorKind::ProtocolError, "Invalid HSCAN result. Expected a string or integer score."
+        ))
+      };
+
+      out.push((value, score));
+    }
+
+    Ok(out)
+  }
+
+}
+
+#[derive(Eq, PartialEq)]
 pub enum RedisCommandKind {
   Append,
   Auth,
@@ -271,17 +363,66 @@ pub enum RedisCommandKind {
   Zscore,
   Zunionscore,
   Zunionstore,
-  Scan,
-  Sscan,
-  Hscan,
-  Zscan,
+  Scan(KeyScanInner),
+  Sscan(ValueScanInner),
+  Hscan(ValueScanInner),
+  Zscan(ValueScanInner),
   #[doc(hidden)]
   _Close,
   #[doc(hidden)]
   _Split(Option<SplitCommand>)
 }
 
+impl fmt::Debug for RedisCommandKind {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    if self.is_cluster_command() {
+      write!(f, "{} {}", self.to_str(), self.cluster_args().unwrap_or("".into()))
+    }else if self.is_client_command() {
+      write!(f, "{} {}", self.to_str(), self.client_args().unwrap_or("".into()))
+    }else {
+      write!(f, "{}", self.to_str())
+    }
+  }
+}
+
 impl RedisCommandKind {
+
+  pub fn is_scan(&self) -> bool {
+    match *self {
+      RedisCommandKind::Scan(_) => true,
+      _ => false
+    }
+  }
+
+  pub fn is_hscan(&self) -> bool {
+    match *self {
+      RedisCommandKind::Hscan(_) => true,
+      _ => false
+    }
+  }
+
+  pub fn is_sscan(&self) -> bool {
+    match *self {
+      RedisCommandKind::Sscan(_) => true,
+      _ => false
+    }
+  }
+
+  pub fn is_zscan(&self) -> bool {
+    match *self {
+      RedisCommandKind::Zscan(_) => true,
+      _ => false
+    }
+  }
+
+  pub fn is_value_scan(&self) -> bool {
+    match *self {
+      RedisCommandKind::Zscan(_)
+        | RedisCommandKind::Hscan(_)
+        | RedisCommandKind::Sscan(_) => true,
+      _ => false
+    }
+  }
 
   pub fn has_response_kind(&self) -> bool {
     match *self {
@@ -549,12 +690,12 @@ impl RedisCommandKind {
       RedisCommandKind::Zscore                          => "ZSCORE",
       RedisCommandKind::Zunionscore                     => "ZUNIONSCORE",
       RedisCommandKind::Zunionstore                     => "ZUNIONSTORE",
-      RedisCommandKind::Scan                            => "SCAN",
-      RedisCommandKind::Sscan                           => "SSCAN",
-      RedisCommandKind::Hscan                           => "HSCAN",
-      RedisCommandKind::Zscan                           => "ZSCAN",
+      RedisCommandKind::Scan(_)                         => "SCAN",
+      RedisCommandKind::Sscan(_)                        => "SSCAN",
+      RedisCommandKind::Hscan(_)                        => "HSCAN",
+      RedisCommandKind::Zscan(_)                        => "ZSCAN",
       RedisCommandKind::_Close
-       | RedisCommandKind::_Split(_)                    => panic!("unreachable (redis command)")
+        | RedisCommandKind::_Split(_)                    => panic!("unreachable (redis command)")
     }
   }
 
@@ -666,12 +807,10 @@ impl RedisCommandKind {
   }
 
   pub fn is_read(&self) -> bool {
+    use RedisCommandKind::*;
+
     // TODO finish this and use for sending reads to slaves
     match *self {
-      RedisCommandKind::Get
-      | RedisCommandKind::HGet
-      | RedisCommandKind::Exists
-      | RedisCommandKind::HExists => true,
       _ => false
     }
   }
@@ -753,6 +892,7 @@ impl RedisCommand {
       | RedisCommandKind::Punsubscribe(_)
       | RedisCommandKind::Ping
       | RedisCommandKind::Info
+      | RedisCommandKind::Scan(_)
       | RedisCommandKind::FlushAll
       | RedisCommandKind::FlushDB => true,
       _ => false

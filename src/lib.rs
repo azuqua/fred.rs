@@ -38,7 +38,7 @@ mod mocks;
 pub mod error;
 /// Configuration options, return value types, etc.
 pub mod types;
-/// The `RedisClient` implementation.
+/// The `RedisClient` implementation. See the `borrowed` and `owned` modules for most of the Redis command implementations.
 pub mod client;
 /// Size and latency metrics types.
 pub mod metrics;

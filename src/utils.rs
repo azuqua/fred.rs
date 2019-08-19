@@ -359,3 +359,31 @@ pub fn pattern_pubsub_counts(result: Vec<RedisValue>) -> Result<Vec<usize>, Redi
 
   Ok(out)
 }
+
+/// Convert an `f64` to a redis string, supporting "+inf" and "-inf".
+pub fn f64_to_redis_string(d: f64) -> Result<RedisValue, RedisError> {
+  if d.is_infinite() && d.is_sign_negative() {
+    Ok("-inf".into())
+  }else if d.is_infinite() {
+    Ok("+inf".into())
+  }else if d.is_nan() {
+    Err(RedisError::new(
+      RedisErrorKind::InvalidArgument, "Cannot use NaN as sorted set score."
+    ))
+  }else{
+    Ok(d.to_string().into())
+  }
+}
+
+/// Convert a redis string to an `f64`, supporting "+inf" and "-inf".
+pub fn redis_string_to_f64(s: &str) -> Result<f64, RedisError> {
+  if s == "+inf" {
+    Ok(f64::INFINITY)
+  }else if s == "-inf" {
+    Ok(f64::NEG_INFINITY)
+  }else{
+    s.parse::<f64>().map_err(|_| RedisError::new(
+      RedisErrorKind::Unknown, format!("Could not convert {} to floating point value.", s)
+    ))
+  }
+}

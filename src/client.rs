@@ -29,7 +29,7 @@ use tokio_core::reactor::Handle;
 
 use tokio_timer::Timer;
 
-use crate::types::{ClientState, RedisConfig, RedisValue, ReconnectPolicy};
+use crate::types::{ClientState, RedisConfig, RedisValue, ReconnectPolicy, ScanType, RedisKey, ScanResult, HScanResult, SScanResult, ZScanResult};
 use crate::error::{RedisError, RedisErrorKind};
 use crate::protocol::types::RedisCommand;
 use crate::metrics::{LatencyStats, SizeStats, DistributionStats};
@@ -40,12 +40,19 @@ use std::sync::atomic::AtomicUsize;
 use std::borrow::Cow;
 use std::mem;
 
+use crate::commands;
+
 const EMPTY_STR: &'static str = "";
 const SPLIT_TIMEOUT_MS: u64 = 30_000;
 
 #[macro_use]
 use crate::utils;
 
+#[doc(hidden)]
+pub type CommandSender = UnboundedSender<RedisCommand>;
+
+pub use utils::redis_string_to_f64;
+pub use utils::f64_to_redis_string;
 
 #[doc(hidden)]
 pub struct RedisClientInner {
@@ -60,7 +67,7 @@ pub struct RedisClientInner {
   /// An mpsc sender for errors to `on_error` streams.
   pub error_tx: RwLock<VecDeque<UnboundedSender<RedisError>>>,
   /// An mpsc sender for commands to the multiplexer.
-  pub command_tx: RwLock<Option<UnboundedSender<RedisCommand>>>,
+  pub command_tx: RwLock<Option<CommandSender>>,
   /// An mpsc sender for pubsub messages to `on_message` streams.
   pub message_tx: RwLock<VecDeque<UnboundedSender<(String, RedisValue)>>>,
   /// An mpsc sender for reconnection events to `on_reconnect` streams.
@@ -310,5 +317,34 @@ impl RedisClient {
       ))
     }
   }
+
+  /// Scan the redis database for keys matching the given pattern, if any. The scan operation can be canceled by dropping the returned stream.
+  ///
+  /// <https://redis.io/commands/scan>
+  pub fn scan<P: Into<String>>(&self, pattern: Option<P>, count: Option<usize>, _type: Option<ScanType>) -> Box<Stream<Item=ScanResult, Error=RedisError>> {
+    commands::scan(&self.inner, pattern, count, _type)
+  }
+
+  /// Scan the redis database for keys within the given hash key, if any. The scan operation can be canceled by dropping the returned stream.
+  ///
+  /// <https://redis.io/commands/hscan>
+  pub fn hscan<K: Into<RedisKey>, P: Into<String>>(&self, key: K, pattern: Option<P>, count: Option<usize>) -> Box<Stream<Item=HScanResult, Error=RedisError>> {
+    commands::hscan(&self.inner, key, pattern, count)
+  }
+
+  /// Scan the redis database for keys within the given set key, if any. The scan operation can be canceled by dropping the returned stream.
+  ///
+  /// <https://redis.io/commands/sscan>
+  pub fn sscan<K: Into<RedisKey>, P: Into<String>>(&self, key: K, pattern: Option<P>, count: Option<usize>) -> Box<Stream<Item=SScanResult, Error=RedisError>> {
+    commands::sscan(&self.inner, key, pattern, count)
+  }
+
+  /// Scan the redis database for keys within the given sorted set key, if any. The scan operation can be canceled by dropping the returned stream.
+  ///
+  /// <https://redis.io/commands/zscan>
+  pub fn zscan<K: Into<RedisKey>, P: Into<String>>(&self, key: K, pattern: Option<P>, count: Option<usize>) -> Box<Stream<Item=ZScanResult, Error=RedisError>> {
+    commands::zscan(&self.inner, key, pattern, count)
+  }
+
 
 }
