@@ -18,6 +18,8 @@ addons:
     - curl
     - expect
     - cmake
+    - pkg-config
+    - zlib1g-dev
     sources:
     - kalakris-cmake
 cache:

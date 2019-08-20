@@ -336,5 +336,21 @@ pub mod sorted_sets {
     })
   }
 
+  #[test]
+  fn it_should_read_sorted_score_entries() {
+    let config = RedisConfig::default();
+    utils::setup_test_client(config, TIMER.clone(), |client| {
+      sorted_sets_tests::score::should_read_sorted_score_entries(client)
+    })
+  }
+
+  #[test]
+  fn it_should_perform_set_operations() {
+    let config = RedisConfig::default();
+    utils::setup_test_client(config, TIMER.clone(), |client| {
+      sorted_sets_tests::set_ops::should_perform_set_operations(client)
+    })
+  }
+
 
 }

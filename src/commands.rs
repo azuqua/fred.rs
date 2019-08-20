@@ -1330,8 +1330,6 @@ pub fn zscan<K: Into<RedisKey>, P: Into<String>>(inner: &Arc<RedisClientInner>, 
   }))
 }
 
-// TODO expose these to the owned and borrowed interface
-
 pub fn mget<K: Into<MultipleKeys>>(inner: &Arc<RedisClientInner>, keys: K) -> Box<Future<Item=Vec<RedisValue>, Error=RedisError>> {
   let keys = keys.into();
 

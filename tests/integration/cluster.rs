@@ -294,4 +294,25 @@ pub mod sorted_sets {
     })
   }
 
+  #[test]
+  fn it_should_read_sorted_score_entries() {
+    let config = RedisConfig::default_clustered();
+    utils::setup_test_client(config, TIMER.clone(), |client| {
+      sorted_sets_tests::score::should_read_sorted_score_entries(client)
+    })
+  }
+
+  /*
+  // this wont run on a clustered redis because the keys used here don't all map to the same cluster node, and i'm too lazy to find some that do.
+  // zinterstore and zunionstore require the keys provided to all map to the same node in the cluster, otherwise you get an error
+  // "CROSSSLOT Keys in request don't hash to the same slot"
+  #[test]
+  fn it_should_perform_set_operations() {
+    let config = RedisConfig::default_clustered();
+    utils::setup_test_client(config, TIMER.clone(), |client| {
+      sorted_sets_tests::set_ops::should_perform_set_operations(client)
+    })
+  }
+  */
+
 }
