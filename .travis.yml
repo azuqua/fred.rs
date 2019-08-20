@@ -5,7 +5,6 @@ matrix:
   include:
   - rust: nightly
     env: FEATURES="--features nightly"
-  - rust: beta
   - rust: stable
 addons:
   apt:
@@ -48,22 +47,20 @@ before_script:
   pip install 'travis-cargo<0.2' --user &&
   export PATH=$HOME/.local/bin:$PATH
 - |
-  if [[ "$TRAVIS_RUST_VERSION" != stable ]] && [[ "$TRAVIS_BRANCH" == "master" ]]; then
+  if [[ "$TRAVIS_RUST_VERSION" != stable ]] && [[ "$TRAVIS_BRANCH" == "this doesnt work yet, it segaults, but check back later" ]]; then
     RUSTFLAGS="--cfg procmacro2_semver_exempt" cargo install cargo-tarpaulin
-    cargo install cargo-update
-    cargo install-update -a
   fi
 - |
   ./tests/scripts/install_redis_centralized.sh &&
   redis-server --daemonize yes
 - "./tests/scripts/install_redis_clustered.sh"
 after_success:
-- redis-cli -p 6379 shutdown
-- "$TRAVIS_BUILD_DIR/tests/tmp/redis_cluster_$REDIS_VERSION/redis-$REDIS_VERSION/utils/create-cluster/create-cluster stop"
 - |
-  if [[ "$TRAVIS_RUST_VERSION" != stable ]] && [[ "$TRAVIS_BRANCH" == "master" ]]; then
+  if [[ "$TRAVIS_RUST_VERSION" != stable ]] && [[ "$TRAVIS_BRANCH" == "this doesnt work yet, it segfaults, but check back later" ]]; then
     cargo tarpaulin --ciserver travis-ci --coveralls $TRAVIS_JOB_ID
   fi
+- redis-cli -p 6379 shutdown
+- "$TRAVIS_BUILD_DIR/tests/tmp/redis_cluster_$REDIS_VERSION/redis-$REDIS_VERSION/utils/create-cluster/create-cluster stop"
 env:
   global:
   - RUST_BACKTRACE=1
