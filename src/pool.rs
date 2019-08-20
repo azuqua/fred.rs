@@ -153,7 +153,7 @@ impl RedisPool {
 
   /// Create a pool from existing clients.
   ///
-  /// This is especially useful if the clients were created separately on different event loops threads.
+  /// This is especially useful if the clients were created separately on different event loop threads.
   pub fn from_clients(clients: Vec<RedisClient>) -> Result<RedisPool, RedisError> {
     if clients.len() < 1 {
       return Err(RedisError::new(
