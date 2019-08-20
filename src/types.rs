@@ -17,6 +17,7 @@ use std::cmp;
 use std::hash::Hash;
 use std::hash::Hasher;
 use std::mem;
+use std::borrow::Cow;
 
 use crate::error::*;
 
@@ -37,6 +38,25 @@ use crate::protocol::types::{RedisCommand, KeyScanInner, RedisCommandKind, Value
 
 #[doc(hidden)]
 pub static ASYNC: &'static str = "ASYNC";
+
+/// Aggregate options for the [zinterstore](https://redis.io/commands/zinterstore) (and related) commands.
+pub enum AggregateOptions {
+  Sum,
+  Min,
+  Max
+}
+
+impl AggregateOptions {
+
+  pub fn to_str(&self) -> &'static str {
+    match *self {
+      AggregateOptions::Sum => "SUM",
+      AggregateOptions::Min => "MIN",
+      AggregateOptions::Max => "MAX"
+    }
+  }
+
+}
 
 /// The types of values supported by the [type](https://redis.io/commands/type) command.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -101,7 +121,7 @@ impl ScanResult {
   ///
   /// **This must be called to continue scanning the keyspace.** Results are not automatically scanned in the background since a common use case is to read values while scanning, and due to network latency this
   /// could cause the internal buffer backing the stream to grow out of control very quickly. By requiring the caller to call `next` this interface provides a mechanism for throttling the throughput of the SCAN call.
-  /// If this struct is dropped without calling this the stream will close without an error.
+  /// If this struct is dropped without calling this function the stream will close without an error.
   ///
   /// If this function returns an error the scan call cannot continue as the client has been closed, or some other fatal error has occurred.
   /// If this happens the error will appear on the wrapping stream from the original SCAN call.
@@ -166,7 +186,7 @@ impl HScanResult {
   ///
   /// **This must be called to continue scanning the keyspace.** Results are not automatically scanned in the background since a common use case is to read values while scanning, and due to network latency this
   /// could cause the internal buffer backing the stream to grow out of control very quickly. By requiring the caller to call `next` this interface provides a mechanism for throttling the throughput of the SCAN call.
-  /// If this struct is dropped without calling this the stream will close without an error.
+  /// If this struct is dropped without calling this function the stream will close without an error.
   ///
   /// If this function returns an error the scan call cannot continue as the client has been closed, or some other fatal error has occurred.
   /// If this happens the error will appear on the wrapping stream from the original SCAN call.
@@ -231,7 +251,7 @@ impl SScanResult {
   ///
   /// **This must be called to continue scanning the keyspace.** Results are not automatically scanned in the background since a common use case is to read values while scanning, and due to network latency this
   /// could cause the internal buffer backing the stream to grow out of control very quickly. By requiring the caller to call `next` this interface provides a mechanism for throttling the throughput of the SCAN call.
-  /// If this struct is dropped without calling this the stream will close without an error.
+  /// If this struct is dropped without calling this function the stream will close without an error.
   ///
   /// If this function returns an error the scan call cannot continue as the client has been closed, or some other fatal error has occurred.
   /// If this happens the error will appear on the wrapping stream from the original SCAN call.
@@ -296,7 +316,7 @@ impl ZScanResult {
   ///
   /// **This must be called to continue scanning the keyspace.** Results are not automatically scanned in the background since a common use case is to read values while scanning, and due to network latency this
   /// could cause the internal buffer backing the stream to grow out of control very quickly. By requiring the caller to call `next` this interface provides a mechanism for throttling the throughput of the SCAN call.
-  /// If this struct is dropped without calling this the stream will close without an error.
+  /// If this struct is dropped without calling this function the stream will close without an error.
   ///
   /// If this function returns an error the scan call cannot continue as the client has been closed, or some other fatal error has occurred.
   /// If this happens the error will appear on the wrapping stream from the original SCAN call.
@@ -687,6 +707,10 @@ impl MultipleKeys {
     self.keys
   }
 
+  pub fn len(&self) -> usize {
+    self.keys.len()
+  }
+
 }
 
 impl<T: Into<RedisKey>> From<T> for MultipleKeys {
@@ -759,6 +783,64 @@ impl<T: Into<RedisValue>> From<VecDeque<T>> for MultipleValues {
   }
 }
 
+/// Convenience struct for ZINTERSTORE and ZUNIONSTORE when accepting 1 or more `weights` arguments.
+pub struct MultipleWeights {
+  values: Vec<f64>
+}
+
+impl MultipleWeights {
+
+  pub fn new() -> MultipleWeights {
+    MultipleWeights { values: Vec::new() }
+  }
+
+  pub fn inner(self) -> Vec<f64> {
+    self.values
+  }
+
+  pub fn len(&self) -> usize {
+    self.values.len()
+  }
+
+}
+
+impl From<f64> for MultipleWeights {
+  fn from(d: f64) -> Self {
+    MultipleWeights { values: vec![d] }
+  }
+}
+
+impl From<Vec<f64>> for MultipleWeights {
+  fn from(d: Vec<f64>) -> Self {
+    MultipleWeights { values: d }
+  }
+}
+
+impl From<VecDeque<f64>> for MultipleWeights {
+  fn from(d: VecDeque<f64>) -> Self {
+    MultipleWeights {
+      values: d.into_iter().collect()
+    }
+  }
+}
+
+impl<'a> From<&'a [f64]> for MultipleWeights {
+  fn from(d: &'a [f64]) -> Self {
+    MultipleWeights {
+      values: d.iter().map(|f| *f).collect()
+    }
+  }
+}
+
+impl<T: Into<MultipleWeights>> From<Option<T>> for MultipleWeights {
+  fn from(d: Option<T>) -> Self {
+    match d {
+      Some(d) => d.into(),
+      None => MultipleWeights::new()
+    }
+  }
+}
+
 /// Convenience struct for the ZADD command to accept 1 or more `(score, value)` arguments.
 pub struct MultipleZaddValues {
   values: Vec<(f64, RedisValue)>
@@ -818,7 +900,7 @@ pub enum RedisValue {
   Null
 }
 
-impl RedisValue {
+impl<'a> RedisValue {
 
   /// Attempt to convert the value into an integer, returning the original string as an error if the parsing fails, otherwise this consumes the original string.
   pub fn into_integer(self) -> Result<RedisValue, RedisValue> {
@@ -869,7 +951,7 @@ impl RedisValue {
   /// Check if the inner string value can be coerced to an `f64`.
   pub fn is_float(&self) -> bool {
     match *self {
-      RedisValue::String(ref s) => s.parse::<f64>().is_ok(),
+      RedisValue::String(ref s) => utils::redis_string_to_f64(s).is_ok(),
       _ => false
     }
   }
@@ -899,7 +981,7 @@ impl RedisValue {
   ///  Read and return the inner value as a `f64`, if possible.
   pub fn as_f64(&self) -> Option<f64> {
     match self{
-      RedisValue::String(ref s) => s.parse::<f64>().ok(),
+      RedisValue::String(ref s) => utils::redis_string_to_f64(s).ok(),
       RedisValue::Integer(ref i) => Some(*i as f64),
       _ => None
     }
@@ -914,11 +996,24 @@ impl RedisValue {
     }
   }
   /// Read and return the inner `String` if the value is a string or integer.
+  ///
+  /// Note: this will cast integers to strings.
   pub fn as_string(&self) -> Option<String> {
     match self {
       RedisValue::String(ref s) => Some(s.to_owned()),
       RedisValue::Integer(ref i) => Some(i.to_string()),
       _ => None
+    }
+  }
+
+  /// Read the inner value as a string slice.
+  ///
+  /// Null is returned as "nil" and integers are cast to a string.
+  pub fn as_str(&'a self) -> Cow<'a, str> {
+    match *self {
+      RedisValue::String(ref s)  => Cow::Borrowed(s),
+      RedisValue::Integer(ref i) => Cow::Owned(i.to_string()),
+      RedisValue::Null           => Cow::Borrowed("nil")
     }
   }
 
@@ -952,6 +1047,13 @@ impl RedisValue {
 
 impl Hash for RedisValue {
   fn hash<H: Hasher>(&self, state: &mut H) {
+    let prefix = match *self {
+      RedisValue::Integer(_) => 'i',
+      RedisValue::String(_)  => 's',
+      RedisValue::Null       => 'n'
+    };
+    prefix.hash(state);
+
     match *self {
       RedisValue::Integer(d)     => d.hash(state),
       RedisValue::String(ref s)  => s.hash(state),

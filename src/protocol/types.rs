@@ -32,7 +32,11 @@ pub const CR: char = '\r';
 pub const LF: char = '\n';
 
 pub const REDIS_CLUSTER_SLOTS: u16 = 16384;
+
+#[cfg(not(feature="super-duper-bad-networking"))]
 pub const MAX_COMMAND_ATTEMPTS: usize = 3;
+#[cfg(feature="super-duper-bad-networking")]
+pub const MAX_COMMAND_ATTEMPTS: usize = 20;
 
 use redis_protocol::types::{
   FrameKind as ProtocolFrameKind,
@@ -361,8 +365,9 @@ pub enum RedisCommandKind {
   Zrevrangebyscore,
   Zrevrank,
   Zscore,
-  Zunionscore,
   Zunionstore,
+  Zpopmax,
+  Zpopmin,
   Scan(KeyScanInner),
   Sscan(ValueScanInner),
   Hscan(ValueScanInner),
@@ -688,8 +693,9 @@ impl RedisCommandKind {
       RedisCommandKind::Zrevrangebyscore                => "ZREVRANGEBYSCORE",
       RedisCommandKind::Zrevrank                        => "ZREVRANK",
       RedisCommandKind::Zscore                          => "ZSCORE",
-      RedisCommandKind::Zunionscore                     => "ZUNIONSCORE",
       RedisCommandKind::Zunionstore                     => "ZUNIONSTORE",
+      RedisCommandKind::Zpopmax                         => "ZPOPMAX",
+      RedisCommandKind::Zpopmin                         => "ZPOPMIN",
       RedisCommandKind::Scan(_)                         => "SCAN",
       RedisCommandKind::Sscan(_)                        => "SSCAN",
       RedisCommandKind::Hscan(_)                        => "HSCAN",

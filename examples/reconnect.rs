@@ -70,9 +70,9 @@ fn main() {
     client.quit()
   });
 
-  let composed = connection.join(commands)
+  let joined = connection.join(commands)
     .join(errors)
     .join(reconnects);
 
-  let _ = core.run(composed).unwrap();
+  let _ = core.run(joined).unwrap();
 }

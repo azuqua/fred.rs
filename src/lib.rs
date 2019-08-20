@@ -42,6 +42,7 @@ pub mod types;
 pub mod client;
 /// Size and latency metrics types.
 pub mod metrics;
+pub mod pool;
 
 mod commands;
 pub mod borrowed;

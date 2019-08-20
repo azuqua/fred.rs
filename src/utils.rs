@@ -387,3 +387,51 @@ pub fn redis_string_to_f64(s: &str) -> Result<f64, RedisError> {
     ))
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn should_convert_normal_f64_to_string() {
+    let f = 1.2345678;
+    assert_eq!(RedisValue::from(f.to_string()), f64_to_redis_string(f).unwrap());
+  }
+
+  #[test]
+  fn should_fail_converting_nan_to_string() {
+    assert!(f64_to_redis_string(f64::NAN).is_err());
+  }
+
+  #[test]
+  fn should_convert_pos_inf_to_string() {
+    assert_eq!(f64_to_redis_string(f64::INFINITY).unwrap(), "+inf".into());
+  }
+
+  #[test]
+  fn should_convert_neg_inf_to_string() {
+    assert_eq!(f64_to_redis_string(f64::NEG_INFINITY).unwrap(), "-inf".into());
+  }
+
+  #[test]
+  fn should_convert_string_to_f64() {
+    let f = "1.234567";
+    assert_eq!(redis_string_to_f64(f).unwrap(), 1.234567);
+  }
+
+  #[test]
+  fn should_convert_pos_inf_string_to_f64() {
+    assert_eq!(redis_string_to_f64("+inf").unwrap(), f64::INFINITY);
+  }
+
+  #[test]
+  fn should_convert_neg_inf_string_to_f64() {
+    assert_eq!(redis_string_to_f64("-inf").unwrap(), f64::NEG_INFINITY);
+  }
+
+  #[test]
+  fn should_fail_converting_bad_string_to_f64() {
+    assert!(redis_string_to_f64("foobarbaz").is_err());
+  }
+
+}

@@ -22,7 +22,6 @@ pub fn should_hscan_simple_database(client: RedisClient) -> Box<Future<Item=(), 
   .and_then(|(client, _)| {
     // count that all three were recv
     client.hscan("foo", Some("*"), Some(1)).fold(3, |mut count, mut state| {
-      println!("state {:?}", state.results());
       for key in state.take_results().unwrap().keys() {
         if key.as_str() == "a" || key.as_str() == "b" || key.as_str() == "c" {
           count -= 1;

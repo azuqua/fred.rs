@@ -27,8 +27,6 @@ use std::ops::{
 
 use tokio_core::reactor::Handle;
 
-use tokio_timer::Timer;
-
 use crate::types::{ClientState, RedisConfig, RedisValue, ReconnectPolicy, ScanType, RedisKey, ScanResult, HScanResult, SScanResult, ZScanResult};
 use crate::error::{RedisError, RedisErrorKind};
 use crate::protocol::types::RedisCommand;
@@ -53,6 +51,14 @@ pub type CommandSender = UnboundedSender<RedisCommand>;
 
 pub use utils::redis_string_to_f64;
 pub use utils::f64_to_redis_string;
+
+/// A patched version of `tokio-timer` to avoid a `panic` under heavy load.
+///
+/// See [tokio-timer-patched](https://crates.io/crates/tokio-timer-patched).
+pub use tokio_timer::Timer;
+
+/// A future representing the connection to a Redis server.
+pub type ConnectionFuture = Box<Future<Item=Option<RedisError>, Error=RedisError>>;
 
 #[doc(hidden)]
 pub struct RedisClientInner {
@@ -169,6 +175,8 @@ impl RedisClient {
   }
 
   /// Read the number of request redeliveries.
+  ///
+  /// This is the number of times a request had to be sent again due to a connection closing while waiting on a response.
   pub fn read_redelivery_count(&self) -> usize {
     utils::read_atomic(&self.inner.redeliver_count)
   }
@@ -221,7 +229,7 @@ impl RedisClient {
   /// Connect to the Redis server. The returned future will resolve when the connection to the Redis server has been fully closed by both ends.
   ///
   /// The `on_connect` function can be used to be notified when the client first successfully connects.
-  pub fn connect(&self, handle: &Handle) -> Box<Future<Item=Option<RedisError>, Error=RedisError>> {
+  pub fn connect(&self, handle: &Handle) -> ConnectionFuture {
     fry!(utils::check_client_state(&self.inner.state, ClientState::Disconnected));
     fry!(utils::check_and_set_closed_flag(&self.inner.closed, false));
 
@@ -239,7 +247,7 @@ impl RedisClient {
   ///
   /// Additionally, `on_connect` can be used to be notified when the client first successfully connects, since sometimes
   /// some special initialization is needed upon first connecting.
-  pub fn connect_with_policy(&self, handle: &Handle, mut policy: ReconnectPolicy) -> Box<Future<Item=Option<RedisError>, Error=RedisError>> {
+  pub fn connect_with_policy(&self, handle: &Handle, mut policy: ReconnectPolicy) -> ConnectionFuture {
     fry!(utils::check_client_state(&self.inner.state, ClientState::Disconnected));
     fry!(utils::check_and_set_closed_flag(&self.inner.closed, false));
 

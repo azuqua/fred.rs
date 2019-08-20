@@ -21,9 +21,14 @@ cargo add fred
 * Supports clustered Redis deployments.
 * Optional built-in reconnection logic with multiple backoff policies.
 * Publish-Subscribe interface.
-* Support TLS for ElastiCache, etc.
-* Gracefully handle cluster rebalancing without client errors.
+* Supports ElastiCache, including TLS support.
+* Gracefully handle live cluster rebalancing operations.
 * Flexible interfaces for different use cases.
+* Supports various scanning functions.
+* Automatically retry requests under bad network conditions.
+* Built-in tracking for network latency and payload size metrics.
+* Built-in mocking layer for running tests without a Redis server.
+* A client pooling interface to round-robin requests among a pool of connections.
 
 ## Example
 
@@ -94,22 +99,32 @@ See [examples](https://github.com/azuqua/fred.rs/tree/master/examples) for more.
 
 Clustered Redis deployments are supported by this module by specifying a `RedisConfig::Clustered` variant when using `connect` or `connect_with_policy`. When creating a clustered configuration only one valid host from the cluster is needed, regardless of how many nodes exist in the cluster. When the client first connects to a node it will use the `CLUSTER NODES` command to inspect the state of the cluster.
 
-In order to simplify error handling and usage patterns this module caches the state of the cluster in memory and maintains connections to each master node in the cluster. When a command is received the client hashes the key or [key hash tag](https://redis.io/topics/cluster-spec#keys-hash-tags) to find the node that should receive the request and then dispatches the request to that node. In the event that a node returns a `MOVED` or `ASK` error the client will pause to rebuild the in-memory cluster state. When the local cluster state and new connections have been fully rebuilt the client will begin processing commands again. Any requests sent while the in-memory cache is being rebuilt will be queued up and replayed when the connection is available again. 
+In order to simplify error handling and usage patterns this module caches the state of the cluster in memory and maintains connections to each node in the cluster. In the event that a node returns a `MOVED` or `ASK` error the client will pause to rebuild the in-memory cluster state. When the local cluster state and new connections have been fully rebuilt the client will begin processing commands again. Any requests sent while the in-memory cache is being rebuilt will be queued up and replayed when the connection is available again. 
 
-Additionally, this module will not acknowledge requests as having finished until a response arrives, so in the event that a connection dies while a request is in flight it will be retried when the connection comes back up.
+Additionally, this module will not acknowledge requests as having finished until a response arrives, so in the event that a connection dies while a request is in flight it will be retried multiple times (configurable via features below) when the connection comes back up.
 
 ## Logging
 
 This module uses [pretty_env_logger](https://github.com/seanmonstar/pretty-env-logger) for logging. To enable logs use the environment
 variable `RUST_LOG` with a value of `trace`, `debug`, `warn`, `error`, or `info`. See the documentation for [env_logger](http://rust-lang-nursery.github.io/log/env_logger/) for more information. 
 
+When a client is initialized it will generate a unique client name with a prefix of `fred-`. This name will appear in nearly all logging statements on the client in order to associate client and server operations if logging is enabled on both.
+
 ## Features
 
-|    Name            | Default | Description                                                                              |
-|------------------- |---------|----------------------------------------------------------------------------------------- |
-| enable-tls         |         | Enable TLS support.                                                                      |
-| ignore-auth-error  |    x    | Ignore auth errors that occur when a password is supplied but not required.              |
-| mocks              |         | Enable the mocking layer, which will use local memory instead of an actual redis server. |
+|    Name                     | Default | Description                                                                                                                                                          |
+|---------------------------- |---------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| enable-tls                  |         | Enable TLS support. This requires OpenSSL (or equivalent) dependencies.                                                                                              |
+| ignore-auth-error           |    x    | Ignore auth errors that occur when a password is supplied but not required.                                                                                          |
+| mocks                       |         | Enable the mocking layer, which will use local memory instead of an actual redis server.                                                                             |
+| super-duper-bad-networking  |         | Increase the number of times a request will be automatically retried from 3 to 20. A request is retried when the connection closes while waiting on a response.      |
+
+## Environment Variables
+
+|   Name                            | Default | Description                                                                              |
+|-----------------------------------|---------|------------------------------------------------------------------------------------------|
+| FRED_DISABLE_CERT_VERIFICATION    | `false` | Disable certificate verification when using TLS features.                                |
+
 
 ## Tests
 
@@ -125,8 +140,13 @@ Note a local Redis server must be running on port 6379 and a clustered deploymen
 
 ## TODO
 
+* Expand the mocking layer to support all commands.
 * More commands.
 * Blocking commands.
 * Distribute reads among slaves.
-* Pipelined requests.
+* Transactions.
 * Lua.
+
+## Contributing
+
+See the [contributing](CONTRIBUTING.md) documentation for info on adding new commands. For anything more complicated feel free to file an issue and we'd be happy to point you in the right direction. 

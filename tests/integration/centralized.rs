@@ -276,8 +276,6 @@ pub mod other {
 
   #[test]
   fn it_should_scan_simple_database() {
-    pretty_env_logger::init();
-
     let config = RedisConfig::default_centralized();
     utils::setup_test_client(config, TIMER.clone(), |client| {
       other_tests::scan::should_scan_simple_database(client)
@@ -292,5 +290,12 @@ pub mod other {
     });
   }
 
+  #[test]
+  fn it_should_sscan_simple_database() {
+    let config = RedisConfig::default_centralized();
+    utils::setup_test_client(config, TIMER.clone(), |client| {
+      other_tests::sscan::should_sscan_simple_database(client)
+    })
+  }
 
 }

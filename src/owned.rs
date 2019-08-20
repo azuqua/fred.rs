@@ -146,6 +146,66 @@ pub trait RedisClientOwned: Sized {
 
   fn punsubscribe<K: Into<MultipleKeys>>(self, patterns: K) -> Box<Future<Item=(Self, Vec<usize>), Error=RedisError>>;
 
+  fn mget<K: Into<MultipleKeys>>(self, keys: K) -> Box<Future<Item=(Self, Vec<RedisValue>), Error=RedisError>>;
+
+  fn zadd<K: Into<RedisKey>, V: Into<MultipleZaddValues>>(self, key: K, options: Option<SetOptions>, changed: bool, incr: bool, values: V) -> Box<Future<Item=(Self, RedisValue), Error=RedisError>>;
+
+  fn zcard<K: Into<RedisKey>>(self, key: K) -> Box<Future<Item=(Self, usize), Error=RedisError>>;
+
+  fn zcount<K: Into<RedisKey>>(self, key: K, min: f64, max: f64) -> Box<Future<Item=(Self, usize), Error=RedisError>>;
+
+  fn zlexcount<K: Into<RedisKey>, M: Into<String>, N: Into<String>>(self, key: K, min: M, max: N) -> Box<Future<Item=(Self, usize), Error=RedisError>>;
+
+  fn zincrby<K: Into<RedisKey>, V: Into<RedisValue>>(self, key: K, incr: f64, value: V) -> Box<Future<Item=(Self, f64), Error=RedisError>>;
+
+  fn zrange<K: Into<RedisKey>>(self, key: K, start: i64, stop: i64, with_scores: bool) -> Box<Future<Item=(Self, Vec<RedisValue>), Error=RedisError>>;
+
+  fn zrangebylex<K: Into<RedisKey>, M: Into<String>, N: Into<String>>(self, key: K, min: M, max: N, limit: Option<(usize, usize)>) -> Box<Future<Item=(Self, Vec<RedisValue>), Error=RedisError>>;
+
+  fn zrangebyscore<K: Into<RedisKey>>(self, key: K, min: f64, max: f64, with_scores: bool, limit: Option<(usize, usize)>) -> Box<Future<Item=(Self, Vec<RedisValue>), Error=RedisError>>;
+
+  fn zpopmax<K: Into<RedisKey>>(self, key: K, count: Option<usize>) -> Box<Future<Item=(Self, Vec<RedisValue>), Error=RedisError>>;
+
+  fn zpopmin<K: Into<RedisKey>>(self, key: K, count: Option<usize>) -> Box<Future<Item=(Self, Vec<RedisValue>), Error=RedisError>>;
+
+  fn zrank<K: Into<RedisKey>, V: Into<RedisValue>>(self, key: K, value: V) -> Box<Future<Item=(Self, RedisValue), Error=RedisError>>;
+
+  fn zrem<K: Into<RedisKey>, V: Into<MultipleValues>>(self, key: K, values: V) -> Box<Future<Item=(Self, usize), Error=RedisError>>;
+
+  fn zremrangebylex<K: Into<RedisKey>, M: Into<String>, N: Into<String>>(self, key: K, min: M, max: N) -> Box<Future<Item=(Self, usize), Error=RedisError>>;
+
+  fn zremrangebyrank<K: Into<RedisKey>>(self, key: K, start: i64, stop: i64) -> Box<Future<Item=(Self, usize), Error=RedisError>>;
+
+  fn zremrangebyscore<K: Into<RedisKey>>(self, key: K, min: f64, max: f64) -> Box<Future<Item=(Self, usize), Error=RedisError>>;
+
+  fn zrevrange<K: Into<RedisKey>>(self, key: K, start: i64, stop: i64, with_scores: bool) -> Box<Future<Item=(Self, Vec<RedisValue>), Error=RedisError>>;
+
+  fn zrevrangebylex<K: Into<RedisKey>, M: Into<String>, N: Into<String>>(self, key: K, max: M, min: N, limit: Option<(usize, usize)>) -> Box<Future<Item=(Self, Vec<RedisValue>), Error=RedisError>>;
+
+  fn zrevrangebyscore<K: Into<RedisKey>>(self, key: K, max: f64, min: f64, with_scores: bool, limit: Option<(usize, usize)>) -> Box<Future<Item=(Self, Vec<RedisValue>), Error=RedisError>>;
+
+  fn zrevrank<K: Into<RedisKey>, V: Into<RedisValue>>(self, key: K, value: V) -> Box<Future<Item=(Self, RedisValue), Error=RedisError>>;
+
+  fn zscore<K: Into<RedisKey>, V: Into<RedisValue>>(self, key: K, value: V) -> Box<Future<Item=(Self, RedisValue), Error=RedisError>>;
+
+  fn zinterstore<D: Into<RedisKey>, K: Into<MultipleKeys>, W: Into<MultipleWeights>>(self,
+                                                                                     destination: D,
+                                                                                     keys: K,
+                                                                                     weights: W,
+                                                                                     aggregate: Option<AggregateOptions>)
+    -> Box<Future<Item=(Self, usize), Error=RedisError>>;
+
+  fn zunionstore<D: Into<RedisKey>, K: Into<MultipleKeys>, W: Into<MultipleWeights>>(self,
+                                                                                     destination: D,
+                                                                                     keys: K,
+                                                                                     weights: W,
+                                                                                     aggregate: Option<AggregateOptions>)
+    -> Box<Future<Item=(Self, usize), Error=RedisError>>;
+
+  fn ttl<K: Into<RedisKey>>(self, key: K) -> Box<Future<Item=(Self, i64), Error=RedisError>>;
+
+  fn pttl<K: Into<RedisKey>>(self, key: K) -> Box<Future<Item=(Self, i64), Error=RedisError>>;
+
 }
 
 impl RedisClientOwned for RedisClient {
@@ -572,6 +632,193 @@ impl RedisClientOwned for RedisClient {
   /// <https://redis.io/commands/punsubscribe>
   fn punsubscribe<K: Into<MultipleKeys>>(self, patterns: K) -> Box<Future<Item=(Self, Vec<usize>), Error=RedisError>> {
     run_borrowed(self, |inner| commands::punsubscribe(inner, patterns))
+  }
+
+  /// Returns the values of all specified keys.
+  ///
+  /// <https://redis.io/commands/mget>
+  fn mget<K: Into<MultipleKeys>>(self, keys: K) -> Box<Future<Item=(Self, Vec<RedisValue>), Error=RedisError>> {
+    run_borrowed(self, |inner| commands::mget(inner, keys))
+  }
+
+  /// Adds all the specified members with the specified scores to the sorted set stored at key.
+  ///
+  /// <https://redis.io/commands/zadd>
+  fn zadd<K: Into<RedisKey>, V: Into<MultipleZaddValues>>(self, key: K, options: Option<SetOptions>, changed: bool, incr: bool, values: V) -> Box<Future<Item=(Self, RedisValue), Error=RedisError>> {
+    run_borrowed(self, |inner| commands::zadd(inner, key, options, changed, incr, values))
+  }
+
+  /// Returns the sorted set cardinality (number of elements) of the sorted set stored at key.
+  ///
+  /// <https://redis.io/commands/zcard>
+  fn zcard<K: Into<RedisKey>>(self, key: K) -> Box<Future<Item=(Self, usize), Error=RedisError>> {
+    run_borrowed(self, |inner| commands::zcard(inner, key))
+  }
+
+  /// Returns the number of elements in the sorted set at key with a score between min and max.
+  ///
+  /// <https://redis.io/commands/zcount>
+  fn zcount<K: Into<RedisKey>>(self, key: K, min: f64, max: f64) -> Box<Future<Item=(Self, usize), Error=RedisError>> {
+    run_borrowed(self, |inner| commands::zcount(inner, key, min, max))
+  }
+
+  /// When all the elements in a sorted set are inserted with the same score, in order to force lexicographical ordering, this command returns the number of elements in the sorted set at key with a value between min and max.
+  ///
+  /// <https://redis.io/commands/zlexcount>
+  fn zlexcount<K: Into<RedisKey>, M: Into<String>, N: Into<String>>(self, key: K, min: M, max: N) -> Box<Future<Item=(Self, usize), Error=RedisError>> {
+    run_borrowed(self, |inner| commands::zlexcount(inner, key, min, max))
+  }
+
+  /// Increments the score of member in the sorted set stored at key by increment.
+  ///
+  /// <https://redis.io/commands/zincrby>
+  fn zincrby<K: Into<RedisKey>, V: Into<RedisValue>>(self, key: K, incr: f64, value: V) -> Box<Future<Item=(Self, f64), Error=RedisError>> {
+    run_borrowed(self, |inner| commands::zincrby(inner, key, incr, value))
+  }
+
+  /// Returns the specified range of elements in the sorted set stored at key.
+  ///
+  /// <https://redis.io/commands/zrange>
+  fn zrange<K: Into<RedisKey>>(self, key: K, start: i64, stop: i64, with_scores: bool) -> Box<Future<Item=(Self, Vec<RedisValue>), Error=RedisError>> {
+    run_borrowed(self, |inner| commands::zrange(inner, key, start, stop, with_scores))
+  }
+
+  /// When all the elements in a sorted set are inserted with the same score, in order to force lexicographical ordering, this command returns all the elements in the sorted set at key with a value between min and max.
+  ///
+  /// <https://redis.io/commands/zrangebylex>
+  fn zrangebylex<K: Into<RedisKey>, M: Into<String>, N: Into<String>>(self, key: K, min: M, max: N, limit: Option<(usize, usize)>) -> Box<Future<Item=(Self, Vec<RedisValue>), Error=RedisError>> {
+    run_borrowed(self, |inner| commands::zrangebylex(inner, key, min, max, limit))
+  }
+
+  /// Returns all the elements in the sorted set at key with a score between min and max (including elements with score equal to min or max).
+  ///
+  /// <https://redis.io/commands/zrangebyscore>
+  fn zrangebyscore<K: Into<RedisKey>>(self, key: K, min: f64, max: f64, with_scores: bool, limit: Option<(usize, usize)>) -> Box<Future<Item=(Self, Vec<RedisValue>), Error=RedisError>> {
+    run_borrowed(self, |inner| commands::zrangebyscore(inner, key, min, max, with_scores, limit))
+  }
+
+  /// Removes and returns up to count members with the highest scores in the sorted set stored at key.
+  ///
+  /// <https://redis.io/commands/zpopmax>
+  fn zpopmax<K: Into<RedisKey>>(self, key: K, count: Option<usize>) -> Box<Future<Item=(Self, Vec<RedisValue>), Error=RedisError>> {
+    run_borrowed(self, |inner| commands::zpopmax(inner, key, count))
+  }
+
+  /// Removes and returns up to count members with the lowest scores in the sorted set stored at key.
+  ///
+  /// <https://redis.io/commands/zpopmin>
+  fn zpopmin<K: Into<RedisKey>>(self, key: K, count: Option<usize>) -> Box<Future<Item=(Self, Vec<RedisValue>), Error=RedisError>> {
+    run_borrowed(self, |inner| commands::zpopmin(inner, key, count))
+  }
+
+  /// Returns the rank of member in the sorted set stored at key, with the scores ordered from low to high.
+  ///
+  /// <https://redis.io/commands/zrank>
+  fn zrank<K: Into<RedisKey>, V: Into<RedisValue>>(self, key: K, value: V) -> Box<Future<Item=(Self, RedisValue), Error=RedisError>> {
+    run_borrowed(self, |inner| commands::zrank(inner, key, value))
+  }
+
+  /// Removes the specified members from the sorted set stored at key. Non existing members are ignored.
+  ///
+  /// <https://redis.io/commands/zrem>
+  fn zrem<K: Into<RedisKey>, V: Into<MultipleValues>>(self, key: K, values: V) -> Box<Future<Item=(Self, usize), Error=RedisError>> {
+    run_borrowed(self, |inner| commands::zrem(inner, key, values))
+  }
+
+  /// When all the elements in a sorted set are inserted with the same score, in order to force lexicographical ordering, this command removes all elements in the sorted set stored at key between the lexicographical range specified by min and max.
+  ///
+  /// <https://redis.io/commands/zremrangebylex>
+  fn zremrangebylex<K: Into<RedisKey>, M: Into<String>, N: Into<String>>(self, key: K, min: M, max: N) -> Box<Future<Item=(Self, usize), Error=RedisError>> {
+    run_borrowed(self, |inner| commands::zremrangebylex(inner, key, min, max))
+  }
+
+  /// Removes all elements in the sorted set stored at key with rank between start and stop.
+  ///
+  /// <https://redis.io/commands/zremrangebyrank>
+  fn zremrangebyrank<K: Into<RedisKey>>(self, key: K, start: i64, stop: i64) -> Box<Future<Item=(Self, usize), Error=RedisError>> {
+    run_borrowed(self, |inner| commands::zremrangebyrank(inner, key, start, stop))
+  }
+
+  /// Removes all elements in the sorted set stored at key with a score between min and max (inclusive).
+  ///
+  /// <https://redis.io/commands/zremrangebyscore>
+  fn zremrangebyscore<K: Into<RedisKey>>(self, key: K, min: f64, max: f64) -> Box<Future<Item=(Self, usize), Error=RedisError>> {
+    run_borrowed(self, |inner| commands::zremrangebyscore(inner, key, min, max))
+  }
+
+  /// Returns the specified range of elements in the sorted set stored at key. The elements are considered to be ordered from the highest to the lowest score
+  ///
+  /// <https://redis.io/commands/zrevrange>
+  fn zrevrange<K: Into<RedisKey>>(self, key: K, start: i64, stop: i64, with_scores: bool) -> Box<Future<Item=(Self, Vec<RedisValue>), Error=RedisError>> {
+    run_borrowed(self, |inner| commands::zrevrange(inner, key, start, stop, with_scores))
+  }
+
+  /// When all the elements in a sorted set are inserted with the same score, in order to force lexicographical ordering, this command returns all the elements in the sorted set at key with a value between max and min.
+  ///
+  /// <https://redis.io/commands/zrevrangebylex>
+  fn zrevrangebylex<K: Into<RedisKey>, M: Into<String>, N: Into<String>>(self, key: K, max: M, min: N, limit: Option<(usize, usize)>) -> Box<Future<Item=(Self, Vec<RedisValue>), Error=RedisError>> {
+    run_borrowed(self, |inner| commands::zrevrangebylex(inner, key, max, min, limit))
+  }
+
+  /// Returns all the elements in the sorted set at key with a score between max and min (including elements with score equal to max or min). In contrary to the default ordering of sorted sets, for this command the elements are considered to be ordered from high to low scores.
+  ///
+  /// <https://redis.io/commands/zrevrangebyscore>
+  fn zrevrangebyscore<K: Into<RedisKey>>(self, key: K, max: f64, min: f64, with_scores: bool, limit: Option<(usize, usize)>) -> Box<Future<Item=(Self, Vec<RedisValue>), Error=RedisError>> {
+    run_borrowed(self, |inner| commands::zrevrangebyscore(inner, key, max, min, with_scores, limit))
+  }
+
+  /// Returns the rank of member in the sorted set stored at key, with the scores ordered from high to low.
+  ///
+  /// <https://redis.io/commands/zrevrank>
+  fn zrevrank<K: Into<RedisKey>, V: Into<RedisValue>>(self, key: K, value: V) -> Box<Future<Item=(Self, RedisValue), Error=RedisError>> {
+    run_borrowed(self, |inner| commands::zrevrank(inner, key, value))
+  }
+
+  /// Returns the score of member in the sorted set at key.
+  ///
+  /// <https://redis.io/commands/zscore>
+  fn zscore<K: Into<RedisKey>, V: Into<RedisValue>>(self, key: K, value: V) -> Box<Future<Item=(Self, RedisValue), Error=RedisError>> {
+    run_borrowed(self, |inner| commands::zscore(inner, key, value))
+  }
+
+  /// Computes the intersection of numkeys sorted sets given by the specified keys, and stores the result in destination.
+  ///
+  /// <https://redis.io/commands/zinterstore>
+  fn zinterstore<D: Into<RedisKey>, K: Into<MultipleKeys>, W: Into<MultipleWeights>>(self,
+                                                                                     destination: D,
+                                                                                     keys: K,
+                                                                                     weights: W,
+                                                                                     aggregate: Option<AggregateOptions>)
+    -> Box<Future<Item=(Self, usize), Error=RedisError>>
+  {
+    run_borrowed(self, |inner| commands::zinterstore(inner, destination, keys, weights, aggregate))
+  }
+
+  /// Computes the union of numkeys sorted sets given by the specified keys, and stores the result in destination.
+  ///
+  /// <https://redis.io/commands/zunionstore>
+  fn zunionstore<D: Into<RedisKey>, K: Into<MultipleKeys>, W: Into<MultipleWeights>>(self,
+                                                                                     destination: D,
+                                                                                     keys: K,
+                                                                                     weights: W,
+                                                                                     aggregate: Option<AggregateOptions>)
+    -> Box<Future<Item=(Self, usize), Error=RedisError>>
+  {
+    run_borrowed(self, |inner| commands::zunionstore(inner, destination, keys, weights, aggregate))
+  }
+
+  /// Returns the remaining time to live of a key that has a timeout. This introspection capability allows a Redis client to check how many seconds a given key will continue to be part of the dataset.
+  ///
+  /// <https://redis.io/commands/ttl>
+  fn ttl<K: Into<RedisKey>>(self, key: K) -> Box<Future<Item=(Self, i64), Error=RedisError>> {
+    run_borrowed(self, |inner| commands::ttl(inner, key))
+  }
+
+  /// Like TTL this command returns the remaining time to live of a key that has an expire set, with the sole difference that TTL returns the amount of remaining time in seconds while PTTL returns it in milliseconds.
+  ///
+  /// <https://redis.io/commands/pttl>
+  fn pttl<K: Into<RedisKey>>(self, key: K) -> Box<Future<Item=(Self, i64), Error=RedisError>> {
+    run_borrowed(self, |inner| commands::pttl(inner, key))
   }
 
 }
