@@ -48,6 +48,7 @@ use super::sets as sets_tests;
 use super::hashes as hashes_tests;
 use super::lists as lists_tests;
 use super::pubsub as pubsub_tests;
+use super::sorted_sets as sorted_sets_tests;
 
 lazy_static! {
 
@@ -263,5 +264,19 @@ pub mod pubsub {
       pubsub_tests::should_punsubscribe_on_multiple_channels(client_1, client_2)
     });
   }
+
+}
+
+pub mod sorted_sets {
+  use super::*;
+
+  #[test]
+  fn it_should_add_and_remove_elements() {
+    let config = RedisConfig::default_clustered();
+    utils::setup_test_client(config, TIMER.clone(), |client| {
+      sorted_sets_tests::basic::should_add_and_remove_elements(client)
+    })
+  }
+
 
 }
