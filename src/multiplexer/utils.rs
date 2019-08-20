@@ -29,7 +29,7 @@ use crate::multiplexer::{Multiplexer, LastCommandCaller};
 use crate::error::*;
 use crate::utils as client_utils;
 use crate::protocol::utils as protocol_utils;
-use crate::protocol::types::ResponseKind;
+use crate::protocol::types::{ResponseKind, ValueScanInner, ValueScanResult};
 
 use std::collections::{
   BTreeMap,
@@ -37,10 +37,12 @@ use std::collections::{
   VecDeque
 };
 use std::mem;
-use crate::protocol::types::RedisCommand;
+use crate::protocol::types::{RedisCommand, RedisCommandKind};
 use crate::client::{RedisClientInner, RedisClient};
-use crate::types::{RedisConfig, ReconnectPolicy, RedisValue};
+use crate::types::{RedisConfig, ReconnectPolicy, RedisValue, RedisKey, ScanResult, ZScanResult, SScanResult, HScanResult};
 use futures::sync::mpsc::UnboundedSender;
+use crate::protocol::utils::frame_to_single_result;
+use crate::utils::send_command;
 
 pub fn set_option<T>(opt: &Rc<RefCell<Option<T>>>, val: Option<T>)  {
   let mut _ref = opt.borrow_mut();
@@ -269,6 +271,196 @@ pub fn merge_multiple_frames(frames: &mut VecDeque<Frame>) -> Frame {
   Frame::Array(out)
 }
 
+pub fn last_command_is_key_scan(last_request: &Rc<RefCell<Option<RedisCommand>>>) -> bool {
+  last_request.borrow()
+    .deref()
+    .as_ref()
+    .map(|c| c.kind.is_scan())
+    .unwrap_or(false)
+}
+
+pub fn last_command_is_value_scan(last_request: &Rc<RefCell<Option<RedisCommand>>>) -> bool {
+  last_request.borrow()
+    .deref()
+    .as_ref()
+    .map(|c| c.kind.is_value_scan())
+    .unwrap_or(false)
+}
+
+pub fn update_scan_cursor(last_request: &mut RedisCommand, cursor: String) {
+  if last_request.kind.is_scan() {
+    mem::replace(&mut last_request.args[0], cursor.clone().into());
+  }else if last_request.kind.is_value_scan() {
+    mem::replace(&mut last_request.args[1], cursor.clone().into());
+  }
+
+  let mut old_cursor = match last_request.kind {
+    RedisCommandKind::Scan(ref mut inner) => &mut inner.cursor,
+    RedisCommandKind::Hscan(ref mut inner) => &mut inner.cursor,
+    RedisCommandKind::Sscan(ref mut inner) => &mut inner.cursor,
+    RedisCommandKind::Zscan(ref mut inner) => &mut inner.cursor,
+    _ => return
+  };
+
+  mem::replace(old_cursor, cursor);
+}
+
+pub fn handle_key_scan_result(mut frame: Frame) -> Result<(String, Vec<RedisKey>), RedisError> {
+  if let Frame::Array(mut frames) = frame {
+    if frames.len() == 2 {
+      let cursor = match frames[0].to_string() {
+        Some(s) => s,
+        None => return Err(RedisError::new(RedisErrorKind::ProtocolError, "Expected first SCAN result element to be a bulk string."))
+      };
+
+      if let Some(Frame::Array(results)) = frames.pop() {
+        let mut keys = Vec::with_capacity(results.len());
+
+        for frame in results.into_iter() {
+          let key = match frame.to_string() {
+            Some(s) => s,
+            None => return Err(RedisError::new(RedisErrorKind::ProtocolError, "Expected an array of strings from second SCAN result."))
+          };
+
+          keys.push(RedisKey::new(key));
+        }
+
+        Ok((cursor, keys))
+      }else{
+        Err(RedisError::new(RedisErrorKind::ProtocolError, "Expected second SCAN result element to be an array."))
+      }
+    }else{
+      Err(RedisError::new(RedisErrorKind::ProtocolError, "Expected two-element bulk string array from SCAN."))
+    }
+  }else{
+    Err(RedisError::new(RedisErrorKind::ProtocolError, "Expected bulk string array from SCAN."))
+  }
+}
+
+pub fn handle_value_scan_result(mut frame: Frame) -> Result<(String, Vec<RedisValue>), RedisError> {
+  if let Frame::Array(mut frames) = frame {
+    if frames.len() == 2 {
+      let cursor = match frames[0].to_string() {
+        Some(s) => s,
+        None => return Err(RedisError::new(RedisErrorKind::ProtocolError, "Expected first result element to be a bulk string."))
+      };
+
+      if let Some(Frame::Array(results)) = frames.pop() {
+        let mut values = Vec::with_capacity(results.len());
+
+        for frame in results.into_iter() {
+          let value = match frame_to_single_result(frame) {
+            Ok(v) => v,
+            Err(e) => return Err(e)
+          };
+
+          values.push(value);
+        }
+
+        Ok((cursor, values))
+      }else{
+        Err(RedisError::new(RedisErrorKind::ProtocolError, "Expected second result element to be an array."))
+      }
+    }else{
+      Err(RedisError::new(RedisErrorKind::ProtocolError, "Expected two-element bulk string array."))
+    }
+  }else{
+    Err(RedisError::new(RedisErrorKind::ProtocolError, "Expected bulk string array."))
+  }
+}
+
+pub fn send_key_scan_result(inner: &Arc<RedisClientInner>, mut cmd: RedisCommand, result: Vec<RedisKey>, can_continue: bool) -> Result<(), RedisError> {
+  if let RedisCommandKind::Scan(scan_state) = cmd.kind {
+    let tx = scan_state.tx.clone();
+
+    let scan_result = ScanResult {
+      can_continue,
+      inner: inner.clone(),
+      scan_state,
+      args: cmd.args,
+      results: Some(result)
+    };
+
+    tx.unbounded_send(Ok(scan_result))
+      .map_err(|_| RedisError::new(RedisErrorKind::Unknown, "Error sending SCAN callback."))
+  }else{
+    Err(RedisError::new(RedisErrorKind::Unknown, "Invalid redis command. Expected SCAN."))
+  }
+}
+
+pub fn send_key_scan_error(cmd: &RedisCommand, e: RedisError) -> Result<(), RedisError> {
+  if let RedisCommandKind::Scan(ref inner) = cmd.kind {
+    inner.tx.unbounded_send(Err(e))
+      .map_err(|_| RedisError::new(RedisErrorKind::Unknown, "Error sending SCAN callback."))
+  }else{
+    Err(RedisError::new(RedisErrorKind::Unknown, "Invalid redis command. Expected SCAN."))
+  }
+}
+
+pub fn send_value_scan_result(inner: &Arc<RedisClientInner>, mut cmd: RedisCommand, result: Vec<RedisValue>, can_continue: bool) -> Result<(), RedisError> {
+  let args = cmd.args;
+
+  match cmd.kind {
+    RedisCommandKind::Zscan(scan_state) => {
+      let tx = scan_state.tx.clone();
+      let results = ValueScanInner::transform_zscan_result(result)?;
+
+      let state = ValueScanResult::ZScan(ZScanResult {
+        can_continue,
+        inner: inner.clone(),
+        scan_state,
+        args,
+        results: Some(results)
+      });
+
+      tx.unbounded_send(Ok(state))
+        .map_err(|_| RedisError::new(RedisErrorKind::Unknown, "Error sending value scan callback."))
+    },
+    RedisCommandKind::Sscan(scan_state) => {
+      let tx = scan_state.tx.clone();
+
+      let state = ValueScanResult::SScan(SScanResult {
+        can_continue,
+        inner: inner.clone(),
+        scan_state,
+        args,
+        results: Some(result)
+      });
+
+      tx.unbounded_send(Ok(state))
+        .map_err(|_| RedisError::new(RedisErrorKind::Unknown, "Error sending value scan callback."))
+    },
+    RedisCommandKind::Hscan(scan_state) => {
+      let tx = scan_state.tx.clone();
+      let results = ValueScanInner::transform_hscan_result(result)?;
+
+      let state = ValueScanResult::HScan(HScanResult {
+        can_continue,
+        inner: inner.clone(),
+        scan_state,
+        args,
+        results: Some(results)
+      });
+
+      tx.unbounded_send(Ok(state))
+        .map_err(|_| RedisError::new(RedisErrorKind::Unknown, "Error sending value scan callback."))
+    },
+    _ => Err(RedisError::new(RedisErrorKind::Unknown, "Invalid redis command. Expected HSCAN, SSCAN, or ZSCAN."))
+  }
+}
+
+pub fn send_value_scan_error(cmd: &RedisCommand, e: RedisError) -> Result<(), RedisError> {
+  let inner = match cmd.kind {
+    RedisCommandKind::Zscan(ref inner) => inner,
+    RedisCommandKind::Sscan(ref inner) => inner,
+    RedisCommandKind::Hscan(ref inner) => inner,
+    _ => return Err(RedisError::new(RedisErrorKind::Unknown, "Invalid redis command. Expected HSCAN, SSCAN, or ZSCAN."))
+  };
+
+  inner.tx.unbounded_send(Err(e))
+    .map_err(|_| RedisError::new(RedisErrorKind::Unknown, "Error sending value scan callback."))
+}
+
 pub fn process_frame(inner: &Arc<RedisClientInner>,
                      last_request: &Rc<RefCell<Option<RedisCommand>>>,
                      last_request_sent: &Rc<RefCell<Option<Instant>>>,
@@ -381,6 +573,76 @@ pub fn process_frame(inner: &Arc<RedisClientInner>,
   }else if last_command_has_blocking_response(last_request) {
 
     error!("{} Using unimplemented blocking response kind.", ne!(inner));
+  }else if last_command_is_key_scan(last_request) {
+    trace!("{} Recv key scan result {:?}", n!(inner), frame);
+
+    if let Some(m_tx) = take_last_command_callback(last_command_callback) {
+      trace!("{} Found last caller from multiplexer.", n!(inner));
+      let _ = m_tx.send(None);
+    }
+
+    let mut last_request = match take_last_request(last_request_sent, inner, last_request) {
+      Some(s) => s,
+      None => return
+    };
+
+    let (next_cursor, keys) = match handle_key_scan_result(frame) {
+      Ok((c, k)) => (c, k),
+      Err(e) => {
+        let _ = send_key_scan_error(&last_request, e);
+        return;
+      }
+    };
+
+    let should_stop = next_cursor.as_str() == "0";
+    trace!("{} Updating cursor to {} and sending scan result", n!(inner), next_cursor);
+    update_scan_cursor(&mut last_request, next_cursor);
+
+    if should_stop {
+      // write results and return
+      trace!("{} Sending last key scan result", n!(inner));
+      let _ = send_key_scan_result(inner, last_request, keys, false);
+    }else{
+      if let Err(_) = send_key_scan_result(inner, last_request, keys, true) {
+        // receiver has been dropped, don't need to continue scanning
+        trace!("{} Scan receiver has been dropped, canceling key scan.", n!(inner));
+      }
+    }
+  }else if last_command_is_value_scan(last_request) {
+    trace!("{} Recv value scan (HSCAN, SSCAN, ZSCAN) result: {:?}", n!(inner), frame);
+
+    if let Some(m_tx) = take_last_command_callback(last_command_callback) {
+      trace!("{} Found last caller from multiplexer.", n!(inner));
+      let _ = m_tx.send(None);
+    }
+
+    let mut last_request = match take_last_request(last_request_sent, inner, last_request) {
+      Some(s) => s,
+      None => return
+    };
+
+    let (next_cursor, values) = match handle_value_scan_result(frame) {
+      Ok((c, k)) => (c, k),
+      Err(e) => {
+        let _ = send_value_scan_error(&last_request, e);
+        return;
+      }
+    };
+
+    let should_stop = next_cursor.as_str() == "0";
+    trace!("{} Updating cursor to {} and sending value scan result", n!(inner), next_cursor);
+    update_scan_cursor(&mut last_request, next_cursor);
+
+    if should_stop {
+      // write results and return
+      trace!("{} Sending last value scan result", n!(inner));
+      let _ = send_value_scan_result(inner, last_request, values, false);
+    }else{
+      if let Err(_) = send_value_scan_result(inner, last_request, values, true) {
+        // receiver has been dropped, don't need to continue scanning
+        trace!("{} Value scan receiver has been dropped, canceling value scan.", n!(inner));
+      }
+    }
   }else{
     if let Some(m_tx) = take_last_command_callback(last_command_callback) {
       trace!("{} Found last caller from multiplexer.", n!(inner));

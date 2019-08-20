@@ -6,6 +6,8 @@ mod hashes;
 mod lists;
 mod pubsub;
 mod sets;
+mod other;
+mod sorted_sets;
 
 pub mod centralized;
 pub mod cluster;

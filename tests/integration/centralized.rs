@@ -46,6 +46,8 @@ use super::sets as sets_tests;
 use super::hashes as hashes_tests;
 use super::lists as lists_tests;
 use super::pubsub as pubsub_tests;
+use super::other as other_tests;
+use super::sorted_sets as sorted_sets_tests;
 
 lazy_static! {
 
@@ -267,5 +269,88 @@ pub mod pubsub {
       pubsub_tests::should_punsubscribe_on_multiple_channels(client_1, client_2)
     });
   }
+
+}
+
+pub mod other {
+  use super::*;
+
+  #[test]
+  fn it_should_scan_simple_database() {
+    let config = RedisConfig::default_centralized();
+    utils::setup_test_client(config, TIMER.clone(), |client| {
+      other_tests::scan::should_scan_simple_database(client)
+    });
+  }
+
+  #[test]
+  fn it_should_hscan_simple_database() {
+    let config = RedisConfig::default_centralized();
+    utils::setup_test_client(config, TIMER.clone(), |client| {
+      other_tests::hscan::should_hscan_simple_database(client)
+    });
+  }
+
+  #[test]
+  fn it_should_sscan_simple_database() {
+    let config = RedisConfig::default_centralized();
+    utils::setup_test_client(config, TIMER.clone(), |client| {
+      other_tests::sscan::should_sscan_simple_database(client)
+    })
+  }
+
+  #[test]
+  fn it_should_zscan_simple_database() {
+    let config = RedisConfig::default_centralized();
+    utils::setup_test_client(config, TIMER.clone(), |client| {
+      other_tests::zscan::should_zscan_simple_database(client)
+    })
+  }
+
+}
+
+pub mod sorted_sets {
+  use super::*;
+
+  #[test]
+  fn it_should_add_and_remove_elements() {
+    let config = RedisConfig::default_centralized();
+    utils::setup_test_client(config, TIMER.clone(), |client| {
+      sorted_sets_tests::basic::should_add_and_remove_elements(client)
+    })
+  }
+
+  #[test]
+  fn it_should_push_and_pop_min_max() {
+    let config = RedisConfig::default_centralized();
+    utils::setup_test_client(config, TIMER.clone(), |client| {
+      sorted_sets_tests::basic::should_push_and_pop_min_max(client)
+    })
+  }
+
+  #[test]
+  fn it_should_read_sorted_lex_entries() {
+    let config = RedisConfig::default_centralized();
+    utils::setup_test_client(config, TIMER.clone(), |client| {
+      sorted_sets_tests::lex::should_read_sorted_lex_entries(client)
+    })
+  }
+
+  #[test]
+  fn it_should_read_sorted_score_entries() {
+    let config = RedisConfig::default();
+    utils::setup_test_client(config, TIMER.clone(), |client| {
+      sorted_sets_tests::score::should_read_sorted_score_entries(client)
+    })
+  }
+
+  #[test]
+  fn it_should_perform_set_operations() {
+    let config = RedisConfig::default();
+    utils::setup_test_client(config, TIMER.clone(), |client| {
+      sorted_sets_tests::set_ops::should_perform_set_operations(client)
+    })
+  }
+
 
 }

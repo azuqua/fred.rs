@@ -359,3 +359,79 @@ pub fn pattern_pubsub_counts(result: Vec<RedisValue>) -> Result<Vec<usize>, Redi
 
   Ok(out)
 }
+
+/// Convert an `f64` to a redis string, supporting "+inf" and "-inf".
+pub fn f64_to_redis_string(d: f64) -> Result<RedisValue, RedisError> {
+  if d.is_infinite() && d.is_sign_negative() {
+    Ok("-inf".into())
+  }else if d.is_infinite() {
+    Ok("+inf".into())
+  }else if d.is_nan() {
+    Err(RedisError::new(
+      RedisErrorKind::InvalidArgument, "Cannot use NaN as sorted set score."
+    ))
+  }else{
+    Ok(d.to_string().into())
+  }
+}
+
+/// Convert a redis string to an `f64`, supporting "+inf" and "-inf".
+pub fn redis_string_to_f64(s: &str) -> Result<f64, RedisError> {
+  if s == "+inf" {
+    Ok(f64::INFINITY)
+  }else if s == "-inf" {
+    Ok(f64::NEG_INFINITY)
+  }else{
+    s.parse::<f64>().map_err(|_| RedisError::new(
+      RedisErrorKind::Unknown, format!("Could not convert {} to floating point value.", s)
+    ))
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn should_convert_normal_f64_to_string() {
+    let f = 1.2345678;
+    assert_eq!(RedisValue::from(f.to_string()), f64_to_redis_string(f).unwrap());
+  }
+
+  #[test]
+  fn should_fail_converting_nan_to_string() {
+    assert!(f64_to_redis_string(f64::NAN).is_err());
+  }
+
+  #[test]
+  fn should_convert_pos_inf_to_string() {
+    assert_eq!(f64_to_redis_string(f64::INFINITY).unwrap(), "+inf".into());
+  }
+
+  #[test]
+  fn should_convert_neg_inf_to_string() {
+    assert_eq!(f64_to_redis_string(f64::NEG_INFINITY).unwrap(), "-inf".into());
+  }
+
+  #[test]
+  fn should_convert_string_to_f64() {
+    let f = "1.234567";
+    assert_eq!(redis_string_to_f64(f).unwrap(), 1.234567);
+  }
+
+  #[test]
+  fn should_convert_pos_inf_string_to_f64() {
+    assert_eq!(redis_string_to_f64("+inf").unwrap(), f64::INFINITY);
+  }
+
+  #[test]
+  fn should_convert_neg_inf_string_to_f64() {
+    assert_eq!(redis_string_to_f64("-inf").unwrap(), f64::NEG_INFINITY);
+  }
+
+  #[test]
+  fn should_fail_converting_bad_string_to_f64() {
+    assert!(redis_string_to_f64("foobarbaz").is_err());
+  }
+
+}

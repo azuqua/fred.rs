@@ -17,11 +17,17 @@ addons:
     - build-essential
     - curl
     - expect
+    - cmake
+    - pkg-config
+    - zlib1g-dev
+    sources:
+    - kalakris-cmake
 cache:
   apt: true
   directories:
   - target/debug/deps
   - target/debug/build
+  - target/release/deps
 notifications:
   email:
     on_success: never
@@ -32,9 +38,7 @@ branches:
   - develop
 script:
 - |
-  cargo build &&
   cargo test -- --test-threads=1 &&
-  cargo build --release &&
   cargo test --release -- --test-threads=1
 before_script:
 - 'gem install redis'
@@ -42,15 +46,24 @@ before_script:
   pip install 'travis-cargo<0.2' --user &&
   export PATH=$HOME/.local/bin:$PATH
 - |
+  if [[ "$TRAVIS_RUST_VERSION" != stable ]] && [[ "$TRAVIS_BRANCH" == "master" ]]; then
+    RUSTFLAGS="--cfg procmacro2_semver_exempt" cargo install cargo-tarpaulin
+    cargo install-update -a
+  fi
+- |
   ./tests/scripts/install_redis_centralized.sh &&
   redis-server --daemonize yes
 - "./tests/scripts/install_redis_clustered.sh"
 after_success:
 - redis-cli -p 6379 shutdown
 - "$TRAVIS_BUILD_DIR/tests/tmp/redis_cluster_$REDIS_VERSION/redis-$REDIS_VERSION/utils/create-cluster/create-cluster stop"
+- |
+  if [[ "$TRAVIS_RUST_VERSION" != stable ]] && [[ "$TRAVIS_BRANCH" == "master" ]]; then
+    cargo tarpaulin --ciserver travis-ci --coveralls $TRAVIS_JOB_ID
+  fi
 env:
   global:
   - RUST_BACKTRACE=1
-  - REDIS_VERSION=3.2.9
+  - REDIS_VERSION=5.0.5
   - TRAVIS_CARGO_NIGHTLY_FEATURE=""
   - PATH=$PATH:$TRAVIS_BUILD_DIR/tests/tmp/redis-$REDIS_VERSION/src

@@ -45,7 +45,7 @@ fn main() {
   let baz_connection = baz_client.connect(&handle);
 
   // join all the connection futures together
-  let composed_connections = foo_connection
+  let joined_connections = foo_connection
     .join(bar_connection)
     .join(baz_connection);
 
@@ -64,7 +64,7 @@ fn main() {
   });
 
   // join the error stream futures together into one future
-  let composed_errors = foo_errors
+  let joined_errors = foo_errors
     .join(bar_errors)
     .join(baz_errors);
 
@@ -116,15 +116,15 @@ fn main() {
     baz_client.quit()
   });
 
-  // compose the command futures from the clients together
-  let composed_commands = foo_commands
+  // join the command futures from the clients together
+  let joined_commands = foo_commands
     .join(bar_commands)
     .join(baz_commands);
 
-  // compose the connection futures, error handler futures, and command futures into one future, and run that
-  let composed = composed_connections
-    .join(composed_errors)
-    .join(composed_commands);
+  // join the connection futures, error handler futures, and command futures into one future, and run that
+  let joined = joined_connections
+    .join(joined_errors)
+    .join(joined_commands);
 
-  let _ = core.run(composed).unwrap();
+  let _ = core.run(joined).unwrap();
 }

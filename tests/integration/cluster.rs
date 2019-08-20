@@ -48,6 +48,7 @@ use super::sets as sets_tests;
 use super::hashes as hashes_tests;
 use super::lists as lists_tests;
 use super::pubsub as pubsub_tests;
+use super::sorted_sets as sorted_sets_tests;
 
 lazy_static! {
 
@@ -263,5 +264,55 @@ pub mod pubsub {
       pubsub_tests::should_punsubscribe_on_multiple_channels(client_1, client_2)
     });
   }
+
+}
+
+pub mod sorted_sets {
+  use super::*;
+
+  #[test]
+  fn it_should_add_and_remove_elements() {
+    let config = RedisConfig::default_clustered();
+    utils::setup_test_client(config, TIMER.clone(), |client| {
+      sorted_sets_tests::basic::should_add_and_remove_elements(client)
+    })
+  }
+
+  #[test]
+  fn it_should_push_and_pop_min_max() {
+    let config = RedisConfig::default_clustered();
+    utils::setup_test_client(config, TIMER.clone(), |client| {
+      sorted_sets_tests::basic::should_push_and_pop_min_max(client)
+    })
+  }
+
+  #[test]
+  fn it_should_read_sorted_lex_entries() {
+    let config = RedisConfig::default_clustered();
+    utils::setup_test_client(config, TIMER.clone(), |client| {
+      sorted_sets_tests::lex::should_read_sorted_lex_entries(client)
+    })
+  }
+
+  #[test]
+  fn it_should_read_sorted_score_entries() {
+    let config = RedisConfig::default_clustered();
+    utils::setup_test_client(config, TIMER.clone(), |client| {
+      sorted_sets_tests::score::should_read_sorted_score_entries(client)
+    })
+  }
+
+  /*
+  // this wont run on a clustered redis because the keys used here don't all map to the same cluster node, and i'm too lazy to find some that do.
+  // zinterstore and zunionstore require the keys provided to all map to the same node in the cluster, otherwise you get an error
+  // "CROSSSLOT Keys in request don't hash to the same slot"
+  #[test]
+  fn it_should_perform_set_operations() {
+    let config = RedisConfig::default_clustered();
+    utils::setup_test_client(config, TIMER.clone(), |client| {
+      sorted_sets_tests::set_ops::should_perform_set_operations(client)
+    })
+  }
+  */
 
 }

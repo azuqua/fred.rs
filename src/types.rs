@@ -17,10 +17,11 @@ use std::cmp;
 use std::hash::Hash;
 use std::hash::Hasher;
 use std::mem;
+use std::borrow::Cow;
 
 use crate::error::*;
 
-use crate::utils;
+use crate::{utils, RedisClient};
 
 use redis_protocol::types::*;
 use redis_protocol::NULL;
@@ -29,10 +30,319 @@ use crate::multiplexer::types::*;
 pub use redis_protocol::types::Frame;
 
 use std::cmp::Ordering;
+use crate::utils::send_command;
+use crate::client::RedisClientInner;
+
+use std::sync::Arc;
+use crate::protocol::types::{RedisCommand, KeyScanInner, RedisCommandKind, ValueScanInner};
 
 #[doc(hidden)]
 pub static ASYNC: &'static str = "ASYNC";
 
+/// Aggregate options for the [zinterstore](https://redis.io/commands/zinterstore) (and related) commands.
+pub enum AggregateOptions {
+  Sum,
+  Min,
+  Max
+}
+
+impl AggregateOptions {
+
+  pub fn to_str(&self) -> &'static str {
+    match *self {
+      AggregateOptions::Sum => "SUM",
+      AggregateOptions::Min => "MIN",
+      AggregateOptions::Max => "MAX"
+    }
+  }
+
+}
+
+/// The types of values supported by the [type](https://redis.io/commands/type) command.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ScanType {
+  Set,
+  String,
+  ZSet,
+  List,
+  Hash,
+  Stream
+}
+
+impl ScanType {
+
+  pub fn to_str(&self) -> &'static str {
+    match *self {
+      ScanType::Set    => "set",
+      ScanType::String => "string",
+      ScanType::List   => "list",
+      ScanType::ZSet   => "zset",
+      ScanType::Hash   => "hash",
+      ScanType::Stream => "stream"
+    }
+  }
+
+}
+
+/// The result of a SCAN operation.
+pub struct ScanResult {
+  pub(crate) results: Option<Vec<RedisKey>>,
+  pub(crate) inner: Arc<RedisClientInner>,
+  pub(crate) args: Vec<RedisValue>,
+  pub(crate) scan_state: KeyScanInner,
+  pub(crate) can_continue: bool
+}
+
+impl ScanResult {
+
+  /// Read the current cursor from the SCAN operation.
+  pub fn cursor(&self) -> &str {
+    &self.scan_state.cursor
+  }
+
+  /// Whether or not the scan call will continue returning results. If `false` this will be the last result set returned on the stream.
+  ///
+  /// Calling `next` when this returns `false` will return `Ok(())`, so this does not need to be checked on each result.
+  pub fn has_more(&self) -> bool {
+    self.can_continue
+  }
+
+  /// A reference to the results of the SCAN operation.
+  pub fn results(&self) -> &Option<Vec<RedisKey>> {
+    &self.results
+  }
+
+  /// Take ownership over the results of the SCAN operation. Calls to `results` or `take_results` will return `None` afterwards.
+  pub fn take_results(&mut self) -> Option<Vec<RedisKey>> {
+    self.results.take()
+  }
+
+  /// Move on to the next page of results from the SCAN operation. If no more results are available this may close the stream.
+  ///
+  /// **This must be called to continue scanning the keyspace.** Results are not automatically scanned in the background since a common use case is to read values while scanning, and due to network latency this
+  /// could cause the internal buffer backing the stream to grow out of control very quickly. By requiring the caller to call `next` this interface provides a mechanism for throttling the throughput of the SCAN call.
+  /// If this struct is dropped without calling this function the stream will close without an error.
+  ///
+  /// If this function returns an error the scan call cannot continue as the client has been closed, or some other fatal error has occurred.
+  /// If this happens the error will appear on the wrapping stream from the original SCAN call.
+  pub fn next(self) -> Result<(), RedisError> {
+    if !self.can_continue {
+      return Ok(());
+    }
+
+    let cmd = RedisCommand {
+      kind: RedisCommandKind::Scan(self.scan_state),
+      args: self.args,
+      attempted: 0,
+      tx: None
+    };
+
+    send_command(&self.inner, cmd)
+  }
+
+  /// A lightweight function to create a Redis client from the SCAN result.
+  ///
+  /// To continue scanning the caller should call `next` on this struct. Calling `scan` again on the client will initiate a new SCAN call starting with a cursor of 0.
+  pub fn create_client(&self) -> RedisClient {
+    RedisClient { inner: self.inner.clone() }
+  }
+
+}
+
+/// The result of a HSCAN operation.
+pub struct HScanResult {
+  pub(crate) results: Option<HashMap<RedisKey, RedisValue>>,
+  pub(crate) inner: Arc<RedisClientInner>,
+  pub(crate) args: Vec<RedisValue>,
+  pub(crate) scan_state: ValueScanInner,
+  pub(crate) can_continue: bool
+}
+
+impl HScanResult {
+
+  /// Read the current cursor from the SCAN operation.
+  pub fn cursor(&self) -> &str {
+    &self.scan_state.cursor
+  }
+
+  /// Whether or not the scan call will continue returning results. If `false` this will be the last result set returned on the stream.
+  ///
+  /// Calling `next` when this returns `false` will return `Ok(())`, so this does not need to be checked on each result.
+  pub fn has_more(&self) -> bool {
+    self.can_continue
+  }
+
+  /// A reference to the results of the HSCAN operation.
+  pub fn results(&self) -> &Option<HashMap<RedisKey, RedisValue>> {
+    &self.results
+  }
+
+  /// Take ownership over the results of the HSCAN operation. Calls to `results` or `take_results` will return `None` afterwards.
+  pub fn take_results(&mut self) -> Option<HashMap<RedisKey, RedisValue>> {
+    self.results.take()
+  }
+
+  /// Move on to the next page of results from the HSCAN operation. If no more results are available this may close the stream.
+  ///
+  /// **This must be called to continue scanning the keyspace.** Results are not automatically scanned in the background since a common use case is to read values while scanning, and due to network latency this
+  /// could cause the internal buffer backing the stream to grow out of control very quickly. By requiring the caller to call `next` this interface provides a mechanism for throttling the throughput of the SCAN call.
+  /// If this struct is dropped without calling this function the stream will close without an error.
+  ///
+  /// If this function returns an error the scan call cannot continue as the client has been closed, or some other fatal error has occurred.
+  /// If this happens the error will appear on the wrapping stream from the original SCAN call.
+  pub fn next(self) -> Result<(), RedisError> {
+    if !self.can_continue {
+      return Ok(());
+    }
+
+    let cmd = RedisCommand {
+      kind: RedisCommandKind::Hscan(self.scan_state),
+      args: self.args,
+      attempted: 0,
+      tx: None
+    };
+
+    send_command(&self.inner, cmd)
+  }
+
+  /// A lightweight function to create a Redis client from the HSCAN result.
+  ///
+  /// To continue scanning the caller should call `next` on this struct. Calling `hscan` again on the client will initiate a new HSCAN call starting with a cursor of 0.
+  pub fn create_client(&self) -> RedisClient {
+    RedisClient { inner: self.inner.clone() }
+  }
+
+}
+
+/// The result of a SCAN operation.
+pub struct SScanResult {
+  pub(crate) results: Option<Vec<RedisValue>>,
+  pub(crate) inner: Arc<RedisClientInner>,
+  pub(crate) args: Vec<RedisValue>,
+  pub(crate) scan_state: ValueScanInner,
+  pub(crate) can_continue: bool
+}
+
+impl SScanResult {
+
+  /// Read the current cursor from the SSCAN operation.
+  pub fn cursor(&self) -> &str {
+    &self.scan_state.cursor
+  }
+
+  /// Whether or not the scan call will continue returning results. If `false` this will be the last result set returned on the stream.
+  ///
+  /// Calling `next` when this returns `false` will return `Ok(())`, so this does not need to be checked on each result.
+  pub fn has_more(&self) -> bool {
+    self.can_continue
+  }
+
+  /// A reference to the results of the SCAN operation.
+  pub fn results(&self) -> &Option<Vec<RedisValue>> {
+    &self.results
+  }
+
+  /// Take ownership over the results of the SSCAN operation. Calls to `results` or `take_results` will return `None` afterwards.
+  pub fn take_results(&mut self) -> Option<Vec<RedisValue>> {
+    self.results.take()
+  }
+
+  /// Move on to the next page of results from the SSCAN operation. If no more results are available this may close the stream.
+  ///
+  /// **This must be called to continue scanning the keyspace.** Results are not automatically scanned in the background since a common use case is to read values while scanning, and due to network latency this
+  /// could cause the internal buffer backing the stream to grow out of control very quickly. By requiring the caller to call `next` this interface provides a mechanism for throttling the throughput of the SCAN call.
+  /// If this struct is dropped without calling this function the stream will close without an error.
+  ///
+  /// If this function returns an error the scan call cannot continue as the client has been closed, or some other fatal error has occurred.
+  /// If this happens the error will appear on the wrapping stream from the original SCAN call.
+  pub fn next(self) -> Result<(), RedisError> {
+    if !self.can_continue {
+      return Ok(());
+    }
+
+    let cmd = RedisCommand {
+      kind: RedisCommandKind::Sscan(self.scan_state),
+      args: self.args,
+      attempted: 0,
+      tx: None
+    };
+
+    send_command(&self.inner, cmd)
+  }
+
+  /// A lightweight function to create a Redis client from the SSCAN result.
+  ///
+  /// To continue scanning the caller should call `next` on this struct. Calling `sscan` again on the client will initiate a new SSCAN call starting with a cursor of 0.
+  pub fn create_client(&self) -> RedisClient {
+    RedisClient { inner: self.inner.clone() }
+  }
+
+}
+
+/// The result of a SCAN operation.
+pub struct ZScanResult {
+  pub(crate) results: Option<Vec<(RedisValue, f64)>>,
+  pub(crate) inner: Arc<RedisClientInner>,
+  pub(crate) args: Vec<RedisValue>,
+  pub(crate) scan_state: ValueScanInner,
+  pub(crate) can_continue: bool
+}
+
+impl ZScanResult {
+
+  /// Read the current cursor from the ZSCAN operation.
+  pub fn cursor(&self) -> &str {
+    &self.scan_state.cursor
+  }
+
+  /// Whether or not the scan call will continue returning results. If `false` this will be the last result set returned on the stream.
+  ///
+  /// Calling `next` when this returns `false` will return `Ok(())`, so this does not need to be checked on each result.
+  pub fn has_more(&self) -> bool {
+    self.can_continue
+  }
+
+  /// A reference to the results of the ZSCAN operation.
+  pub fn results(&self) -> &Option<Vec<(RedisValue, f64)>> {
+    &self.results
+  }
+
+  /// Take ownership over the results of the ZSCAN operation. Calls to `results` or `take_results` will return `None` afterwards.
+  pub fn take_results(&mut self) -> Option<Vec<(RedisValue, f64)>> {
+    self.results.take()
+  }
+
+  /// Move on to the next page of results from the ZSCAN operation. If no more results are available this may close the stream.
+  ///
+  /// **This must be called to continue scanning the keyspace.** Results are not automatically scanned in the background since a common use case is to read values while scanning, and due to network latency this
+  /// could cause the internal buffer backing the stream to grow out of control very quickly. By requiring the caller to call `next` this interface provides a mechanism for throttling the throughput of the SCAN call.
+  /// If this struct is dropped without calling this function the stream will close without an error.
+  ///
+  /// If this function returns an error the scan call cannot continue as the client has been closed, or some other fatal error has occurred.
+  /// If this happens the error will appear on the wrapping stream from the original SCAN call.
+  pub fn next(self) -> Result<(), RedisError> {
+    if !self.can_continue {
+      return Ok(());
+    }
+
+    let cmd = RedisCommand {
+      kind: RedisCommandKind::Zscan(self.scan_state),
+      args: self.args,
+      attempted: 0,
+      tx: None
+    };
+
+    send_command(&self.inner, cmd)
+  }
+
+  /// A lightweight function to create a Redis client from the ZSCAN result.
+  ///
+  /// To continue scanning the caller should call `next` on this struct. Calling `zscan` again on the client will initiate a new ZSCAN call starting with a cursor of 0.
+  pub fn create_client(&self) -> RedisClient {
+    RedisClient { inner: self.inner.clone() }
+  }
+
+}
 
 /// Options for the [info](https://redis.io/commands/info) command.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -397,6 +707,10 @@ impl MultipleKeys {
     self.keys
   }
 
+  pub fn len(&self) -> usize {
+    self.keys.len()
+  }
+
 }
 
 impl<T: Into<RedisKey>> From<T> for MultipleKeys {
@@ -469,6 +783,107 @@ impl<T: Into<RedisValue>> From<VecDeque<T>> for MultipleValues {
   }
 }
 
+/// Convenience struct for ZINTERSTORE and ZUNIONSTORE when accepting 1 or more `weights` arguments.
+pub struct MultipleWeights {
+  values: Vec<f64>
+}
+
+impl MultipleWeights {
+
+  pub fn new() -> MultipleWeights {
+    MultipleWeights { values: Vec::new() }
+  }
+
+  pub fn inner(self) -> Vec<f64> {
+    self.values
+  }
+
+  pub fn len(&self) -> usize {
+    self.values.len()
+  }
+
+}
+
+impl From<f64> for MultipleWeights {
+  fn from(d: f64) -> Self {
+    MultipleWeights { values: vec![d] }
+  }
+}
+
+impl From<Vec<f64>> for MultipleWeights {
+  fn from(d: Vec<f64>) -> Self {
+    MultipleWeights { values: d }
+  }
+}
+
+impl From<VecDeque<f64>> for MultipleWeights {
+  fn from(d: VecDeque<f64>) -> Self {
+    MultipleWeights {
+      values: d.into_iter().collect()
+    }
+  }
+}
+
+impl<'a> From<&'a [f64]> for MultipleWeights {
+  fn from(d: &'a [f64]) -> Self {
+    MultipleWeights {
+      values: d.iter().map(|f| *f).collect()
+    }
+  }
+}
+
+impl<T: Into<MultipleWeights>> From<Option<T>> for MultipleWeights {
+  fn from(d: Option<T>) -> Self {
+    match d {
+      Some(d) => d.into(),
+      None => MultipleWeights::new()
+    }
+  }
+}
+
+/// Convenience struct for the ZADD command to accept 1 or more `(score, value)` arguments.
+pub struct MultipleZaddValues {
+  values: Vec<(f64, RedisValue)>
+}
+
+impl MultipleZaddValues {
+
+  pub fn new() -> MultipleZaddValues {
+    MultipleZaddValues { values: Vec::new() }
+  }
+
+  pub fn inner(self) -> Vec<(f64, RedisValue)> {
+    self.values
+  }
+
+  pub fn len(&self) -> usize {
+    self.values.len()
+  }
+
+}
+
+impl<T: Into<RedisValue>> From<(f64, T)> for MultipleZaddValues {
+  fn from((s, v): (f64, T)) -> Self {
+    MultipleZaddValues { values: vec![(s, v.into())] }
+  }
+}
+
+impl<T: Into<RedisValue>> From<Vec<(f64, T)>> for MultipleZaddValues {
+  fn from(d: Vec<(f64, T)>) -> Self {
+    MultipleZaddValues {
+      values: d.into_iter().map(|(s, v)| (s, v.into())).collect()
+    }
+  }
+}
+
+impl<T: Into<RedisValue>> From<VecDeque<(f64, T)>> for MultipleZaddValues {
+  fn from(d: VecDeque<(f64, T)>) -> Self {
+    MultipleZaddValues {
+      values: d.into_iter().map(|(s, v)| (s, v.into())).collect()
+    }
+  }
+}
+
 /// The kind of value from Redis.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RedisValueKind {
@@ -485,7 +900,7 @@ pub enum RedisValue {
   Null
 }
 
-impl RedisValue {
+impl<'a> RedisValue {
 
   /// Attempt to convert the value into an integer, returning the original string as an error if the parsing fails, otherwise this consumes the original string.
   pub fn into_integer(self) -> Result<RedisValue, RedisValue> {
@@ -536,7 +951,7 @@ impl RedisValue {
   /// Check if the inner string value can be coerced to an `f64`.
   pub fn is_float(&self) -> bool {
     match *self {
-      RedisValue::String(ref s) => s.parse::<f64>().is_ok(),
+      RedisValue::String(ref s) => utils::redis_string_to_f64(s).is_ok(),
       _ => false
     }
   }
@@ -566,7 +981,7 @@ impl RedisValue {
   ///  Read and return the inner value as a `f64`, if possible.
   pub fn as_f64(&self) -> Option<f64> {
     match self{
-      RedisValue::String(ref s) => s.parse::<f64>().ok(),
+      RedisValue::String(ref s) => utils::redis_string_to_f64(s).ok(),
       RedisValue::Integer(ref i) => Some(*i as f64),
       _ => None
     }
@@ -581,11 +996,24 @@ impl RedisValue {
     }
   }
   /// Read and return the inner `String` if the value is a string or integer.
+  ///
+  /// Note: this will cast integers to strings.
   pub fn as_string(&self) -> Option<String> {
     match self {
       RedisValue::String(ref s) => Some(s.to_owned()),
       RedisValue::Integer(ref i) => Some(i.to_string()),
       _ => None
+    }
+  }
+
+  /// Read the inner value as a string slice.
+  ///
+  /// Null is returned as "nil" and integers are cast to a string.
+  pub fn as_str(&'a self) -> Cow<'a, str> {
+    match *self {
+      RedisValue::String(ref s)  => Cow::Borrowed(s),
+      RedisValue::Integer(ref i) => Cow::Owned(i.to_string()),
+      RedisValue::Null           => Cow::Borrowed("nil")
     }
   }
 
@@ -619,6 +1047,13 @@ impl RedisValue {
 
 impl Hash for RedisValue {
   fn hash<H: Hasher>(&self, state: &mut H) {
+    let prefix = match *self {
+      RedisValue::Integer(_) => 'i',
+      RedisValue::String(_)  => 's',
+      RedisValue::Null       => 'n'
+    };
+    prefix.hash(state);
+
     match *self {
       RedisValue::Integer(d)     => d.hash(state),
       RedisValue::String(ref s)  => s.hash(state),
