@@ -299,6 +299,14 @@ pub mod other {
     })
   }
 
+  #[test]
+  fn it_should_zscan_simple_database() {
+    let config = RedisConfig::default_centralized();
+    utils::setup_test_client(config, TIMER.clone(), |client| {
+      other_tests::zscan::should_zscan_simple_database(client)
+    })
+  }
+
 }
 
 pub mod sorted_sets {
@@ -309,6 +317,22 @@ pub mod sorted_sets {
     let config = RedisConfig::default_centralized();
     utils::setup_test_client(config, TIMER.clone(), |client| {
       sorted_sets_tests::basic::should_add_and_remove_elements(client)
+    })
+  }
+
+  #[test]
+  fn it_should_push_and_pop_min_max() {
+    let config = RedisConfig::default_centralized();
+    utils::setup_test_client(config, TIMER.clone(), |client| {
+      sorted_sets_tests::basic::should_push_and_pop_min_max(client)
+    })
+  }
+
+  #[test]
+  fn it_should_read_sorted_lex_entries() {
+    let config = RedisConfig::default_centralized();
+    utils::setup_test_client(config, TIMER.clone(), |client| {
+      sorted_sets_tests::lex::should_read_sorted_lex_entries(client)
     })
   }
 

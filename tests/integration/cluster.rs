@@ -278,5 +278,20 @@ pub mod sorted_sets {
     })
   }
 
+  #[test]
+  fn it_should_push_and_pop_min_max() {
+    let config = RedisConfig::default_clustered();
+    utils::setup_test_client(config, TIMER.clone(), |client| {
+      sorted_sets_tests::basic::should_push_and_pop_min_max(client)
+    })
+  }
+
+  #[test]
+  fn it_should_read_sorted_lex_entries() {
+    let config = RedisConfig::default_clustered();
+    utils::setup_test_client(config, TIMER.clone(), |client| {
+      sorted_sets_tests::lex::should_read_sorted_lex_entries(client)
+    })
+  }
 
 }

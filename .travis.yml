@@ -62,6 +62,6 @@ after_success:
 env:
   global:
   - RUST_BACKTRACE=1
-  - REDIS_VERSION=4.0.11
+  - REDIS_VERSION=5.0.5
   - TRAVIS_CARGO_NIGHTLY_FEATURE=""
   - PATH=$PATH:$TRAVIS_BUILD_DIR/tests/tmp/redis-$REDIS_VERSION/src
