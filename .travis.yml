@@ -20,6 +20,9 @@ addons:
     - cmake
     - pkg-config
     - zlib1g-dev
+    - libgit2-dev
+    - libssh2-1-dev
+    - libssl-dev
     sources:
     - kalakris-cmake
 cache:
@@ -48,6 +51,7 @@ before_script:
 - |
   if [[ "$TRAVIS_RUST_VERSION" != stable ]] && [[ "$TRAVIS_BRANCH" == "master" ]]; then
     RUSTFLAGS="--cfg procmacro2_semver_exempt" cargo install cargo-tarpaulin
+    cargo install cargo-update
     cargo install-update -a
   fi
 - |
