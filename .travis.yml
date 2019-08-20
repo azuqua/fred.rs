@@ -20,10 +20,8 @@ addons:
     - cmake
     - pkg-config
     - zlib1g-dev
-    - libgit2-dev
     - libssh2-1-dev
     - libssl-dev
-    - libcurl4-gnutls-dev
     sources:
     - kalakris-cmake
 cache:
