@@ -1854,3 +1854,48 @@ pub fn pttl<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Box<Fut
   }))
 }
 
+pub fn script_load<S: Into<String>>(inner: &Arc<RedisClientInner>, script: S) -> Box<Future<Item=String, Error=RedisError>> {
+  let script = script.into();
+
+  Box::new(utils::request_response(inner, move || {
+    Ok((RedisCommandKind::ScriptLoad, vec![script.into()]))
+  }).and_then(|frame| {
+    match protocol_utils::frame_to_single_result(frame)? {
+      RedisValue::String(s) => Ok(s),
+      _ => Err(RedisError::new(
+        RedisErrorKind::ProtocolError, "Invalid SCRIPT LOAD response. Expected string."
+      ))
+    }
+  }))
+}
+
+pub fn script_flush(inner: &Arc<RedisClientInner>) -> Box<Future<Item=(), Error=RedisError>> {
+  Box::new(utils::request_response(inner, move || {
+    Ok((RedisCommandKind::ScriptFlush, Vec::new()))
+  }).and_then(|frame| {
+    protocol_utils::frame_to_single_result(frame).map(|_| ())
+  }))
+}
+
+pub fn script_exists<S: Into<MultipleKeys>>(inner: &Arc<RedisClientInner>, sha1: S) -> Box<Future<Item=Vec<bool>, Error=RedisError>> {
+  let sha1 = sha1.into();
+
+  Box::new(utils::request_response(inner, move || {
+    Ok((RedisCommandKind::ScriptExists, sha1.inner().into_iter().map(|k| k.into())))
+  }).and_then(|frame| {
+    let results = protocol_utils::frame_to_results(frame)?;
+
+    let mut out = Vec::with_capacity(results.len());
+    for result in results.into_iter() {
+      if let RedisValue::Integer(i) = result {
+        out.push(i == 1);
+      }else{
+        return Err(RedisError::new(
+          RedisErrorKind::ProtocolError, "Invalid SCRIPT EXISTS response. Expected integer."
+        ));
+      }
+    }
+
+    Ok(out)
+  }))
+}

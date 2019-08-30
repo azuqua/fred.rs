@@ -226,7 +226,13 @@ pub fn command_args(kind: &RedisCommandKind) -> Option<ProtocolFrame> {
   }else if kind.is_config_command() {
     if let Some(arg) = kind.config_args() {
       ProtocolFrame::BulkString(arg.into_bytes())
-    }else{
+    } else {
+      return None;
+    }
+  }else if kind.is_script_command() {
+    if let Some(arg) = kind.script_args() {
+      ProtocolFrame::BulkString(arg.into_bytes())
+    } else {
       return None;
     }
   }else{

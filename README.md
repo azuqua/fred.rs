@@ -29,6 +29,7 @@ cargo add fred
 * Built-in tracking for network latency and payload size metrics.
 * Built-in mocking layer for running tests without a Redis server.
 * A client pooling interface to round-robin requests among a pool of connections.
+* Supports Lua scripts.
 
 ## Example
 
@@ -145,7 +146,6 @@ Note a local Redis server must be running on port 6379 and a clustered deploymen
 * Blocking commands.
 * Distribute reads among slaves.
 * Transactions.
-* Lua.
 
 ## Contributing
 

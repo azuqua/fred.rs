@@ -372,6 +372,10 @@ pub enum RedisCommandKind {
   Sscan(ValueScanInner),
   Hscan(ValueScanInner),
   Zscan(ValueScanInner),
+  ScriptLoad,
+  ScriptExists,
+  ScriptFlush,
+  ScriptKill,
   #[doc(hidden)]
   _Close,
   #[doc(hidden)]
@@ -384,6 +388,8 @@ impl fmt::Debug for RedisCommandKind {
       write!(f, "{} {}", self.to_str(), self.cluster_args().unwrap_or("".into()))
     }else if self.is_client_command() {
       write!(f, "{} {}", self.to_str(), self.client_args().unwrap_or("".into()))
+    }else if self.is_script_command() {
+      write!(f, "{} {}", self.to_str(), self.script_args().unwrap_or("".into()))
     }else {
       write!(f, "{}", self.to_str())
     }
@@ -700,6 +706,10 @@ impl RedisCommandKind {
       RedisCommandKind::Sscan(_)                        => "SSCAN",
       RedisCommandKind::Hscan(_)                        => "HSCAN",
       RedisCommandKind::Zscan(_)                        => "ZSCAN",
+      RedisCommandKind::ScriptLoad                      => "SCRIPT",
+      RedisCommandKind::ScriptExists                    => "SCRIPT",
+      RedisCommandKind::ScriptFlush                     => "SCRIPT",
+      RedisCommandKind::ScriptKill                      => "SCRIPT",
       RedisCommandKind::_Close
         | RedisCommandKind::_Split(_)                    => panic!("unreachable (redis command)")
     }
@@ -797,6 +807,28 @@ impl RedisCommandKind {
       RedisCommandKind::ConfigRewrite                   => "REWRITE",
       RedisCommandKind::ConfigSet                       => "SET",
       RedisCommandKind::ConfigResetStat                 => "RESETSTAT",
+      _ => return None
+    };
+
+    Some(s.to_owned())
+  }
+
+  pub fn is_script_command(&self) -> bool {
+    match *self {
+      RedisCommandKind::ScriptLoad
+      | RedisCommandKind::ScriptExists
+      | RedisCommandKind::ScriptFlush
+      | RedisCommandKind::ScriptKill => true,
+      _ => false
+    }
+  }
+
+  pub fn script_args(&self) -> Option<String> {
+    let s = match *self {
+      RedisCommandKind::ScriptKill   => "KILL",
+      RedisCommandKind::ScriptFlush  => "FLUSH",
+      RedisCommandKind::ScriptExists => "EXISTS",
+      RedisCommandKind::ScriptLoad   => "LOAD",
       _ => return None
     };
 
