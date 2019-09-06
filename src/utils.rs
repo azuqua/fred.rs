@@ -235,7 +235,7 @@ pub fn send_command(inner: &Arc<RedisClientInner>, command: RedisCommand) -> Res
 pub fn request_response<F>(inner: &Arc<RedisClientInner>, func: F) -> Box<Future<Item=ProtocolFrame, Error=RedisError>>
   where F: FnOnce() -> Result<(RedisCommandKind, Vec<RedisValue>), RedisError>
 {
-  let _ = fry!(check_client_state(&inner.state, ClientState::Connected));
+  //let _ = fry!(check_client_state(&inner.state, ClientState::Connected));
   let (kind, args) = fry!(func());
 
   let (tx, rx) = oneshot_channel();
