@@ -90,11 +90,11 @@ fn main() {
     }
   });
 
-  let composed = publisher_connection
+  let joined = publisher_connection
     .join(subscriber_connection)
     .join(subscriber_messages)
     .join(publisher_messages)
     .join(subscriber_commands);
 
-  let _ = core.run(composed).unwrap();
+  let _ = core.run(joined).unwrap();
 }
