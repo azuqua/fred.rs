@@ -29,7 +29,7 @@ use crate::client::RedisClientInner;
 use crate::error::*;
 use crate::protocol::types::*;
 use crate::types::*;
-use crate::utils as client_utils;
+use crate::{utils as client_utils, RedisClient};
 use crate::protocol::utils as protocol_utils;
 use crate::multiplexer::utils as multiplexer_utils;
 use std::time::Duration;
@@ -61,6 +61,16 @@ pub fn create_commands_ft(handle: Handle, inner: Arc<RedisClientInner>) -> Box<F
     Ok::<(), ()>(())
   });
   handle.spawn(expire_ft);
+
+  let connected_inner = inner.clone();
+  handle.spawn_fn(move || {
+    let client: RedisClient = (&connected_inner).into();
+
+    multiplexer_utils::emit_connect(&connected_inner.connect_tx, &client);
+    multiplexer_utils::emit_reconnect(&connected_inner.reconnect_tx, &client);
+
+    Ok::<(), ()>(())
+  });
 
   Box::new(rx.from_err::<RedisError>().fold((handle, inner, data, None), |(handle, inner, mut data, err), mut command| {
     debug!("{} Handling redis command {:?}", n!(inner), command.kind);
