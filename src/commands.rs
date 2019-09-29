@@ -36,7 +36,13 @@ const WITH_SCORES: &'static str = "WITHSCORES";
 const LIMIT: &'static str = "LIMIT";
 const AGGREGATE: &'static str = "AGGREGATE";
 const WEIGHTS: &'static str = "WEIGHTS";
-
+const ASC: &'static str = "ASC";
+const DESC: &'static str = "DESC";
+const STORE: &'static str = "STORE";
+const STOREDIST: &'static str = "STOREDIST";
+const WITHCOORD: &'static str = "WITHCOORD";
+const WITHDIST: &'static str = "WITHDIST";
+const WITHHASH: &'static str = "WITHHASH";
 
 pub fn quit(inner: &Arc<RedisClientInner>) -> Box<Future<Item=(), Error=RedisError>> {
   debug!("{} Closing Redis connection with Quit command.", n!(inner));
@@ -1898,4 +1904,78 @@ pub fn script_exists<S: Into<MultipleKeys>>(inner: &Arc<RedisClientInner>, sha1:
 
     Ok(out)
   }))
+}
+
+pub fn evalsha<S: Into<String>, K: Into<MultipleKeys>, V: Into<MultipleValues>>(inner: &Arc<RedisClientInner>, sha1: S, keys: K, args: V) -> Box<Future<Item=Vec<RedisValue>, Error=RedisError>> {
+  let sha1 = sha1.into();
+  let keys = keys.into();
+  let argv = args.into();
+
+  Box::new(utils::request_response(inner, move || {
+    let mut args = Vec::with_capacity(1 + 1 + keys.len() + argv.len());
+
+    args.push(sha1.into());
+    args.push(RedisValue::from_usize(keys.len())?);
+
+    for key in keys.inner().into_iter() {
+      args.push(key.into());
+    }
+    for arg in argv.inner().into_iter() {
+      args.push(arg);
+    }
+
+    Ok((RedisCommandKind::EvalSha, args))
+  }).and_then(|frame| {
+    protocol_utils::frame_to_results(frame)
+  }))
+}
+
+pub fn geoadd<K: Into<RedisKey>, V: Into<MultipleGeoValues>>(inner: &Arc<RedisClientInner>, key: K, values: V) -> Box<Future<Item=usize, Error=RedisError>> {
+
+
+
+
+}
+
+pub fn geohash<K: Into<RedisKey>, V: Into<MultipleValues>>(inner: &Arc<RedisClientInner>, key: K, values: V) -> Box<Future<Item=Vec<String>, Error=RedisError>> {
+
+
+
+
+}
+
+pub fn geopos<K: Into<RedisKey>, V: Into<MultipleValues>>(inner: &Arc<RedisClientInner>, key: K, values: V) -> Box<Future<Item=Vec<Vec<(Longitude, Latitude)>>, Error=RedisError>> {
+
+
+
+
+
+}
+
+pub fn geodist<K: Into<RedisKey>, M: Into<RedisValue>, N: Into<RedisValue>>(inner: &Arc<RedisClientInner>, key: K, member1: M, member2: N, unit: Option<GeoUnit>) -> Box<Future<Item=Option<f64>, Error=RedisError>> {
+
+
+
+}
+
+pub fn georadius<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, longitude: Longitude, latitude: Latitude, radius: f64,
+                                    unit: GeoUnit, withcoord: bool, withdist: bool, withhash: bool, count: Option<usize>,
+                                    order: Option<GeoOrdering>, store: Option<String>, storedist: Option<String>)
+  -> Box<Future<Item=Vec<RedisValue>, Error=RedisError>>
+{
+
+
+
+
+}
+
+pub fn georadiusbymember<K: Into<RedisKey>, V: Into<RedisValue>>(inner: &Arc<RedisClientInner>, key: K, member: V, radius: f64, unit: GeoUnit,
+                                                                 withcoord: bool, withdist: bool, withhash: bool, count: Option<usize>,
+                                                                 order: Option<GeoOrdering>, store: Option<String>, storedist: Option<String>)
+  -> Box<Future<Item=Vec<RedisValue>, Error=RedisError>>
+{
+
+
+
+
 }

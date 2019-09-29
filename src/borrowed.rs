@@ -209,6 +209,32 @@ pub trait RedisClientBorrowed {
 
   fn pttl<K: Into<RedisKey>>(&self, key: K) -> Box<Future<Item=i64, Error=RedisError>>;
 
+  fn script_load<S: Into<String>>(&self, script: S) -> Box<Future<Item=String, Error=RedisError>>;
+
+  fn script_flush(&self) -> Box<Future<Item=(), Error=RedisError>>;
+
+  fn script_exists<S: Into<MultipleKeys>>(&self, sha1: S) -> Box<Future<Item=Vec<bool>, Error=RedisError>>;
+
+  fn evalsha<S: Into<String>, K: Into<MultipleKeys>, V: Into<MultipleValues>>(&self, sha1: S, keys: K, args: V) -> Box<Future<Item=Vec<RedisValue>, Error=RedisError>>;
+
+  fn geoadd<K: Into<RedisKey>, V: Into<MultipleGeoValues>>(&self, key: K, values: V) -> Box<Future<Item=usize, Error=RedisError>>;
+
+  fn geohash<K: Into<RedisKey>, V: Into<MultipleValues>>(&self, key: K, values: V) -> Box<Future<Item=Vec<String>, Error=RedisError>>;
+
+  fn geopos<K: Into<RedisKey>, V: Into<MultipleValues>>(&self, key: K, values: V) -> Box<Future<Item=Vec<Vec<(Longitude, Latitude)>>, Error=RedisError>>;
+
+  fn geodist<K: Into<RedisKey>, M: Into<RedisValue>, N: Into<RedisValue>>(&self, key: K, member1: M, member2: N, unit: Option<GeoUnit>) -> Box<Future<Item=Option<f64>, Error=RedisError>>;
+
+  fn georadius<K: Into<RedisKey>>(&self, key: K, longitude: Longitude, latitude: Latitude, radius: f64, unit: GeoUnit,
+                                  withcoord: bool, withdist: bool, withhash: bool, count: Option<usize>,
+                                  order: Option<GeoOrdering>, store: Option<String>, storedist: Option<String>)
+    -> Box<Future<Item=Vec<RedisValue>, Error=RedisError>>;
+
+  fn georadiusbymember<K: Into<RedisKey>, V: Into<RedisValue>>(&self, key: K, member: V, radius: f64, unit: GeoUnit,
+                                                               withcoord: bool, withdist: bool, withhash: bool, count: Option<usize>,
+                                                               order: Option<GeoOrdering>, store: Option<String>, storedist: Option<String>)
+    -> Box<Future<Item=Vec<RedisValue>, Error=RedisError>>;
+
 }
 
 
@@ -823,6 +849,88 @@ impl RedisClientBorrowed for RedisClient {
   /// <https://redis.io/commands/pttl>
   fn pttl<K: Into<RedisKey>>(&self, key: K) -> Box<Future<Item=i64, Error=RedisError>> {
     commands::pttl(&self.inner, key)
+  }
+
+  /// Load a script into the scripts cache, without executing it.
+  ///
+  /// <https://redis.io/commands/script-load>
+  fn script_load<S: Into<String>>(&self, script: S) -> Box<Future<Item=String, Error=RedisError>> {
+    commands::script_load(&self.inner, script)
+  }
+
+  /// Flush the Lua scripts cache.
+  ///
+  /// <https://redis.io/commands/script-flush>
+  fn script_flush(&self) -> Box<Future<Item=(), Error=RedisError>> {
+    commands::script_flush(&self.inner)
+  }
+
+  /// Returns information about the existence of the scripts in the script cache.
+  ///
+  /// This command accepts one or more SHA1 digests and returns a list of ones or zeros to signal if the scripts are already defined or not inside the script cache.
+  ///
+  /// <https://redis.io/commands/script-exists>
+  fn script_exists<S: Into<MultipleKeys>>(&self, sha1: S) -> Box<Future<Item=Vec<bool>, Error=RedisError>> {
+    commands::script_exists(&self.inner, sha1)
+  }
+
+  /// Evaluates a script cached on the server side by its SHA1 digest.
+  ///
+  /// Scripts are cached on the server side using the SCRIPT LOAD command.
+  ///
+  /// <https://redis.io/commands/evalsha>
+  fn evalsha<S: Into<String>, K: Into<MultipleKeys>, V: Into<MultipleValues>>(&self, sha1: S, keys: K, args: V) -> Box<Future<Item=Vec<RedisValue>, Error=RedisError>> {
+    commands::evalsha(&self.inner, sha1, keys, args)
+  }
+
+  /// Adds the specified geospatial items (latitude, longitude, name) to the specified key.
+  ///
+  /// <https://redis.io/commands/geoadd>
+  fn geoadd<K: Into<RedisKey>, V: Into<MultipleGeoValues>>(&self, key: K, values: V) -> Box<Future<Item=usize, Error=RedisError>> {
+    commands::geoadd(&self.inner, key, values)
+  }
+
+  /// Return valid Geohash strings representing the position of one or more elements in a sorted set value representing a geospatial index.
+  ///
+  /// <https://redis.io/commands/geohash>
+  fn geohash<K: Into<RedisKey>, V: Into<MultipleValues>>(&self, key: K, values: V) -> Box<Future<Item=Vec<String>, Error=RedisError>> {
+    commands::geohash(&self.inner, key, values)
+  }
+
+  /// Return the positions (longitude,latitude) of all the specified members of the geospatial index represented by the sorted set at key.
+  ///
+  /// <https://redis.io/commands/geopos>
+  fn geopos<K: Into<RedisKey>, V: Into<MultipleValues>>(&self, key: K, values: V) -> Box<Future<Item=Vec<Vec<(Longitude, Latitude)>>, Error=RedisError>> {
+    commands::geopos(&self.inner, key, values)
+  }
+
+  /// Return the distance between two members in the geospatial index represented by the sorted set.
+  ///
+  /// <https://redis.io/commands/geodist>
+  fn geodist<K: Into<RedisKey>, M: Into<RedisValue>, N: Into<RedisValue>>(&self, key: K, member1: M, member2: N, unit: Option<GeoUnit>) -> Box<Future<Item=Option<f64>, Error=RedisError>> {
+    commands::geodist(&self.inner, key, member1, member2, unit)
+  }
+
+  /// Return the members of a sorted set populated with geospatial information using GEOADD, which are within the borders of the area specified with the center location and the maximum distance from the center (the radius).
+  ///
+  /// <https://redis.io/commands/georadius>
+  fn georadius<K: Into<RedisKey>>(&self, key: K, longitude: Longitude, latitude: Latitude, radius: f64, unit: GeoUnit,
+                                  withcoord: bool, withdist: bool, withhash: bool, count: Option<usize>,
+                                  order: Option<GeoOrdering>, store: Option<String>, storedist: Option<String>)
+    -> Box<Future<Item=Vec<RedisValue>, Error=RedisError>>
+  {
+    commands::georadius(&self.inner, key, longitude, latitude, radius, unit, withcoord, withdist, withhash, count, order, store, storedist)
+  }
+
+  /// This command is exactly like GEORADIUS with the sole difference that instead of taking, as the center of the area to query, a longitude and latitude value, it takes the name of a member already existing inside the geospatial index represented by the sorted set.
+  ///
+  /// <https://redis.io/commands/georadiusbymember>
+  fn georadiusbymember<K: Into<RedisKey>, V: Into<RedisValue>>(&self, key: K, member: V, radius: f64, unit: GeoUnit,
+                                                               withcoord: bool, withdist: bool, withhash: bool, count: Option<usize>,
+                                                               order: Option<GeoOrdering>, store: Option<String>, storedist: Option<String>)
+    -> Box<Future<Item=Vec<RedisValue>, Error=RedisError>>
+  {
+    commands::georadiusbymember(&self.inner, key, member, radius, unit, withcoord, withdist, withhash, count, order, store, storedist)
   }
 
 }

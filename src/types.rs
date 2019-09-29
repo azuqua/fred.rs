@@ -884,6 +884,100 @@ impl<T: Into<RedisValue>> From<VecDeque<(f64, T)>> for MultipleZaddValues {
   }
 }
 
+/// Valid longitudes are from -180 to 180 degrees.
+pub type Longitude = f64;
+/// Valid latitudes are from -85.05112878 to 85.05112878 degrees.
+pub type Latitude = f64;
+
+/// One or more (Longitude, Latitude, Member) arguments to the GEO commands.
+pub struct MultipleGeoValues {
+  values: Vec<(Longitude, Latitude, String)>
+}
+
+impl MultipleGeoValues {
+
+  pub fn new() -> MultipleGeoValues {
+    MultipleGeoValues { values: Vec::new() }
+  }
+
+  pub fn inner(self) -> Vec<(Longitude, Latitude, String)> {
+    self.values
+  }
+
+  pub fn len(&self) -> usize {
+    self.values.len()
+  }
+
+}
+
+impl<S: Into<String>> From<(Longitude, Latitude, S)> for MultipleGeoValues {
+  fn from(v: (Longitude, Latitude, S)) -> Self {
+    MultipleGeoValues {
+      values: vec![(v.0, v.1, v.2.into())]
+    }
+  }
+}
+
+impl<S: Into<String>> From<Vec<(Longitude, Latitude, S)>> for MultipleGeoValues {
+  fn from(v: Vec<(Longitude, Latitude, S)>) -> Self {
+    MultipleGeoValues {
+      values: v.into_iter()
+        .map(|(long, lat, m)| (long, lat, m.into()))
+        .collect()
+    }
+  }
+}
+
+impl<S: Into<String>> From<VecDeque<(Longitude, Latitude, S)>> for MultipleGeoValues {
+  fn from(v: VecDeque<(Longitude, Latitude, S)>) -> Self {
+    MultipleGeoValues {
+      values: v.into_iter()
+        .map(|(long, lat, m)| (long, lat, m.into()))
+        .collect()
+    }
+  }
+}
+
+/// The unit to use for the GEODIST and GEORADIUS commands.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum GeoUnit {
+  Meters,
+  Kilometers,
+  Miles,
+  Feet
+}
+
+impl GeoUnit {
+
+  pub fn to_str(&self) -> &'static str {
+    match *self {
+      GeoUnit::Meters     => "m",
+      GeoUnit::Kilometers => "km",
+      GeoUnit::Miles      => "mi",
+      GeoUnit::Feet       => "ft"
+    }
+  }
+
+}
+
+/// Whether to use ASC or DESC ordering.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum GeoOrdering {
+  Asc,
+  Desc
+}
+
+impl GeoOrdering {
+
+  pub fn to_str(&self) -> &'static str {
+    match *self {
+      GeoOrdering::Asc  => "ASC",
+      GeoOrdering::Desc => "DESC"
+    }
+  }
+
+}
+
 /// The kind of value from Redis.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RedisValueKind {
