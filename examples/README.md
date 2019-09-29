@@ -11,5 +11,4 @@ cargo run --example basic
 3. [Pubsub](pubsub.rs) - How to use the [publish-subscribe](https://redis.io/topics/pubsub) interface.
 4. [Cluster](cluster.rs) - How to use with clustered Redis deployments.
 5. [Multiple](multiple.rs) - An example that creates multiple clients on an event loop and composes their connections and commands together.
-6. [Http](http.rs) - An example using a Redis client with a [hyper http server](https://github.com/hyperium/hyper).
-7. [TLS](tls.rs) - An example showing how to use the TLS features.
+6. [TLS](tls.rs) - An example showing how to use the TLS features.

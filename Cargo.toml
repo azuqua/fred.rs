@@ -1,6 +1,6 @@
 [package]
 name = "fred"
-version = "1.2.1"
+version = "1.2.2"
 authors = ["Alec Embke <aembke@gmail.com>"]
 edition = "2018"
 description = "A Redis client for Rust built on Futures and Tokio."
@@ -32,9 +32,6 @@ tokio-core = "0.1.17"
 tokio-proto = "0.1.1"
 tokio-io = "0.1.12"
 rand = "0.3"
-
-[dev-dependencies]
-hyper = "0.11"
 
 [lib]
 doc = true
