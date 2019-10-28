@@ -11,6 +11,8 @@ use std::rc::Rc;
 use std::collections::BTreeMap;
 
 use crate::protocol::types::*;
+use std::ops::{DerefMut, Deref};
+use std::sync::Arc;
 
 
 pub fn log_unimplemented(command: &RedisCommand) -> Result<Frame, RedisError> {
@@ -97,7 +99,7 @@ pub fn set(data: &mut DataSet, mut args: Vec<RedisValue>) -> Result<Frame, Redis
       data.key_types.insert(key.clone(), KeyType::Data);
 
       let now = Instant::now();
-      let _ = data.expirations.borrow_mut().add(&key, ExpireLog {
+      let _ = data.expirations.write().deref_mut().add(&key, ExpireLog {
         after: now + Duration::from_millis(count as u64),
         internal: Some((now, (key.clone())))
       })?;
@@ -134,7 +136,7 @@ pub fn set(data: &mut DataSet, mut args: Vec<RedisValue>) -> Result<Frame, Redis
     data.key_types.insert(key.clone(), KeyType::Data);
 
     let now = Instant::now();
-    let _ = data.expirations.borrow_mut().add(&key, ExpireLog {
+    let _ = data.expirations.write().deref_mut().add(&key, ExpireLog {
       after: now + Duration::from_millis(count as u64),
       internal: Some((now, (key.clone())))
     })?;
@@ -201,7 +203,7 @@ pub fn get(data: &mut DataSet, mut args: Vec<RedisValue>) -> Result<Frame, Redis
 }
 
 pub fn del(data: &mut DataSet, mut args: Vec<RedisValue>) -> Result<Frame, RedisError> {
-  let keys: Vec<(KeyType, Rc<RedisKey>)> = args.into_iter().filter_map(|s| {
+  let keys: Vec<(KeyType, Arc<RedisKey>)> = args.into_iter().filter_map(|s| {
     let k = match s {
       RedisValue::String(s) => s,
       RedisValue::Integer(i) => i.to_string(),
@@ -216,7 +218,7 @@ pub fn del(data: &mut DataSet, mut args: Vec<RedisValue>) -> Result<Frame, Redis
 
     Some((kind, k))
   })
-    .collect();
+  .collect();
 
   let mut deleted = 0;
   for (kind, key) in keys.into_iter() {
@@ -224,7 +226,7 @@ pub fn del(data: &mut DataSet, mut args: Vec<RedisValue>) -> Result<Frame, Redis
       deleted += 1;
     }
     let _ = data.key_types.remove(&key);
-    let _ = data.expirations.borrow_mut().del(&key);
+    let _ = data.expirations.write().deref_mut().del(&key);
 
     match kind {
       KeyType::Data => { data.data.remove(&key); },
@@ -260,7 +262,7 @@ pub fn expire(data: &mut DataSet, mut args: Vec<RedisValue>) -> Result<Frame, Re
     let now = Instant::now();
     let _key = key.clone();
 
-    let _ = data.expirations.borrow_mut().add(&_key, ExpireLog {
+    let _ = data.expirations.write().deref_mut().add(&_key, ExpireLog {
       after: now + Duration::from_millis(ms as u64),
       internal: Some((now, (_key.clone())))
     })?;
@@ -281,7 +283,7 @@ pub fn persist(data: &mut DataSet, mut args: Vec<RedisValue>) -> Result<Frame, R
   };
   let key = utils::get_key(&*data, key);
 
-  let count = data.expirations.borrow_mut().del(&key)?;
+  let count = data.expirations.write().deref_mut().del(&key)?;
   Ok(Frame::Integer(count as i64))
 }
 
@@ -379,7 +381,7 @@ pub fn hset(data: &mut DataSet, mut args: Vec<RedisValue>) -> Result<Frame, Redi
     1
   };
 
-  let _ = inner.insert(Rc::new(field), value);
+  let _ = inner.insert(Arc::new(field), value);
 
   Ok(Frame::Integer(res))
 }
@@ -629,13 +631,53 @@ pub fn ping(data: &mut DataSet, mut args: Vec<RedisValue>) -> Result<Frame, Redi
   Ok(Frame::SimpleString("PONG".into()))
 }
 
-pub fn flushall(data: &mut DataSet, mut args: Vec<RedisValue>) -> Result<Frame, RedisError> {
-  data.data.clear();
-  data.maps.clear();
-  data.sets.clear();
-  data.key_types.clear();
-  data.keys.clear();
-  utils::clear_expirations(&data.expirations);
+pub fn flushall(mut args: Vec<RedisValue>) -> Result<Frame, RedisError> {
+  let global_data = utils::global_data_set();
+
+  for data_ref in global_data.read().deref().values() {
+    let mut data_guard = data_ref.write();
+    let mut data = data_guard.deref_mut();
+
+    data.data.clear();
+    data.maps.clear();
+    data.sets.clear();
+    data.key_types.clear();
+    data.keys.clear();
+    utils::clear_expirations(&data.expirations);
+  }
 
   utils::ok()
+}
+
+pub fn smembers(data: &mut DataSet, mut args: Vec<RedisValue>) -> Result<Frame, RedisError> {
+  args.reverse();
+
+  let key = match args.pop() {
+    Some(RedisValue::String(s)) => s,
+    Some(RedisValue::Integer(i)) => i.to_string(),
+    _ => return Err(RedisError::new(
+      RedisErrorKind::InvalidArgument, "Invalid key."
+    ))
+  };
+  let key = utils::get_key(&*data, key);
+
+  let members = match data.sets.get(&key) {
+    Some(m) => m,
+    None => return Ok(Frame::Array(vec![]))
+  };
+
+  let mut out = Vec::with_capacity(members.len());
+  for member in members.iter() {
+    out.push(Frame::BulkString(member.key.as_bytes().to_vec()));
+  }
+
+  Ok(Frame::Array(out))
+}
+
+pub fn publish(data: &mut DataSet, mut args: Vec<RedisValue>) -> Result<Frame, RedisError> {
+  Ok(Frame::Integer(1))
+}
+
+pub fn subscribe(data: &mut DataSet, mut args: Vec<RedisValue>) -> Result<Frame, RedisError> {
+  Ok(Frame::Integer(1))
 }

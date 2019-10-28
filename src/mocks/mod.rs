@@ -40,23 +40,30 @@ pub fn create_commands_ft(handle: Handle, inner: Arc<RedisClientInner>) -> Box<F
   let expire_tx = tx.clone();
   multiplexer_utils::set_command_tx(&inner, tx);
 
-  let data = DataSet::default();
-  let expirations = data.expirations.clone();
+  let data = utils::global_data_set();
 
   let expire_ft = inner.timer.interval(Duration::from_secs(1)).map_err(|_| ()).for_each(move |_| {
     trace!("Starting to scan for expired keys.");
+    let global_data = utils::global_data_set();
 
-    let expired = {
-      let mut expiration_ref = expirations.borrow_mut();
+    for data_ref in global_data.read().deref().values() {
+      let data_guard = data_ref.read();
+      let data = data_guard.deref();
+      let expirations = data.expirations.clone();
 
-      let expired = expiration_ref.find_expired();
-      expiration_ref.cleanup();
+      let expired = {
+        let mut expiration_guard = expirations.write();
+        let mut expiration_ref = expiration_guard.deref_mut();
 
-      expired
-    };
+        let expired = expiration_ref.find_expired();
+        expiration_ref.cleanup();
 
-    trace!("Cleaning up mock {} expired keys", expired.len());
-    utils::cleanup_keys(&expire_tx, expired);
+        expired
+      };
+
+      trace!("Cleaning up mock {} expired keys", expired.len());
+      utils::cleanup_keys(&expire_tx, expired);
+    }
 
     Ok::<(), ()>(())
   });
@@ -72,9 +79,19 @@ pub fn create_commands_ft(handle: Handle, inner: Arc<RedisClientInner>) -> Box<F
     Ok::<(), ()>(())
   });
 
-  Box::new(rx.from_err::<RedisError>().fold((handle, inner, data, None), |(handle, inner, mut data, err), mut command| {
+  Box::new(rx.from_err::<RedisError>().fold((handle, inner, 0, None), |(handle, inner, mut db, err), mut command| {
     debug!("{} Handling redis command {:?}", n!(inner), command.kind);
     client_utils::decr_atomic(&inner.cmd_buffer_len);
+
+    if command.kind == RedisCommandKind::Select {
+      db = command.args.first().map(|v| {
+        match v {
+          RedisValue::Integer(i) => *i as u8,
+          _ => panic!("Invalid redis database in mock layer.")
+        }
+      }).unwrap_or(db);
+    }
+    let data = utils::global_data_set_db(db);
 
     if command.kind.is_close() {
       debug!("{} Recv close command on the command stream.", n!(inner));
@@ -97,12 +114,12 @@ pub fn create_commands_ft(handle: Handle, inner: Arc<RedisClientInner>) -> Box<F
         return Err(RedisError::new_canceled());
       }
 
-      let result = utils::handle_command(&inner, &mut data, command);
+      let result = utils::handle_command(&inner, &data, command);
       if let Some(resp_tx) = resp_tx {
         let _ = resp_tx.send(result);
       }
 
-      Ok((handle, inner, data, err))
+      Ok((handle, inner, db, err))
     }
   })
   .map(|(_, _, _, err)| err)

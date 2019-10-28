@@ -18,6 +18,9 @@ extern crate tokio_io;
 extern crate rand;
 
 #[macro_use]
+extern crate lazy_static;
+
+#[macro_use]
 extern crate log;
 extern crate pretty_env_logger;
 

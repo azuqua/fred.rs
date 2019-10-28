@@ -44,18 +44,20 @@ use futures::{
   Stream
 };
 use std::time::Instant;
+use std::sync::Arc;
+use parking_lot::RwLock;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExpireLog {
   /// Timestamp of when to clean up, in ms.
   pub after: Instant,
   /// Timestamp of set operation, reference to the key. This is set by the library.
-  pub internal: Option<(Instant, Rc<RedisKey>)>
+  pub internal: Option<(Instant, Arc<RedisKey>)>
 }
 
 impl ExpireLog {
 
-  pub fn set_internal(&mut self, set: Instant, key: &Rc<RedisKey>) {
+  pub fn set_internal(&mut self, set: Instant, key: &Arc<RedisKey>) {
     self.internal = Some((set, key.clone()));
   }
 
@@ -70,7 +72,7 @@ impl ExpireLog {
     }
   }
 
-  pub fn get_key(&self) -> Option<&Rc<RedisKey>> {
+  pub fn get_key(&self) -> Option<&Arc<RedisKey>> {
     match self.internal {
       Some((_, ref key)) => Some(key),
       None => None
@@ -121,9 +123,9 @@ impl fmt::Display for KeyType {
 /// Uses a map of "dirty" logs to batch up slower operations on the heap.
 #[derive(Debug, Clone)]
 pub struct Expirations {
-  pub expirations: BTreeMap<Rc<RedisKey>, Rc<ExpireLog>>,
-  pub sorted: BinaryHeap<Rc<ExpireLog>>,
-  pub dirty: BTreeMap<Rc<RedisKey>, Rc<ExpireLog>>
+  pub expirations: BTreeMap<Arc<RedisKey>, Arc<ExpireLog>>,
+  pub sorted: BinaryHeap<Arc<ExpireLog>>,
+  pub dirty: BTreeMap<Arc<RedisKey>, Arc<ExpireLog>>
 }
 
 impl Expirations {
@@ -137,12 +139,12 @@ impl Expirations {
   }
 
   /// Add or update an expire log in the data set.
-  pub fn add(&mut self, key: &Rc<RedisKey>, mut expiration: ExpireLog) -> Result<(), RedisError> {
+  pub fn add(&mut self, key: &Arc<RedisKey>, mut expiration: ExpireLog) -> Result<(), RedisError> {
     if !expiration.has_internal() {
       expiration.set_internal(Instant::now(), key);
     }
 
-    let expiration = Rc::new(expiration);
+    let expiration = Arc::new(expiration);
 
     if let Some(old) = self.expirations.insert(key.clone(), expiration.clone()) {
       // move old value to deleted set for lazy deletion later
@@ -160,7 +162,7 @@ impl Expirations {
     Ok(())
   }
 
-  pub fn del(&mut self, key: &Rc<RedisKey>) -> Result<usize, RedisError> {
+  pub fn del(&mut self, key: &Arc<RedisKey>) -> Result<usize, RedisError> {
     let old = match self.expirations.remove(key) {
       Some(old) => old,
       None => return Ok(0)
@@ -174,9 +176,9 @@ impl Expirations {
     self.dirty.len()
   }
 
-  pub fn find_expired(&mut self) -> Vec<Rc<ExpireLog>> {
+  pub fn find_expired(&mut self) -> Vec<Arc<ExpireLog>> {
     let now = Instant::now();
-    let mut out: Vec<Rc<ExpireLog>> = Vec::new();
+    let mut out: Vec<Arc<ExpireLog>> = Vec::new();
 
     while self.sorted.len() > 0 {
       let youngest = match self.sorted.pop() {
@@ -227,7 +229,7 @@ impl Expirations {
 
   // do a full pass over the binary heap to remove things from the `dirty` map
   pub fn cleanup(&mut self) {
-    let mut new_sorted: BinaryHeap<Rc<ExpireLog>> = BinaryHeap::new();
+    let mut new_sorted: BinaryHeap<Arc<ExpireLog>> = BinaryHeap::new();
 
     for expire in self.sorted.drain() {
       let expire_key = match expire.get_key() {
@@ -260,13 +262,13 @@ impl Expirations {
 }
 
 pub struct DataSet {
-  pub keys: BTreeSet<Rc<RedisKey>>,
-  pub key_types: BTreeMap<Rc<RedisKey>, KeyType>,
-  pub data: BTreeMap<Rc<RedisKey>, RedisValue>,
-  pub maps: BTreeMap<Rc<RedisKey>, BTreeMap<Rc<RedisKey>, RedisValue>>,
-  pub sets: BTreeMap<Rc<RedisKey>, BTreeSet<RedisKey>>,
-  pub lists: BTreeMap<Rc<RedisKey>, VecDeque<RedisValue>>,
-  pub expirations: Rc<RefCell<Expirations>>,
+  pub keys: BTreeSet<Arc<RedisKey>>,
+  pub key_types: BTreeMap<Arc<RedisKey>, KeyType>,
+  pub data: BTreeMap<Arc<RedisKey>, RedisValue>,
+  pub maps: BTreeMap<Arc<RedisKey>, BTreeMap<Arc<RedisKey>, RedisValue>>,
+  pub sets: BTreeMap<Arc<RedisKey>, BTreeSet<RedisKey>>,
+  pub lists: BTreeMap<Arc<RedisKey>, VecDeque<RedisValue>>,
+  pub expirations: Arc<RwLock<Expirations>>,
 }
 
 impl Default for DataSet {
@@ -279,7 +281,7 @@ impl Default for DataSet {
       maps: BTreeMap::new(),
       sets: BTreeMap::new(),
       lists: BTreeMap::new(),
-      expirations: Rc::new(RefCell::new(Expirations::new()))
+      expirations: Arc::new(RwLock::new(Expirations::new()))
     }
   }
 
