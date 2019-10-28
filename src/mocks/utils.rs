@@ -43,10 +43,34 @@ use std::collections::{
   BTreeMap
 };
 use crate::mocks::types::*;
+use parking_lot::RwLock;
 
-pub fn cleanup_keys(tx: &UnboundedSender<RedisCommand>, mut expired: Vec<Rc<ExpireLog>>) {
+lazy_static! {
+
+  static ref DATA_SET: Arc<RwLock<BTreeMap<u8, Arc<RwLock<DataSet>>>>> = {
+    Arc::new(RwLock::new(BTreeMap::new()))
+  };
+
+}
+
+pub fn global_data_set() -> Arc<RwLock<BTreeMap<u8, Arc<RwLock<DataSet>>>>> {
+  DATA_SET.clone()
+}
+
+pub fn global_data_set_db(db: u8) -> Arc<RwLock<DataSet>> {
+  let data: Arc<RwLock<BTreeMap<u8, Arc<RwLock<DataSet>>>>> = DATA_SET.clone();
+  let mut data_guard = data.write();
+  let data_ref = data_guard.deref_mut();
+
+  data_ref.entry(db)
+    .or_insert(Arc::new(RwLock::new(DataSet::default())))
+    .clone()
+}
+
+
+pub fn cleanup_keys(tx: &UnboundedSender<RedisCommand>, mut expired: Vec<Arc<ExpireLog>>) {
   for expire_log in expired.into_iter() {
-    let mut expire_ref = match Rc::try_unwrap(expire_log) {
+    let mut expire_ref = match Arc::try_unwrap(expire_log) {
       Ok(r) => r,
       Err(_) => {
         trace!("Error unwraping Rc!");
@@ -70,8 +94,9 @@ pub fn cleanup_keys(tx: &UnboundedSender<RedisCommand>, mut expired: Vec<Rc<Expi
   }
 }
 
-pub fn clear_expirations(expirations: &Rc<RefCell<Expirations>>) {
-  let mut expirations_ref = expirations.borrow_mut();
+pub fn clear_expirations(expirations: &Arc<RwLock<Expirations>>) {
+  let mut expirations_guard = expirations.write();
+  let mut expirations_ref = expirations_guard.deref_mut();
 
   expirations_ref.expirations.clear();
   expirations_ref.dirty.clear();
@@ -94,45 +119,53 @@ pub fn to_int(s: &str) -> Result<i64, RedisError> {
   })
 }
 
-pub fn get_key(data: &DataSet, key: String) -> Rc<RedisKey> {
+pub fn get_key(data: &DataSet, key: String) -> Arc<RedisKey> {
   let key: RedisKey = key.into();
 
   match data.keys.get(&key) {
     Some(k) => k.clone(),
-    None => Rc::new(key.into())
+    None => Arc::new(key.into())
   }
 }
 
-pub fn should_set(data: &DataSet, key: &Rc<RedisKey>, kind: SetOptions) -> bool {
+pub fn should_set(data: &DataSet, key: &Arc<RedisKey>, kind: SetOptions) -> bool {
   match kind {
     SetOptions::XX => data.keys.contains(key),
     SetOptions::NX => !data.keys.contains(key)
   }
 }
 
-pub fn handle_command(inner: &Arc<RedisClientInner>, data: &mut DataSet, command: RedisCommand) -> Result<Frame, RedisError> {
-  match command.kind {
-    RedisCommandKind::Get      => commands::get(data, command.args),
-    RedisCommandKind::Set      => commands::set(data, command.args),
-    RedisCommandKind::Del      => commands::del(data, command.args),
-    RedisCommandKind::Expire   => commands::expire(data, command.args),
-    RedisCommandKind::HGet     => commands::hget(data, command.args),
-    RedisCommandKind::HSet     => commands::hset( data, command.args),
-    RedisCommandKind::HDel     => commands::hdel(data, command.args),
-    RedisCommandKind::HExists  => commands::hexists(data, command.args),
-    RedisCommandKind::HGetAll  => commands::hgetall(data, command.args),
-    RedisCommandKind::Select   => commands::select(data, command.args),
-    RedisCommandKind::Auth     => commands::auth(data, command.args),
-    RedisCommandKind::Incr     => commands::incr(data, command.args),
-    RedisCommandKind::IncrBy   => commands::incrby(data, command.args),
-    RedisCommandKind::Decr     => commands::decr(data, command.args),
-    RedisCommandKind::DecrBy   => commands::decrby(data, command.args),
-    RedisCommandKind::Ping     => commands::ping(data, command.args),
-    RedisCommandKind::Info     => commands::info(data, command.args),
-    RedisCommandKind::FlushAll => commands::flushall(data, command.args),
-    RedisCommandKind::Persist  => commands::persist(data, command.args),
+pub fn handle_command(inner: &Arc<RedisClientInner>, data_ref: &Arc<RwLock<DataSet>>, command: RedisCommand) -> Result<Frame, RedisError> {
+  if RedisCommandKind::FlushAll == command.kind {
+    commands::flushall(command.args)
+  }else {
+    let mut data_guard = data_ref.write();
+    let mut data = data_guard.deref_mut();
 
+    match command.kind {
+      RedisCommandKind::Get      => commands::get(data, command.args),
+      RedisCommandKind::Set      => commands::set(data, command.args),
+      RedisCommandKind::Del      => commands::del(data, command.args),
+      RedisCommandKind::Expire   => commands::expire(data, command.args),
+      RedisCommandKind::HGet     => commands::hget(data, command.args),
+      RedisCommandKind::HSet     => commands::hset( data, command.args),
+      RedisCommandKind::HDel     => commands::hdel(data, command.args),
+      RedisCommandKind::HExists  => commands::hexists(data, command.args),
+      RedisCommandKind::HGetAll  => commands::hgetall(data, command.args),
+      RedisCommandKind::Select   => commands::select(data, command.args),
+      RedisCommandKind::Auth     => commands::auth(data, command.args),
+      RedisCommandKind::Incr     => commands::incr(data, command.args),
+      RedisCommandKind::IncrBy   => commands::incrby(data, command.args),
+      RedisCommandKind::Decr     => commands::decr(data, command.args),
+      RedisCommandKind::DecrBy   => commands::decrby(data, command.args),
+      RedisCommandKind::Ping     => commands::ping(data, command.args),
+      RedisCommandKind::Info     => commands::info(data, command.args),
+      RedisCommandKind::Persist  => commands::persist(data, command.args),
+      RedisCommandKind::Smembers => commands::smembers(data, command.args),
+      RedisCommandKind::Publish  => commands::publish(data, command.args),
+      RedisCommandKind::Subscribe => commands::subscribe(data, command.args),
 
-    _ => commands::log_unimplemented(&command)
+      _ => commands::log_unimplemented(&command)
+    }
   }
 }

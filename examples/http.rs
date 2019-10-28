@@ -46,19 +46,19 @@ const INTERFACE: &'static str = "127.0.0.1";
 const PORT: u16 = 3000;
 
 #[derive(Clone)]
-pub struct HttpInterface<'a> {
-  client: &'a RedisClient
+pub struct HttpInterface {
+  client: RedisClient
 }
 
-impl<'a> HttpInterface<'a> {
+impl HttpInterface {
 
-  pub fn new(client: &'a RedisClient) -> HttpInterface<'a> {
+  pub fn new(client: RedisClient) -> HttpInterface {
     HttpInterface { client }
   }
 
 }
 
-impl<'a> Service for HttpInterface<'a> {
+impl Service for HttpInterface {
   type Request = Request;
   type Response = Response;
   type Error = hyper::Error;
@@ -116,7 +116,7 @@ fn main() {
   // give the service its own clone of the client
   let http_client = client.clone();
   let server = Http::new().bind(&addr, move || {
-    Ok(HttpInterface::new(&http_client))
+    Ok(HttpInterface::new(http_client.clone()))
   });
 
   let server = match server {
