@@ -983,7 +983,8 @@ impl GeoOrdering {
 pub enum RedisValueKind {
   Integer,
   String,
-  Null
+  Null,
+  Array
 }
 
 /// A value used in a Redis command.
@@ -991,7 +992,8 @@ pub enum RedisValueKind {
 pub enum RedisValue {
   Integer(i64),
   String(String),
-  Null
+  Null,
+  Array(Vec<RedisValue>)
 }
 
 impl<'a> RedisValue {
@@ -1005,6 +1007,7 @@ impl<'a> RedisValue {
           Err(_) => Err(RedisValue::String(s))
         }
       },
+      RedisValue::Integer(i) => Ok(RedisValue::Integer(i)),
       _ => Err(self)
     }
   }
@@ -1014,7 +1017,8 @@ impl<'a> RedisValue {
     match *self {
       RedisValue::Integer(_)   => RedisValueKind::Integer,
       RedisValue::String(_)    => RedisValueKind::String,
-      RedisValue::Null         => RedisValueKind::Null
+      RedisValue::Null         => RedisValueKind::Null,
+      RedisValue::Array(_)     => RedisValueKind::Array
     }
   }
 
@@ -1038,6 +1042,14 @@ impl<'a> RedisValue {
   pub fn is_string(&self) -> bool {
     match *self {
       RedisValue::String(_) => true,
+      _ => false
+    }
+  }
+
+  /// Check if the value is an array.
+  pub fn is_array(&self) -> bool {
+    match *self {
+      RedisValue::Array(_) => true,
       _ => false
     }
   }
@@ -1103,12 +1115,13 @@ impl<'a> RedisValue {
   /// Read the inner value as a string slice.
   ///
   /// Null is returned as "nil" and integers are cast to a string.
-  pub fn as_str(&'a self) -> Cow<'a, str> {
-    match *self {
+  pub fn as_str(&'a self) -> Option<Cow<'a, str>> {
+    Some(match *self {
       RedisValue::String(ref s)  => Cow::Borrowed(s),
       RedisValue::Integer(ref i) => Cow::Owned(i.to_string()),
-      RedisValue::Null           => Cow::Borrowed("nil")
-    }
+      RedisValue::Null           => Cow::Borrowed("nil"),
+      RedisValue::Array(_)       => return None
+    })
   }
 
   /// Convert from a `u64` to the `i64` representation used by Redis. This can fail due to overflow so it is not implemented via the From trait.
@@ -1144,7 +1157,8 @@ impl Hash for RedisValue {
     let prefix = match *self {
       RedisValue::Integer(_) => 'i',
       RedisValue::String(_)  => 's',
-      RedisValue::Null       => 'n'
+      RedisValue::Null       => 'n',
+      RedisValue::Array(_)   => 'a'
     };
     prefix.hash(state);
 
@@ -1152,6 +1166,9 @@ impl Hash for RedisValue {
       RedisValue::Integer(d)     => d.hash(state),
       RedisValue::String(ref s)  => s.hash(state),
       RedisValue::Null           => NULL.hash(state),
+      RedisValue::Array(ref a)   => {
+        for value in a.iter() { value.hash(state); }
+      }
     }
   }
 }
@@ -1243,3 +1260,4 @@ impl From<RedisKey> for RedisValue {
     RedisValue::String(d.into_string())
   }
 }
+

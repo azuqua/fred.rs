@@ -50,7 +50,7 @@ pub fn should_perform_set_operations(client: RedisClient) -> Box<Future<Item=(),
   })
   .and_then(|(client, values)| {
     let values: Vec<(String, f64)> = values.chunks_exact(2).map(|chunk| {
-      (chunk[0].as_str().to_string(), chunk[1].as_f64().unwrap())
+      (chunk[0].as_str().unwrap().to_string(), chunk[1].as_f64().unwrap())
     })
     .collect();
 
@@ -73,7 +73,7 @@ pub fn should_perform_set_operations(client: RedisClient) -> Box<Future<Item=(),
   })
   .and_then(|(client, values)| {
     let values: Vec<(String, f64)> = values.chunks_exact(2).map(|chunk| {
-      (chunk[0].as_str().to_string(), chunk[1].as_f64().unwrap())
+      (chunk[0].as_str().unwrap().to_string(), chunk[1].as_f64().unwrap())
     })
     .collect();
 

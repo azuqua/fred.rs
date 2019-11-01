@@ -166,7 +166,7 @@ impl ValueScanInner {
       let score = match chunk[1].take() {
         RedisValue::String(s) => utils::redis_string_to_f64(&s)?,
         RedisValue::Integer(i) => i as f64,
-        RedisValue::Null => return Err(RedisError::new(
+        _ => return Err(RedisError::new(
           RedisErrorKind::ProtocolError, "Invalid HSCAN result. Expected a string or integer score."
         ))
       };
@@ -911,7 +911,8 @@ impl RedisCommand {
       let frame: Frame = match value {
         RedisValue::Integer(i) => ProtocolFrame::BulkString(i.to_string().as_bytes().to_vec()),
         RedisValue::String(s) => ProtocolFrame::BulkString(s.as_bytes().to_vec()),
-        RedisValue::Null => ProtocolFrame::Null
+        RedisValue::Null => ProtocolFrame::Null,
+        RedisValue::Array(_) => return Err(RedisError::new(RedisErrorKind::InvalidArgument, "Invalid outbound nested array."))
       };
 
       bulk_strings.push(frame);

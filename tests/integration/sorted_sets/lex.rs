@@ -39,7 +39,7 @@ pub fn should_read_sorted_lex_entries(client: RedisClient) -> Box<Future<Item=()
   })
   .and_then(|(client, values)| {
     let values: Vec<String> = values.iter()
-      .map(|val| val.as_str().to_string()).collect();
+      .map(|val| val.as_str().unwrap().to_string()).collect();
 
     assert_eq!(values, vec![
       "a".to_owned(),
@@ -54,7 +54,7 @@ pub fn should_read_sorted_lex_entries(client: RedisClient) -> Box<Future<Item=()
   })
   .and_then(|(client, values)| {
     let values: Vec<String> = values.iter()
-      .map(|val| val.as_str().to_string()).collect();
+      .map(|val| val.as_str().unwrap().to_string()).collect();
 
     assert_eq!(values, vec![
       "f".to_owned(),

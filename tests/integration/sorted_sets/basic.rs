@@ -30,7 +30,7 @@ pub fn should_add_and_remove_elements(client: RedisClient) -> Box<Future<Item=()
     client.zscore("foo", "c")
   })
   .and_then(|(client, score)| {
-    assert_eq!(redis_string_to_f64(&score.as_str()).unwrap(), 3.0);
+    assert_eq!(redis_string_to_f64(&score.as_str().unwrap()).unwrap(), 3.0);
     client.zcount("foo", 0.0, 10.0)
   })
   .and_then(|(client, count)| {
@@ -51,7 +51,7 @@ pub fn should_add_and_remove_elements(client: RedisClient) -> Box<Future<Item=()
   })
   .and_then(|(client, values)| {
     let values: Vec<(String, f64)> = values.chunks_exact(2).map(|chunk| {
-      (chunk[0].as_str().to_string(), redis_string_to_f64(&chunk[1].as_str()).unwrap())
+      (chunk[0].as_str().unwrap().to_string(), redis_string_to_f64(&chunk[1].as_str().unwrap()).unwrap())
     })
     .collect();
 
@@ -76,7 +76,7 @@ pub fn should_push_and_pop_min_max(client: RedisClient) -> Box<Future<Item=(), E
   })
   .and_then(|(client, values)| {
     let values: Vec<(f64, String)> = values.chunks_exact(2).map(|chunk| {
-      (redis_string_to_f64(&chunk[1].as_str()).unwrap(), chunk[0].as_str().to_string())
+      (redis_string_to_f64(&chunk[1].as_str().unwrap()).unwrap(), chunk[0].as_str().unwrap().to_string())
     })
     .collect();
     assert_eq!(values, vec![(6.0, "f".into())]);
@@ -85,7 +85,7 @@ pub fn should_push_and_pop_min_max(client: RedisClient) -> Box<Future<Item=(), E
   })
   .and_then(|(client, values)| {
     let values: Vec<(f64, String)> = values.chunks_exact(2).map(|chunk| {
-      (redis_string_to_f64(&chunk[1].as_str()).unwrap(), chunk[0].as_str().to_string())
+      (redis_string_to_f64(&chunk[1].as_str().unwrap()).unwrap(), chunk[0].as_str().unwrap().to_string())
     })
     .collect();
     assert_eq!(values, vec![(5.0, "e".into()), (4.0, "d".into())]);
@@ -94,7 +94,7 @@ pub fn should_push_and_pop_min_max(client: RedisClient) -> Box<Future<Item=(), E
   })
   .and_then(|(client, values)| {
     let values: Vec<(f64, String)> = values.chunks_exact(2).map(|chunk| {
-      (redis_string_to_f64(&chunk[1].as_str()).unwrap(), chunk[0].as_str().to_string())
+      (redis_string_to_f64(&chunk[1].as_str().unwrap()).unwrap(), chunk[0].as_str().unwrap().to_string())
     })
     .collect();
     assert_eq!(values, vec![(1.0, "a".into())]);
@@ -103,7 +103,7 @@ pub fn should_push_and_pop_min_max(client: RedisClient) -> Box<Future<Item=(), E
   })
   .and_then(|(client, values)| {
     let values: Vec<(f64, String)> = values.chunks_exact(2).map(|chunk| {
-      (redis_string_to_f64(&chunk[1].as_str()).unwrap(), chunk[0].as_str().to_string())
+      (redis_string_to_f64(&chunk[1].as_str().unwrap()).unwrap(), chunk[0].as_str().unwrap().to_string())
     })
     .collect();
     assert_eq!(values, vec![(2.0, "b".into()), (3.0, "c".into())]);

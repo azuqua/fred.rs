@@ -49,6 +49,7 @@ use super::hashes as hashes_tests;
 use super::lists as lists_tests;
 use super::pubsub as pubsub_tests;
 use super::sorted_sets as sorted_sets_tests;
+use super::geo as geo_tests;
 
 lazy_static! {
 
@@ -314,5 +315,34 @@ pub mod sorted_sets {
     })
   }
   */
+
+}
+
+pub mod geo {
+  use super::*;
+
+  #[test]
+  fn it_should_add_basic_single_pos() {
+    let config = RedisConfig::default_clustered();
+    utils::setup_test_client(config, TIMER.clone(), |client| {
+      geo_tests::should_add_basic_single_pos(client)
+    })
+  }
+
+  #[test]
+  fn it_should_add_and_check_multiple() {
+    let config = RedisConfig::default_clustered();
+    utils::setup_test_client(config, TIMER.clone(), |client| {
+      geo_tests::should_add_and_check_multiple(client)
+    })
+  }
+
+  #[test]
+  fn it_should_correctly_run_georadius() {
+    let config = RedisConfig::default();
+    utils::setup_test_client(config, TIMER.clone(), |client| {
+      geo_tests::should_correctly_run_georadius(client)
+    })
+  }
 
 }

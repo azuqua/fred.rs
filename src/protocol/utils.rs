@@ -262,6 +262,8 @@ pub fn check_auth_error(frame: ProtocolFrame) -> ProtocolFrame {
 }
 
 pub fn frame_to_results(frame: ProtocolFrame) -> Result<Vec<RedisValue>, RedisError> {
+  println!("HERE 0 {:?}", frame);
+
   match frame {
     ProtocolFrame::SimpleString(s) => Ok(vec![s.into()]),
     ProtocolFrame::Integer(i) => Ok(vec![i.into()]),
@@ -272,23 +274,39 @@ pub fn frame_to_results(frame: ProtocolFrame) -> Result<Vec<RedisValue>, RedisEr
     },
     ProtocolFrame::Array(mut frames) => {
       let mut out = Vec::with_capacity(frames.len());
+
       for frame in frames.drain(..) {
-        // there shouldn't be errors buried in arrays...
-        let mut res = frame_to_results(frame)?;
+        if frame.is_array() {
+          // only allow 2 more levels of nested arrays
+          if let ProtocolFrame::Array(inner) = frame {
+            let mut inner_out = Vec::with_capacity(inner.len());
 
-        if res.len() > 1 {
-          // nor should there be more than one layer of nested arrays
-          return Err(RedisError::new(
-            RedisErrorKind::ProtocolError, "Invalid nested array."
-          ));
-        }else if res.len() == 0 {
-          // shouldn't be possible...
-          return Err(RedisError::new(
-            RedisErrorKind::Unknown, "Invalid empty frame."
-          ));
+            for inner_frame in inner.into_iter() {
+              if let ProtocolFrame::Array(nested_array) = inner_frame {
+                println!("HERE 1 {:?}", nested_array);
+
+
+
+              }else{
+                println!("HERE 2 {:?}", inner_frame);
+                inner_out.push(frame_to_single_result(inner_frame)?);
+              }
+            }
+
+            out.push(RedisValue::Array(inner_out));
+          }else{
+            return Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid nested array frame."));
+          }
+        }else if frame.is_error() {
+          if let ProtocolFrame::Error(s) = frame {
+            return Err(pretty_error(s));
+          }else{
+            return Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid nested error frame."));
+          }
+        }else{
+          // convert to single result
+          out.push(frame_to_single_result(frame)?);
         }
-
-        out.push(res.pop().unwrap())
       }
 
       Ok(out)
@@ -310,6 +328,7 @@ pub fn frame_to_single_result(frame: ProtocolFrame) -> Result<RedisValue, RedisE
     },
     ProtocolFrame::Array(mut frames) => {
       if frames.len() > 1 {
+        println!("HERE 5 {:?}", frames);
         return Err(RedisError::new(
           RedisErrorKind::ProtocolError, "Could not convert multiple frames to RedisValue."
         ));

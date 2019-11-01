@@ -23,7 +23,7 @@ pub fn should_sscan_simple_database(client: RedisClient) -> Box<Future<Item=(), 
     // count that all three were recv
     client.sscan("foo", Some("*"), Some(1)).fold(3, |mut count, mut state| {
       for key in state.take_results().unwrap() {
-        if key.as_str() == "a" || key.as_str() == "b" || key.as_str() == "c" {
+        if key.as_str().unwrap() == "a" || key.as_str().unwrap() == "b" || key.as_str().unwrap() == "c" {
           count -= 1;
         }
       }

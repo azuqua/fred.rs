@@ -221,7 +221,7 @@ pub trait RedisClientBorrowed {
 
   fn geohash<K: Into<RedisKey>, V: Into<MultipleValues>>(&self, key: K, values: V) -> Box<Future<Item=Vec<String>, Error=RedisError>>;
 
-  fn geopos<K: Into<RedisKey>, V: Into<MultipleValues>>(&self, key: K, values: V) -> Box<Future<Item=Vec<Vec<(Longitude, Latitude)>>, Error=RedisError>>;
+  fn geopos<K: Into<RedisKey>, V: Into<MultipleValues>>(&self, key: K, values: V) -> Box<Future<Item=Vec<Option<(Longitude, Latitude)>>, Error=RedisError>>;
 
   fn geodist<K: Into<RedisKey>, M: Into<RedisValue>, N: Into<RedisValue>>(&self, key: K, member1: M, member2: N, unit: Option<GeoUnit>) -> Box<Future<Item=Option<f64>, Error=RedisError>>;
 
@@ -900,7 +900,7 @@ impl RedisClientBorrowed for RedisClient {
   /// Return the positions (longitude,latitude) of all the specified members of the geospatial index represented by the sorted set at key.
   ///
   /// <https://redis.io/commands/geopos>
-  fn geopos<K: Into<RedisKey>, V: Into<MultipleValues>>(&self, key: K, values: V) -> Box<Future<Item=Vec<Vec<(Longitude, Latitude)>>, Error=RedisError>> {
+  fn geopos<K: Into<RedisKey>, V: Into<MultipleValues>>(&self, key: K, values: V) -> Box<Future<Item=Vec<Option<(Longitude, Latitude)>>, Error=RedisError>> {
     commands::geopos(&self.inner, key, values)
   }
 

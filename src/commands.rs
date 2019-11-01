@@ -1887,7 +1887,10 @@ pub fn script_exists<S: Into<MultipleKeys>>(inner: &Arc<RedisClientInner>, sha1:
   let sha1 = sha1.into();
 
   Box::new(utils::request_response(inner, move || {
-    Ok((RedisCommandKind::ScriptExists, sha1.inner().into_iter().map(|k| k.into())))
+    Ok((RedisCommandKind::ScriptExists, sha1.inner()
+      .into_iter()
+      .map(|k| k.into())
+      .collect()))
   }).and_then(|frame| {
     let results = protocol_utils::frame_to_results(frame)?;
 
@@ -1931,31 +1934,142 @@ pub fn evalsha<S: Into<String>, K: Into<MultipleKeys>, V: Into<MultipleValues>>(
 }
 
 pub fn geoadd<K: Into<RedisKey>, V: Into<MultipleGeoValues>>(inner: &Arc<RedisClientInner>, key: K, values: V) -> Box<Future<Item=usize, Error=RedisError>> {
+  let key = key.into();
+  let values = values.into();
 
+  Box::new(utils::request_response(inner, move || {
+    let mut args = Vec::with_capacity(1 + (values.len() * 3));
 
+    args.push(key.into());
+    for (long, lat, member) in values.inner().into_iter() {
+      let lat = utils::f64_to_redis_string(lat)?;
+      let long = utils::f64_to_redis_string(long)?;
 
+      args.push(long.into());
+      args.push(lat.into());
+      args.push(member.into());
+    }
 
+    Ok((RedisCommandKind::GeoAdd, args))
+  }).and_then(|frame| {
+    let resp = protocol_utils::frame_to_single_result(frame)?;
+
+    match resp {
+      RedisValue::Integer(count) => if count < 0 {
+        Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid GEOADD response. Expected positive integer."))
+      }else{
+        Ok(count as usize)
+      },
+      _ => Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid GEOADD response. Expected integer."))
+    }
+  }))
 }
 
 pub fn geohash<K: Into<RedisKey>, V: Into<MultipleValues>>(inner: &Arc<RedisClientInner>, key: K, values: V) -> Box<Future<Item=Vec<String>, Error=RedisError>> {
+  let key = key.into();
+  let values = values.into();
 
+  Box::new(utils::request_response(inner, move || {
+    let mut args = Vec::with_capacity(1 + values.len());
 
+    args.push(key.into());
+    for value in values.inner().into_iter() {
+      args.push(value.into());
+    }
 
+    Ok((RedisCommandKind::GeoHash, args))
+  }).and_then(|frame| {
+    let values = protocol_utils::frame_to_results(frame)?;
+    let mut out = Vec::with_capacity(values.len());
 
+    for value in values.into_iter() {
+      match value {
+        RedisValue::String(s) => { out.push(s); },
+        _ => return Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid GEOHASH response. Expected string."))
+      }
+    }
+
+    Ok(out)
+  }))
 }
 
-pub fn geopos<K: Into<RedisKey>, V: Into<MultipleValues>>(inner: &Arc<RedisClientInner>, key: K, values: V) -> Box<Future<Item=Vec<Vec<(Longitude, Latitude)>>, Error=RedisError>> {
+pub fn geopos<K: Into<RedisKey>, V: Into<MultipleValues>>(inner: &Arc<RedisClientInner>, key: K, values: V) -> Box<Future<Item=Vec<Option<(Longitude, Latitude)>>, Error=RedisError>> {
+  let key = key.into();
+  let values = values.into();
 
+  Box::new(utils::request_response(inner, move || {
+    let mut args = Vec::with_capacity(1 + values.len());
 
+    args.push(key.into());
+    for value in values.inner().into_iter() {
+      args.push(value.into());
+    }
 
+    Ok((RedisCommandKind::GeoPos, args))
+  }).and_then(|frame| {
+    if let Frame::Array(frames) = frame {
+      let mut out = Vec::with_capacity(frames.len());
 
+      for frame in frames.into_iter() {
+        match frame {
+          Frame::Null => { out.push(None); },
+          Frame::Array(inner) => {
+            if inner.len() != 2 {
+              return Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid GEOPOS response. Expected 2-element inner array."));
+            }
 
+            let long_str = match inner[0].as_str() {
+              Some(s) => s,
+              None => return Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid GEOPOS response. Expected inner longitude string."))
+            };
+            let lat_str = match inner[1].as_str() {
+              Some(s) => s,
+              None => return Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid GEOPOS response. Expected inner latitude string."))
+            };
+
+            let long = utils::redis_string_to_f64(long_str)?;
+            let lat = utils::redis_string_to_f64(lat_str)?;
+
+            out.push(Some((long, lat)));
+          },
+          _ => return Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid GEOPOS response. Expected inner array."))
+        }
+      }
+
+      Ok(out)
+    }else{
+      Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid GEOPOS response. Expected array."))
+    }
+  }))
 }
 
 pub fn geodist<K: Into<RedisKey>, M: Into<RedisValue>, N: Into<RedisValue>>(inner: &Arc<RedisClientInner>, key: K, member1: M, member2: N, unit: Option<GeoUnit>) -> Box<Future<Item=Option<f64>, Error=RedisError>> {
+  let key = key.into();
+  let member1 = member1.into();
+  let member2 = member2.into();
 
+  Box::new(utils::request_response(inner, move || {
+    let mut args = Vec::with_capacity(4);
 
+    args.push(key.into());
+    args.push(member1.into());
+    args.push(member2.into());
 
+    if let Some(unit) = unit {
+      args.push(unit.to_str().into());
+    }
+
+    Ok((RedisCommandKind::GeoDist, args))
+  }).and_then(|frame| {
+    let resp = protocol_utils::frame_to_single_result(frame)?;
+
+    match resp {
+      RedisValue::String(s) => utils::redis_string_to_f64(&s)
+        .map(|f| Some(f)),
+      RedisValue::Null => Ok(None),
+      _ => Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid GEODIST response. Expected nil or string."))
+    }
+  }))
 }
 
 pub fn georadius<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, longitude: Longitude, latitude: Latitude, radius: f64,
@@ -1963,10 +2077,46 @@ pub fn georadius<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, longi
                                     order: Option<GeoOrdering>, store: Option<String>, storedist: Option<String>)
   -> Box<Future<Item=Vec<RedisValue>, Error=RedisError>>
 {
+  let key = key.into();
 
+  Box::new(utils::request_response(inner, move || {
+    let mut args = Vec::with_capacity(15);
 
+    args.push(key.into());
+    args.push(utils::f64_to_redis_string(longitude)?);
+    args.push(utils::f64_to_redis_string(latitude)?);
+    args.push(utils::f64_to_redis_string(radius)?);
+    args.push(unit.to_str().into());
 
+    if withcoord {
+      args.push(WITHCOORD.into());
+    }
+    if withdist {
+      args.push(WITHDIST.into());
+    }
+    if withhash {
+      args.push(WITHHASH.into());
+    }
+    if let Some(count) = count {
+      args.push(COUNT.into());
+      args.push(RedisValue::from_usize(count)?);
+    }
+    if let Some(order) = order {
+      args.push(order.to_str().into());
+    }
+    if let Some(store) = store {
+      args.push(STORE.into());
+      args.push(store.into());
+    }
+    if let Some(storedist) = storedist {
+      args.push(STOREDIST.into());
+      args.push(storedist.into());
+    }
 
+    Ok((RedisCommandKind::GeoRadius, args))
+  }).and_then(|frame| {
+    protocol_utils::frame_to_results(frame)
+  }))
 }
 
 pub fn georadiusbymember<K: Into<RedisKey>, V: Into<RedisValue>>(inner: &Arc<RedisClientInner>, key: K, member: V, radius: f64, unit: GeoUnit,
@@ -1974,8 +2124,44 @@ pub fn georadiusbymember<K: Into<RedisKey>, V: Into<RedisValue>>(inner: &Arc<Red
                                                                  order: Option<GeoOrdering>, store: Option<String>, storedist: Option<String>)
   -> Box<Future<Item=Vec<RedisValue>, Error=RedisError>>
 {
+  let key = key.into();
+  let member = member.into();
 
+  Box::new(utils::request_response(inner, move || {
+    let mut args = Vec::with_capacity(14);
 
+    args.push(key.into());
+    args.push(member.into());
+    args.push(utils::f64_to_redis_string(radius)?);
+    args.push(unit.to_str().into());
 
+    if withcoord {
+      args.push(WITHCOORD.into());
+    }
+    if withdist {
+      args.push(WITHDIST.into());
+    }
+    if withhash {
+      args.push(WITHHASH.into());
+    }
+    if let Some(count) = count {
+      args.push(COUNT.into());
+      args.push(RedisValue::from_usize(count)?);
+    }
+    if let Some(order) = order {
+      args.push(order.to_str().into());
+    }
+    if let Some(store) = store {
+      args.push(STORE.into());
+      args.push(store.into());
+    }
+    if let Some(storedist) = storedist {
+      args.push(STOREDIST.into());
+      args.push(storedist.into());
+    }
 
+    Ok((RedisCommandKind::GeoRadius, args))
+  }).and_then(|frame| {
+    protocol_utils::frame_to_results(frame)
+  }))
 }

@@ -39,7 +39,7 @@ pub fn should_read_sorted_score_entries(client: RedisClient) -> Box<Future<Item=
   })
   .and_then(|(client, values)| {
     let values: Vec<String> = values.iter()
-      .map(|val| val.as_str().to_string()).collect();
+      .map(|val| val.as_str().unwrap().to_string()).collect();
 
     assert_eq!(values, vec![
       "a".to_owned(),
@@ -54,7 +54,7 @@ pub fn should_read_sorted_score_entries(client: RedisClient) -> Box<Future<Item=
   })
   .and_then(|(client, values)| {
     let values: Vec<(String, f64)> = values.chunks_exact(2)
-      .map(|chunk| (chunk[0].as_str().to_string(), chunk[1].as_f64().unwrap()))
+      .map(|chunk| (chunk[0].as_str().unwrap().to_string(), chunk[1].as_f64().unwrap()))
       .collect();
 
     assert_eq!(values, vec![
@@ -70,7 +70,7 @@ pub fn should_read_sorted_score_entries(client: RedisClient) -> Box<Future<Item=
   })
   .and_then(|(client, values)| {
     let values: Vec<String> = values.iter()
-      .map(|val| val.as_str().to_string()).collect();
+      .map(|val| val.as_str().unwrap().to_string()).collect();
 
     assert_eq!(values, vec![
       "f".to_owned(),
@@ -85,7 +85,7 @@ pub fn should_read_sorted_score_entries(client: RedisClient) -> Box<Future<Item=
   })
   .and_then(|(client, values)| {
     let values: Vec<(String, f64)> = values.chunks_exact(2)
-      .map(|chunk| (chunk[0].as_str().to_string(), chunk[1].as_f64().unwrap()))
+      .map(|chunk| (chunk[0].as_str().unwrap().to_string(), chunk[1].as_f64().unwrap()))
       .collect();
 
     assert_eq!(values, vec![
