@@ -262,8 +262,6 @@ pub fn check_auth_error(frame: ProtocolFrame) -> ProtocolFrame {
 }
 
 pub fn frame_to_results(frame: ProtocolFrame) -> Result<Vec<RedisValue>, RedisError> {
-  println!("HERE 0 {:?}", frame);
-
   match frame {
     ProtocolFrame::SimpleString(s) => Ok(vec![s.into()]),
     ProtocolFrame::Integer(i) => Ok(vec![i.into()]),
@@ -279,21 +277,19 @@ pub fn frame_to_results(frame: ProtocolFrame) -> Result<Vec<RedisValue>, RedisEr
         if frame.is_array() {
           // only allow 2 more levels of nested arrays
           if let ProtocolFrame::Array(inner) = frame {
-            let mut inner_out = Vec::with_capacity(inner.len());
 
             for inner_frame in inner.into_iter() {
               if let ProtocolFrame::Array(nested_array) = inner_frame {
-                println!("HERE 1 {:?}", nested_array);
+                let mut inner_values = Vec::with_capacity(nested_array.len());
+                for inner_frame in nested_array.into_iter() {
+                  inner_values.push(frame_to_single_result(inner_frame)?);
+                }
 
-
-
+                out.push(RedisValue::Array(inner_values));
               }else{
-                println!("HERE 2 {:?}", inner_frame);
-                inner_out.push(frame_to_single_result(inner_frame)?);
+                out.push(frame_to_single_result(inner_frame)?);
               }
             }
-
-            out.push(RedisValue::Array(inner_out));
           }else{
             return Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid nested array frame."));
           }
@@ -328,7 +324,6 @@ pub fn frame_to_single_result(frame: ProtocolFrame) -> Result<RedisValue, RedisE
     },
     ProtocolFrame::Array(mut frames) => {
       if frames.len() > 1 {
-        println!("HERE 5 {:?}", frames);
         return Err(RedisError::new(
           RedisErrorKind::ProtocolError, "Could not convert multiple frames to RedisValue."
         ));

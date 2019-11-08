@@ -66,8 +66,8 @@ pub fn should_correctly_run_georadius(client: RedisClient) -> Box<Future<Item=()
       RedisValue::from("Palermo"),
       RedisValue::from("190.4424"),
       RedisValue::Array(vec![
-        RedisValue::from("13.361389338970184"),
-        RedisValue::from("38.115556395496299")
+        RedisValue::from("13.36138933897018433"),
+        RedisValue::from("38.11555639549629859")
       ])
     ]);
 
