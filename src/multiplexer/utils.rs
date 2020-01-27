@@ -644,20 +644,158 @@ pub fn process_frame(inner: &Arc<RedisClientInner>,
       }
     }
   }else{
-    if let Some(m_tx) = take_last_command_callback(last_command_callback) {
-      trace!("{} Found last caller from multiplexer.", n!(inner));
-      let _ = m_tx.send(None);
-    }
-
-    let last_request_tx = match take_last_request(last_request_sent, inner, last_request) {
-      Some(s) => match s.tx {
-        Some(tx) => tx,
-        None => return
-      },
-      None => return
-    };
-    trace!("{} Responding to last request with frame.", n!(inner));
-
-    let _ = last_request_tx.send(Ok(frame));
+    process_simple_frame(inner, last_request, last_request_sent, last_command_callback, frame);
   }
 }
+
+#[cfg(not(feature = "reconnect-on-auth-error"))]
+fn process_simple_frame(inner: &Arc<RedisClientInner>,
+           last_request: &Rc<RefCell<Option<RedisCommand>>>,
+           last_request_sent: &Rc<RefCell<Option<Instant>>>,
+           last_command_callback: &Rc<RefCell<Option<LastCommandCaller>>>,
+           frame: Frame) {
+
+  // if command channel found send success
+  match take_last_command_callback(last_command_callback) {
+    Some(m_tx) => {
+      trace!("{} Found last caller from multiplexer.", n!(inner));
+      let _ = m_tx.send(None);
+    },
+    None => error!("{} Did not find last request!", n!(inner))
+  };
+
+  // if caller channel found send the frame
+  let last_request_tx = match take_last_request(last_request_sent, inner, last_request) {
+    Some(s) => match s.tx {
+      Some(tx) => tx,
+      None => {
+        error!("{} Did not find last caller callback!", n!(inner));
+        return
+      }
+    },
+    None => {
+      error!("{} Did not find last caller!", n!(inner));
+      return
+    }
+  };
+  trace!("{} Responding to last request with frame.", n!(inner));
+
+  let _ = last_request_tx.send(Ok(frame));
+}
+
+#[cfg(feature = "reconnect-on-auth-error")]
+fn process_simple_frame(inner: &Arc<RedisClientInner>,
+           last_request: &Rc<RefCell<Option<RedisCommand>>>,
+           last_request_sent: &Rc<RefCell<Option<Instant>>>,
+           last_command_callback: &Rc<RefCell<Option<LastCommandCaller>>>,
+           frame: Frame) {
+
+  match parse_redis_auth_error(&frame) {
+    None => send_to_channels(inner, last_request, last_request_sent, last_command_callback, frame),
+    Some(redis_auth_error) => send_to_channels_error(inner, last_request, last_request_sent, last_command_callback, frame, redis_auth_error)
+  }
+}
+
+// sends Ok to command channel and frame to caller channel
+#[cfg(feature = "reconnect-on-auth-error")]
+fn send_to_channels(inner: &Arc<RedisClientInner>,
+           last_request: &Rc<RefCell<Option<RedisCommand>>>,
+           last_request_sent: &Rc<RefCell<Option<Instant>>>,
+           last_command_callback: &Rc<RefCell<Option<LastCommandCaller>>>,
+           frame: Frame) {
+
+  // if command channel found send success
+  match take_last_command_callback(last_command_callback) {
+    Some(m_tx) => {
+      trace!("{} Found last caller from multiplexer.", n!(inner));
+      let _ = m_tx.send(None);
+    },
+    None => error!("{} Did not find last request!", n!(inner))
+  }
+
+  // if caller channel found send the frame
+  let last_request_tx = match take_last_request(last_request_sent, inner, last_request) {
+    Some(s) => match s.tx {
+      Some(tx) => tx,
+      None => {
+        error!("{} Did not find last caller callback!", n!(inner));
+        return
+      }
+    },
+    None => {
+      error!("{} Did not find last caller!", n!(inner));
+      return
+    }
+  };
+  trace!("{} Responding to last request with frame.", n!(inner));
+
+  let _ = last_request_tx.send(Ok(frame));
+}
+
+// sends error to command channel, unless we are quitting
+#[cfg(feature = "reconnect-on-auth-error")]
+fn send_to_channels_error(inner: &Arc<RedisClientInner>,
+              last_request: &Rc<RefCell<Option<RedisCommand>>>,
+              last_request_sent: &Rc<RefCell<Option<Instant>>>,
+              last_command_callback: &Rc<RefCell<Option<LastCommandCaller>>>,
+              frame: Frame,
+              redis_error: RedisError) {
+
+  debug!("redis error {}", redis_error);
+
+  match take_last_request(last_request_sent, inner, last_request) {
+    Some(last_request_command) => {
+      match take_last_command_callback(last_command_callback) {
+        Some(m_tx) => {
+          trace!("{} Found last caller from multiplexer.", n!(inner));
+
+          let is_quitting = last_request_command.kind == RedisCommandKind::Quit;
+
+          // if we received a redis error but we were in the process of quitting
+          // we do not want to retry the connection, just pass the frame up to the command and caller
+          // channels as normal
+          if is_quitting {
+            let _ = m_tx.send(None);
+
+            let last_request_tx = match last_request_command.tx {
+              Some(tx) => tx,
+              None => {
+                error!("{} Did not find last caller callback!", n!(inner));
+                return
+              }
+            };
+
+            trace!("{} Responding to last request with frame.", n!(inner));
+            let _ = last_request_tx.send(Ok(frame));
+          }else{
+            // send the last command and error to the command channel
+            info!("{} Sending error to last request: {}", n!(inner), redis_error);
+            let _ = m_tx.send(Some((last_request_command, redis_error)));
+          }
+        },
+        None => error!("{} Did not find last caller!", n!(inner))
+      }
+    },
+    // No command channel was found
+    None => error!("{} Did not find last request!", n!(inner))
+  };
+}
+
+#[cfg(feature = "reconnect-on-auth-error")]
+// parses the response frame to see if it's an auth error
+fn parse_redis_auth_error(frame: &Frame) -> Option<RedisError> {
+  match frame.is_error() {
+    false => None,
+    true => {
+      let frame_result = frame_to_single_result(frame.clone());
+      match frame_result {
+        Err(e) => match e.kind() {
+          RedisErrorKind::Auth => Some(e),
+          _ => None
+        }
+        _ => None
+      }
+    }
+  }
+}
+

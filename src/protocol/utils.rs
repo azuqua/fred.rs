@@ -185,6 +185,7 @@ pub fn pretty_error(resp: String) -> RedisError {
       ""          => RedisErrorKind::Unknown,
       "ERR"       => RedisErrorKind::Unknown,
       "WRONGTYPE" => RedisErrorKind::InvalidArgument,
+      "NOAUTH"    => RedisErrorKind::Auth,
       "Invalid"   => match second.as_ref() {
         "argument(s)" | "Argument" => RedisErrorKind::InvalidArgument,
         "command" | "Command"      => RedisErrorKind::InvalidCommand,
