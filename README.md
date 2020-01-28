@@ -116,6 +116,7 @@ When a client is initialized it will generate a unique client name with a prefix
 |---------------------------- |---------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | enable-tls                  |         | Enable TLS support. This requires OpenSSL (or equivalent) dependencies.                                                                                              |
 | ignore-auth-error           |    x    | Ignore auth errors that occur when a password is supplied but not required.                                                                                          |
+| reconnect-on-auth-error     |         | A NOAUTH error is treated the same as a general connection failure and the client will reconnect based on the reconnection policy.                                                 |
 | mocks                       |         | Enable the mocking layer, which will use local memory instead of an actual redis server.                                                                             |
 | super-duper-bad-networking  |         | Increase the number of times a request will be automatically retried from 3 to 20. A request is retried when the connection closes while waiting on a response.      |
 
