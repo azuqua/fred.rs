@@ -110,6 +110,10 @@ variable `RUST_LOG` with a value of `trace`, `debug`, `warn`, `error`, or `info`
 
 When a client is initialized it will generate a unique client name with a prefix of `fred-`. This name will appear in nearly all logging statements on the client in order to associate client and server operations if logging is enabled on both.
 
+## Elasticache and occasional NOAUTH errors
+
+When using Amazon Elasticache and Redis auth, NOAUTH errors can occasionally occur even though the client has previously authenticated during the session.  This prevents further commands from being processed successfully until the connection is rebuilt.  While the exact cause of the NOAUTH response from Elasticache is not fully known, it can be worked around by using the `reconnect-on-auth-error` compiler feature.  When enabled, NOAUTH errors are treated similarly to other general connection errors and if a reconnection policy is configured then the client will automatically rebuild the connection, re-auth and continue on with the previous command.  By default this behaviour is not enabled.
+
 ## Features
 
 |    Name                     | Default | Description                                                                                                                                                          |
