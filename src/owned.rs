@@ -120,7 +120,7 @@ pub trait RedisClientOwned: Sized {
 
   fn hmget<F: Into<MultipleKeys>, K: Into<RedisKey>>(self, key: K, fields: F) -> Box<Future<Item=(Self, Vec<RedisValue>), Error=RedisError>>;
 
-  fn hmset<V: Into<RedisValue>, F: Into<RedisKey> + Hash + Eq, K: Into<RedisKey>>(self, key: K, mut values: HashMap<F, V>) -> Box<Future<Item=(Self, String), Error=RedisError>>;
+  fn hmset<V: Into<RedisValue>, F: Into<RedisKey> + Hash + Eq, K: Into<RedisKey>>(self, key: K, values: HashMap<F, V>) -> Box<Future<Item=(Self, String), Error=RedisError>>;
 
   fn hset<K: Into<RedisKey>, F: Into<RedisKey>, V: Into<RedisValue>>(self, key: K, field: F, value: V) -> Box<Future<Item=(Self, usize), Error=RedisError>>;
 
