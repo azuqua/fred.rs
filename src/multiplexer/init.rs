@@ -206,7 +206,7 @@ fn build_centralized_multiplexer(handle: Handle, inner: Arc<RedisClientInner>, m
     debug!("{} Attempting to rebuild centralized connection.", n!(inner));
     if client_utils::read_closed_flag(&inner.closed) {
       debug!("{} Emitting canceled error checking closed flag.", n!(inner));
-      client_utils::future_error::<Loop<InitState, InitState>>(RedisError::new_canceled());
+      return client_utils::future_error(RedisError::new_canceled());
     }
 
     let init_inner = inner.clone();
@@ -271,7 +271,7 @@ fn build_centralized_multiplexer(handle: Handle, inner: Arc<RedisClientInner>, m
       Ok(multiplexer)
     });
 
-    timer_ft.select2(init_ft).then(move |result| {
+    Box::new(timer_ft.select2(init_ft).then(move |result| {
       match result {
         Ok(Either::A((_, init_ft))) => {
           // timer_ft finished first (timeout)
@@ -300,7 +300,7 @@ fn build_centralized_multiplexer(handle: Handle, inner: Arc<RedisClientInner>, m
           backoff_and_retry(final_inner, final_handle, final_multiplexer, force_no_backoff)
         }
       }
-    })
+    }))
   }))
 }
 
@@ -309,7 +309,7 @@ fn build_clustered_multiplexer(handle: Handle, inner: Arc<RedisClientInner>, mul
     debug!("{} Attempting to rebuild centralized connection.", n!(inner));
     if client_utils::read_closed_flag(&inner.closed) {
       debug!("{} Emitting canceled error checking closed flag.", n!(inner));
-      client_utils::future_error::<Loop<InitState, InitState>>(RedisError::new_canceled());
+      return client_utils::future_error(RedisError::new_canceled());
     }
 
     let init_inner = inner.clone();
@@ -377,7 +377,7 @@ fn build_clustered_multiplexer(handle: Handle, inner: Arc<RedisClientInner>, mul
       Ok(multiplexer)
     });
 
-    timer_ft.select2(init_ft).then(move |result| {
+    Box::new(timer_ft.select2(init_ft).then(move |result| {
       match result {
         Ok(Either::A((_, init_ft))) => {
           // timer_ft finished first (timeout)
@@ -406,7 +406,7 @@ fn build_clustered_multiplexer(handle: Handle, inner: Arc<RedisClientInner>, mul
           backoff_and_retry(final_inner, final_handle, final_multiplexer, force_no_backoff)
         }
       }
-    })
+    }))
   }))
 }
 
