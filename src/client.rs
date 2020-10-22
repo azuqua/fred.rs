@@ -25,13 +25,12 @@ use std::ops::{
   DerefMut
 };
 
-use tokio_core::reactor::Handle;
-
 use crate::types::{ClientState, RedisConfig, RedisValue, ReconnectPolicy, ScanType, RedisKey, ScanResult, HScanResult, SScanResult, ZScanResult};
 use crate::error::{RedisError, RedisErrorKind};
 use crate::protocol::types::RedisCommand;
 use crate::metrics::{LatencyStats, SizeStats, DistributionStats};
 use crate::multiplexer::init;
+use crate::async_ng::*;
 
 use std::sync::atomic::AtomicUsize;
 
@@ -58,7 +57,7 @@ pub use utils::f64_to_redis_string;
 pub use tokio_timer::Timer;
 
 /// A future representing the connection to a Redis server.
-pub type ConnectionFuture = Box<Future<Item=Option<RedisError>, Error=RedisError>>;
+pub type ConnectionFuture = Box<dyn Future<Item=Option<RedisError>, Error=RedisError>>;
 
 #[doc(hidden)]
 pub struct RedisClientInner {
@@ -229,13 +228,13 @@ impl RedisClient {
   /// Connect to the Redis server. The returned future will resolve when the connection to the Redis server has been fully closed by both ends.
   ///
   /// The `on_connect` function can be used to be notified when the client first successfully connects.
-  pub fn connect(&self, handle: &Handle) -> ConnectionFuture {
+  pub fn connect(&self, spawner: &Spawner) -> ConnectionFuture {
     fry!(utils::check_client_state(&self.inner.state, ClientState::Disconnected));
     fry!(utils::check_and_set_closed_flag(&self.inner.closed, false));
 
     debug!("{} Connecting to Redis server.", n!(self.inner));
 
-    init::connect(handle, self.inner.clone())
+    init::connect(spawner, self.inner.clone())
   }
 
   /// Connect to the Redis server with a `ReconnectPolicy` to apply if the connection closes due to an error.
@@ -247,7 +246,7 @@ impl RedisClient {
   ///
   /// Additionally, `on_connect` can be used to be notified when the client first successfully connects, since sometimes
   /// some special initialization is needed upon first connecting.
-  pub fn connect_with_policy(&self, handle: &Handle, mut policy: ReconnectPolicy) -> ConnectionFuture {
+  pub fn connect_with_policy(&self, spawner: &Spawner, mut policy: ReconnectPolicy) -> ConnectionFuture {
     fry!(utils::check_client_state(&self.inner.state, ClientState::Disconnected));
     fry!(utils::check_and_set_closed_flag(&self.inner.closed, false));
 
@@ -255,7 +254,7 @@ impl RedisClient {
     utils::set_reconnect_policy(&self.inner.policy, policy);
 
     debug!("{} Connecting to Redis server with reconnect policy.", n!(self.inner));
-    init::connect(handle, self.inner.clone())
+    init::connect(spawner, self.inner.clone())
   }
 
   /// Listen for successful reconnection notifications. When using a config with a `ReconnectPolicy` the future
@@ -316,9 +315,9 @@ impl RedisClient {
   /// Split a clustered redis client into a list of centralized clients for each master node in the cluster.
   ///
   /// This is an expensive operation and should not be used frequently.
-  pub fn split_cluster(&self, handle: &Handle) -> Box<Future<Item=Vec<(RedisClient, RedisConfig)>, Error=RedisError>> {
+  pub fn split_cluster(&self, spawner: &Spawner) -> Box<Future<Item=Vec<(RedisClient, RedisConfig)>, Error=RedisError>> {
     if utils::is_clustered(&self.inner.config) {
-      utils::split(&self.inner, handle, SPLIT_TIMEOUT_MS)
+      utils::split(&self.inner, spawner, SPLIT_TIMEOUT_MS)
     }else{
       utils::future_error(RedisError::new(
         RedisErrorKind::Unknown, "Client is not using a clustered deployment."

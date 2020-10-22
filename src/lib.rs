@@ -53,6 +53,8 @@ pub mod owned;
 
 pub use client::RedisClient;
 
+mod async_ng;
+
 /// A helper module to re-export several common dependencies.
 pub mod prelude {
   pub use crate::error::*;

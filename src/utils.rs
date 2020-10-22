@@ -61,6 +61,7 @@ use std::sync::atomic::{
 
 use crate::multiplexer::utils as multiplexer_utils;
 use crate::protocol::utils as protocol_utils;
+use crate::async_ng::*;
 
 use tokio_timer::Timer;
 
@@ -258,7 +259,7 @@ pub fn set_reconnect_policy(policy: &RwLock<Option<ReconnectPolicy>>, new_policy
 }
 
 
-pub fn split(inner: &Arc<RedisClientInner>, handle: &Handle, timeout: u64) -> Box<Future<Item=Vec<(RedisClient, RedisConfig)>, Error=RedisError>> {
+pub fn split(inner: &Arc<RedisClientInner>, spawner: &Spawner, timeout: u64) -> Box<Future<Item=Vec<(RedisClient, RedisConfig)>, Error=RedisError>> {
   use crate::owned::RedisClientOwned;
 
   let timeout = Duration::from_millis(timeout);
@@ -274,7 +275,7 @@ pub fn split(inner: &Arc<RedisClientInner>, handle: &Handle, timeout: u64) -> Bo
   }
 
   let uses_tls = inner.config.read().deref().tls();
-  let handle = handle.clone();
+  let spawner = spawner.clone();
   let timer = inner.timer.clone();
 
   let timout_ft = timer.sleep(timeout).from_err::<RedisError>();
@@ -288,10 +289,10 @@ pub fn split(inner: &Arc<RedisClientInner>, handle: &Handle, timeout: u64) -> Bo
 
       let client = RedisClient::new(config.clone(), Some(timer.clone()));
       let err_client = client.clone();
-      let client_ft = client.connect(&handle).map(|_| ()).map_err(|_| ());
+      let client_ft = client.connect(&spawner).map(|_| ()).map_err(|_| ());
 
       trace!("Creating split clustered client...");
-      handle.spawn(client_ft);
+      spawner.spawn_remote(client_ft);
 
       client.on_connect()
         .map(move |client| (client, config))

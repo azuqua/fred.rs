@@ -1,6 +1,6 @@
 [package]
 name = "fred"
-version = "1.3.1"
+version = "1.3.2"
 authors = ["Alec Embke <aembke@gmail.com>"]
 edition = "2018"
 description = "A Redis client for Rust built on Futures and Tokio."
@@ -33,6 +33,11 @@ tokio-proto = "0.1.1"
 tokio-io = "0.1.12"
 rand = "0.3"
 
+[dependencies.azuqua-core-async]
+git = "ssh://git@github.com/azuqua/azuqua-core.rs"
+branch = "dk/OKTA-334608-s3-tokio-compat"
+package = "azuqua_core_async"
+
 [dev-dependencies]
 hyper = "0.11"
 
@@ -49,3 +54,4 @@ enable-tls = ["native-tls", "tokio-tls"]
 mocks = []
 super-duper-bad-networking = []
 reconnect-on-auth-error = []
+async-ng = []

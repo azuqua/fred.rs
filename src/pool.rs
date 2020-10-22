@@ -5,13 +5,13 @@ use crate::RedisClient;
 use crate::types::*;
 use crate::utils;
 use crate::client::ConnectionFuture;
+use crate::async_ng::*;
 
 use futures::{
   Future,
   Stream,
   future
 };
-use tokio_core::reactor::Handle;
 use tokio_timer::Timer;
 
 use std::sync::Arc;
@@ -74,7 +74,7 @@ impl RedisPool {
   /// Create a new pool with `size` clients from a `RedisConfig`.
   ///
   /// Note: The clients will not initiate a connection until the `connections` future from the returned `NewRedisPool` has started running on an event loop.
-  pub fn new(handle: &Handle, config: RedisConfig, size: usize, timer: Option<Timer>) -> Result<NewRedisPool, RedisError> {
+  pub fn new(spawner: &Spawner, config: RedisConfig, size: usize, timer: Option<Timer>) -> Result<NewRedisPool, RedisError> {
     if size < 1 {
       return Err(RedisError::new(
         RedisErrorKind::Unknown, "Client pool size must be > 0."
@@ -83,11 +83,11 @@ impl RedisPool {
     let timer = timer.unwrap_or(Timer::default());
 
     let clients = Vec::with_capacity(size);
-    let memo = (handle.clone(), config, timer, clients, utils::future_ok(None));
+    let memo = (spawner.clone(), config, timer, clients, utils::future_ok(None));
 
-    let (_, _, _, clients, connections) = (0..size).fold(memo, |(handle, config, timer, mut clients, connections), _| {
+    let (_, _, _, clients, connections) = (0..size).fold(memo, |(spawner, config, timer, mut clients, connections), _| {
       let client = RedisClient::new(config.clone(), Some(timer.clone()));
-      let connections = Box::new(client.connect(&handle).join(connections).map(|error| {
+      let connections = Box::new(client.connect(&spawner).join(connections).map(|error| {
         // errors are given priority in the same order that clients are initialized
         // since all clients connect to the same server it's likely that they'd all hit the same error anyways
         match error {
@@ -99,7 +99,7 @@ impl RedisPool {
       }));
 
       clients.push(client);
-      (handle, config, timer, clients, connections)
+      (spawner, config, timer, clients, connections)
     });
 
     Ok(NewRedisPool {
@@ -114,7 +114,7 @@ impl RedisPool {
   /// Create a new pool with `size` clients from a `RedisConfig`, applying the reconnect policy from `policy` to each client.
   ///
   /// Note: The clients will not initiate a connection until the `connections` future from the returned `NewRedisPool` has started running on an event loop.
-  pub fn new_with_policy(handle: &Handle, config: RedisConfig, policy: ReconnectPolicy, size: usize, timer: Option<Timer>) -> Result<NewRedisPool, RedisError> {
+  pub fn new_with_policy(spawner: &Spawner, config: RedisConfig, policy: ReconnectPolicy, size: usize, timer: Option<Timer>) -> Result<NewRedisPool, RedisError> {
     if size < 1 {
       return Err(RedisError::new(
         RedisErrorKind::Unknown, "Client pool size must be > 0."
@@ -123,11 +123,11 @@ impl RedisPool {
     let timer = timer.unwrap_or(Timer::default());
 
     let clients = Vec::with_capacity(size);
-    let memo = (handle.clone(), config, policy, timer, clients, utils::future_ok(None));
+    let memo = (spawner.clone(), config, policy, timer, clients, utils::future_ok(None));
 
-    let (_, _, _, _, clients, connections) = (0..size).fold(memo, |(handle, config, policy, timer, mut clients, connections), _| {
+    let (_, _, _, _, clients, connections) = (0..size).fold(memo, |(spawner, config, policy, timer, mut clients, connections), _| {
       let client = RedisClient::new(config.clone(), Some(timer.clone()));
-      let connections = Box::new(client.connect_with_policy(&handle, policy.clone()).join(connections).map(|error| {
+      let connections = Box::new(client.connect_with_policy(&spawner, policy.clone()).join(connections).map(|error| {
         // errors are given priority in the same order that clients are initialized
         // since all clients connect to the same server it's likely that they'd all hit the same error anyways
         match error {
@@ -139,7 +139,7 @@ impl RedisPool {
       }));
 
       clients.push(client);
-      (handle, config, policy, timer, clients, connections)
+      (spawner, config, policy, timer, clients, connections)
     });
 
     Ok(NewRedisPool {

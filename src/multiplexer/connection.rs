@@ -1,7 +1,7 @@
-
 use crate::protocol::utils as protocol_utils;
 use crate::utils as client_utils;
 use crate::multiplexer::utils as multiplexer_utils;
+use crate::async_ng::*;
 
 use crate::error::{
   RedisError,
@@ -32,8 +32,6 @@ use futures::future::{
 };
 
 use parking_lot::RwLock;
-
-use tokio_core::reactor::Handle;
 
 use tokio_core::net::TcpStream;
 use tokio_timer::Timer;
@@ -116,14 +114,14 @@ fn create_tls_connector() -> Result<TlsConnectorAsync, RedisError> {
 }
 
 #[cfg(not(feature="enable-tls"))]
-pub fn create_transport_tls(addr: &SocketAddr, handle: &Handle, inner: &Arc<RedisClientInner>)
+pub fn create_transport_tls(addr: &SocketAddr, spawner: &Spawner, inner: &Arc<RedisClientInner>)
   -> Box<Future<Item=(SplitSink<Framed<TcpStream, RedisCodec>>, SplitStream<Framed<TcpStream, RedisCodec>>), Error=RedisError>>
 {
-  create_transport(addr, handle, inner)
+  create_transport(addr, spawner, inner)
 }
 
 #[cfg(feature="enable-tls")]
-pub fn create_transport_tls(addr: &SocketAddr, handle: &Handle, inner: &Arc<RedisClientInner>)
+pub fn create_transport_tls(addr: &SocketAddr, spawner: &Spawner, inner: &Arc<RedisClientInner>)
   -> Box<Future<Item=(SplitSink<Framed<TlsStream<TcpStream>, RedisCodec>>, SplitStream<Framed<TlsStream<TcpStream>, RedisCodec>>), Error=RedisError>>
 {
   let codec = RedisCodec::new(inner.client_name(),
@@ -141,7 +139,7 @@ pub fn create_transport_tls(addr: &SocketAddr, handle: &Handle, inner: &Arc<Redi
   let inner = inner.clone();
   debug!("{} Creating redis tls transport to {:?} with domain {}", n!(inner), &addr, domain);
 
-  Box::new(TcpStream::connect(&addr, handle)
+  Box::new(tcp_connect(&addr, spawner)
     .from_err::<RedisError>()
     .and_then(move |socket| {
       let tls_stream = match create_tls_connector() {
@@ -166,16 +164,16 @@ pub fn create_transport_tls(addr: &SocketAddr, handle: &Handle, inner: &Arc<Redi
     .map_err(|e| e.into()))
 }
 
-pub fn create_transport(addr: &SocketAddr, handle: &Handle, inner: &Arc<RedisClientInner>)
+pub fn create_transport(addr: &SocketAddr, spawner: &Spawner, inner: &Arc<RedisClientInner>)
   -> Box<Future<Item=(SplitSink<Framed<TcpStream, RedisCodec>>, SplitStream<Framed<TcpStream, RedisCodec>>), Error=RedisError>>
 {
   debug!("{} Creating redis transport to {:?}", n!(inner), &addr);
   let codec = RedisCodec::new(inner.client_name(),
                               inner.req_size_stats.clone(),
                               inner.res_size_stats.clone());
-
   let inner = inner.clone();
-  Box::new(TcpStream::connect(&addr, handle)
+
+  Box::new(tcp_connect(&addr, spawner)
     .map_err(|e| e.into())
     .and_then(move |socket| Ok(socket.framed(codec)))
     .and_then(move |transport| {
@@ -264,19 +262,19 @@ pub fn authenticate<T>(transport: Framed<T, RedisCodec>, name: String, key: Opti
 }
 
 #[cfg(not(feature="enable-tls"))]
-pub fn create_initial_transport_tls(handle: Handle, inner: &Arc<RedisClientInner>) -> Box<Future<Item=Option<Framed<TcpStream, RedisCodec>>, Error=RedisError>> {
-  create_initial_transport(handle, inner)
+pub fn create_initial_transport_tls(spawner: Spawner, inner: &Arc<RedisClientInner>) -> Box<Future<Item=Option<Framed<TcpStream, RedisCodec>>, Error=RedisError>> {
+  create_initial_transport(spawner, inner)
 }
 
 #[allow(deprecated)]
 #[cfg(feature="enable-tls")]
-pub fn create_initial_transport_tls(handle: Handle, inner: &Arc<RedisClientInner>) -> Box<Future<Item=Option<Framed<TlsStream<TcpStream>, RedisCodec>>, Error=RedisError>> {
+pub fn create_initial_transport_tls(spawner: Spawner, inner: &Arc<RedisClientInner>) -> Box<Future<Item=Option<Framed<TlsStream<TcpStream>, RedisCodec>>, Error=RedisError>> {
   let hosts = fry!(multiplexer_utils::read_clustered_hosts(&inner.config));
   let found: Option<Framed<TlsStream<TcpStream>, RedisCodec>> = None;
   let inner = inner.clone();
 
   // find the first available host that can be connected to. would be nice if streams had a `find` function...
-  Box::new(stream::iter(hosts.into_iter().map(Ok)).fold((found, handle), move |(found, handle), (host, port)| {
+  Box::new(stream::iter(hosts.into_iter().map(Ok)).fold((found, spawner), move |(found, spawner), (host, port)| {
     if found.is_none() {
       let host = host.to_string();
 
@@ -301,7 +299,7 @@ pub fn create_initial_transport_tls(handle: Handle, inner: &Arc<RedisClientInner
 
       debug!("{} Creating clustered redis tls transport to {:?}", client_name, &addr);
 
-      Box::new(TcpStream::connect(&addr, &handle)
+      Box::new(tcp_connect(&addr, &spawner)
         .from_err::<RedisError>()
         .and_then(move |socket| {
           let tls_stream = match create_tls_connector() {
@@ -318,24 +316,24 @@ pub fn create_initial_transport_tls(handle: Handle, inner: &Arc<RedisClientInner
           authenticate(transport, client_name, key)
         })
         .and_then(move |transport| {
-          Ok((Some(transport), handle))
+          Ok((Some(transport), spawner))
         })
         .from_err::<RedisError>())
     }else{
-      client_utils::future_ok((found, handle))
+      client_utils::future_ok((found, spawner))
     }
   })
   .map(|(transport, _)| transport))
 }
 
 #[allow(deprecated)]
-pub fn create_initial_transport(handle: Handle, inner: &Arc<RedisClientInner>) -> Box<Future<Item=Option<Framed<TcpStream, RedisCodec>>, Error=RedisError>> {
+pub fn create_initial_transport(spawner: Spawner, inner: &Arc<RedisClientInner>) -> Box<Future<Item=Option<Framed<TcpStream, RedisCodec>>, Error=RedisError>> {
   let hosts = fry!(multiplexer_utils::read_clustered_hosts(&inner.config));
   let found: Option<Framed<TcpStream, RedisCodec>> = None;
   let inner = inner.clone();
 
   // find the first available host that can be connected to. would be nice if streams had a `find` function...
-  Box::new(stream::iter(hosts.into_iter().map(Ok)).fold((found, handle), move |(found, handle), (host, port)| {
+  Box::new(stream::iter(hosts.into_iter().map(Ok)).fold((found, spawner), move |(found, spawner), (host, port)| {
     if found.is_none() {
       let host = host.to_owned();
 
@@ -360,33 +358,33 @@ pub fn create_initial_transport(handle: Handle, inner: &Arc<RedisClientInner>) -
 
       debug!("{} Creating clustered redis transport to {:?}", client_name, &addr);
 
-      Box::new(TcpStream::connect(&addr, &handle)
+      Box::new(tcp_connect(&addr, &spawner)
         .from_err::<RedisError>()
         .and_then(move |socket| Ok(socket.framed(codec)))
         .and_then(move |transport| {
           authenticate(transport, client_name, key)
         })
         .and_then(move |transport| {
-          Ok((Some(transport), handle))
+          Ok((Some(transport), spawner))
         })
         .from_err::<RedisError>())
     }else{
-      client_utils::future_ok((found, handle))
+      client_utils::future_ok((found, spawner))
     }
   })
   .map(|(transport, _)| transport))
 }
 
 #[cfg(not(feature="enable-tls"))]
-pub fn create_all_transports_tls(handle: Handle, cache: &ClusterKeyCache, key: Option<String>, inner: &Arc<RedisClientInner>)
+pub fn create_all_transports_tls(spawner: Spawner, cache: &ClusterKeyCache, key: Option<String>, inner: &Arc<RedisClientInner>)
   -> Box<Future<Item=Vec<(String, Framed<TcpStream, RedisCodec>)>, Error=RedisError>>
 {
-  create_all_transports(handle, cache, key, inner)
+  create_all_transports(spawner, cache, key, inner)
 }
 
 #[allow(deprecated)]
 #[cfg(feature="enable-tls")]
-pub fn create_all_transports_tls(handle: Handle, cache: &ClusterKeyCache, key: Option<String>, inner: &Arc<RedisClientInner>)
+pub fn create_all_transports_tls(spawner: Spawner, cache: &ClusterKeyCache, key: Option<String>, inner: &Arc<RedisClientInner>)
   -> Box<Future<Item=Vec<(String, Framed<TlsStream<TcpStream>, RedisCodec>)>, Error=RedisError>>
 {
   let hosts: Vec<String> = cache.slots().iter().fold(HashSet::new(), |mut memo, slot| {
@@ -425,7 +423,7 @@ pub fn create_all_transports_tls(handle: Handle, cache: &ClusterKeyCache, key: O
 
     debug!("{} Creating clustered tls transport to {:?} with domain {}", client_name, addr, domain);
 
-    Box::new(TcpStream::connect(&addr, &handle)
+    Box::new(tcp_connect(&addr, &spawner)
       .from_err::<RedisError>()
       .and_then(move |socket| {
         let tls_stream = match create_tls_connector() {
@@ -452,7 +450,7 @@ pub fn create_all_transports_tls(handle: Handle, cache: &ClusterKeyCache, key: O
 }
 
 #[allow(deprecated)]
-pub fn create_all_transports(handle: Handle, cache: &ClusterKeyCache, key: Option<String>, inner: &Arc<RedisClientInner>)
+pub fn create_all_transports(spawner: Spawner, cache: &ClusterKeyCache, key: Option<String>, inner: &Arc<RedisClientInner>)
   -> Box<Future<Item=Vec<(String, Framed<TcpStream, RedisCodec>)>, Error=RedisError>>
 {
   let hosts: Vec<String> = cache.slots().iter().fold(HashSet::new(), |mut memo, slot| {
@@ -485,7 +483,7 @@ pub fn create_all_transports(handle: Handle, cache: &ClusterKeyCache, key: Optio
 
     debug!("{} Creating clustered transport to {:?}", client_name, addr);
 
-    Box::new(TcpStream::connect(&addr, &handle)
+    Box::new(tcp_connect(&addr, &spawner)
       .from_err::<RedisError>()
       .and_then(move |socket| Ok(socket.framed(codec)))
       .and_then(move |transport| {
@@ -500,10 +498,10 @@ pub fn create_all_transports(handle: Handle, cache: &ClusterKeyCache, key: Optio
 }
 
 #[cfg(feature="enable-tls")]
-fn read_cluster_cache_tls(handle: Handle, inner: &Arc<RedisClientInner>) -> Box<Future<Item=Frame, Error=RedisError>> {
+fn read_cluster_cache_tls(spawner: Spawner, inner: &Arc<RedisClientInner>) -> Box<Future<Item=Frame, Error=RedisError>> {
   let inner = inner.clone();
 
-  Box::new(create_initial_transport_tls(handle, &inner).and_then(move |transport| {
+  Box::new(create_initial_transport_tls(spawner, &inner).and_then(move |transport| {
     let transport = match transport {
       Some(t) => t,
       None => return client_utils::future_error(RedisError::new(
@@ -522,14 +520,14 @@ fn read_cluster_cache_tls(handle: Handle, inner: &Arc<RedisClientInner>) -> Box<
 }
 
 #[cfg(not(feature="enable-tls"))]
-fn read_cluster_cache_tls(handle: Handle, inner: &Arc<RedisClientInner>) -> Box<Future<Item=Frame, Error=RedisError>> {
-  read_cluster_cache(handle, inner)
+fn read_cluster_cache_tls(spawner: Spawner, inner: &Arc<RedisClientInner>) -> Box<Future<Item=Frame, Error=RedisError>> {
+  read_cluster_cache(spawner, inner)
 }
 
-fn read_cluster_cache(handle: Handle, inner: &Arc<RedisClientInner>) -> Box<Future<Item=Frame, Error=RedisError>> {
+fn read_cluster_cache(spawner: Spawner, inner: &Arc<RedisClientInner>) -> Box<Future<Item=Frame, Error=RedisError>> {
   let inner = inner.clone();
 
-  Box::new(create_initial_transport(handle, &inner).and_then(move |transport| {
+  Box::new(create_initial_transport(spawner, &inner).and_then(move |transport| {
     let transport = match transport {
       Some(t) => t,
       None => return client_utils::future_error(RedisError::new(
@@ -547,13 +545,13 @@ fn read_cluster_cache(handle: Handle, inner: &Arc<RedisClientInner>) -> Box<Futu
   }))
 }
 
-pub fn build_cluster_cache(handle: &Handle, inner: &Arc<RedisClientInner>) -> Box<Future<Item=ClusterKeyCache, Error=RedisError>> {
+pub fn build_cluster_cache(spawner: &Spawner, inner: &Arc<RedisClientInner>) -> Box<Future<Item=ClusterKeyCache, Error=RedisError>> {
   let uses_tls = inner.config.read().deref().tls();
 
   let ft = if uses_tls {
-    read_cluster_cache_tls(handle.clone(), inner)
+    read_cluster_cache_tls(spawner.clone(), inner)
   }else{
-    read_cluster_cache(handle.clone(), inner)
+    read_cluster_cache(spawner.clone(), inner)
   };
   let inner = inner.clone();
 
