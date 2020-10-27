@@ -61,10 +61,10 @@ use std::sync::atomic::{
 
 use crate::multiplexer::utils as multiplexer_utils;
 use crate::protocol::utils as protocol_utils;
-use crate::async_ng::*;
+
+use azuqua_core_async::*;
 
 use tokio_timer::Timer;
-
 
 macro_rules! fry {
   ($expr:expr) => (match $expr {

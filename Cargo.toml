@@ -33,10 +33,10 @@ tokio-proto = "0.1.1"
 tokio-io = "0.1.12"
 rand = "0.3"
 
-[dependencies.azuqua-core-async]
-git = "ssh://git@github.com/azuqua/azuqua-core.rs"
-branch = "dk/OKTA-334608-s3-tokio-compat"
-package = "azuqua_core_async"
+[dependencies.azuqua_core_async]
+#git = "ssh://git@github.com/azuqua/azuqua-core.rs"
+#branch = "dk/OKTA-334608-s3-tokio-compat"
+path="../azuqua-core.rs/src/async"
 
 [dev-dependencies]
 hyper = "0.11"

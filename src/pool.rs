@@ -5,7 +5,7 @@ use crate::RedisClient;
 use crate::types::*;
 use crate::utils;
 use crate::client::ConnectionFuture;
-use crate::async_ng::*;
+use azuqua_core_async::*;
 
 use futures::{
   Future,

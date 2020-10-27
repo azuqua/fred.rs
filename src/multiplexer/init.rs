@@ -18,7 +18,7 @@ use crate::mocks;
 use crate::utils as client_utils;
 use crate::multiplexer::utils;
 use crate::multiplexer::connection;
-use crate::async_ng::*;
+use azuqua_core_async::*;
 
 use std::ops::{Deref, DerefMut, Mul};
 

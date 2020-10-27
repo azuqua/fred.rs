@@ -1,7 +1,7 @@
 use crate::protocol::utils as protocol_utils;
 use crate::utils as client_utils;
 use crate::multiplexer::utils as multiplexer_utils;
-use crate::async_ng::*;
+use azuqua_core_async::*;
 
 use crate::error::{
   RedisError,

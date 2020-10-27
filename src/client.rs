@@ -30,7 +30,7 @@ use crate::error::{RedisError, RedisErrorKind};
 use crate::protocol::types::RedisCommand;
 use crate::metrics::{LatencyStats, SizeStats, DistributionStats};
 use crate::multiplexer::init;
-use crate::async_ng::*;
+use azuqua_core_async::*;
 
 use std::sync::atomic::AtomicUsize;
 
