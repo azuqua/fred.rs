@@ -35,7 +35,7 @@ rand = "0.3"
 
 [dependencies.azuqua_core_async]
 git = "ssh://git@github.com/azuqua/azuqua-core.rs"
-branch = "dk/async-ng
+branch = "dk/async-ng"
 
 [dev-dependencies]
 hyper = "0.11"
