@@ -13,6 +13,8 @@ use std::collections::BTreeMap;
 use crate::protocol::types::*;
 use std::ops::{DerefMut, Deref};
 use std::sync::Arc;
+use std::collections::{BTreeSet};
+use std::convert::TryInto;
 
 
 pub fn log_unimplemented(command: &RedisCommand) -> Result<Frame, RedisError> {
@@ -647,6 +649,56 @@ pub fn flushall(mut args: Vec<RedisValue>) -> Result<Frame, RedisError> {
   }
 
   utils::ok()
+}
+
+pub fn sadd(data: &mut DataSet, mut args: Vec<RedisValue>) -> Result<Frame, RedisError> {
+  args.reverse();
+
+  // Helper closure to iterate arguments
+  let get_next_arg = |arg: RedisValue| -> Result<Arc<RedisKey>, RedisError> {
+    let key = match arg {
+      RedisValue::String(s) => s,
+      RedisValue::Integer(i) => i.to_string(),
+      _ => return Err(RedisError::new(
+        RedisErrorKind::InvalidArgument, "Invalid key."
+      ))
+    };
+    Ok(utils::get_key(&*data, key))
+  };
+
+  // Get the name of the set to insert into
+  let set_name = get_next_arg(args.pop().ok_or(RedisError::new(
+    RedisErrorKind::InvalidArgument, "Not enough arguments passed to sadd."
+  ))?)?;
+
+  // Populate a new set with all keys to be inserted
+  let mut insert_set = BTreeSet::new();
+  for arg in args {
+    let key = get_next_arg(arg)?;
+    insert_set.insert((*key).clone());
+  }
+  // Count what keys exist in the set already
+  let num_inserted = match data.sets.get_mut(&set_name) {
+    Some(set) => {
+      let before = set.len();
+      set.append(&mut insert_set);
+      // The number of extra elements are those we inserted
+      set.len() - before
+    },
+    None => {
+      // The set didn't exist, create it
+      let num_inserted = insert_set.len();
+      data.sets.insert(set_name, insert_set);
+      num_inserted
+    }
+  };
+  // Turn usize into i64
+  match num_inserted.try_into() {
+    Ok(val) => Ok(Frame::Integer(val)),
+    Err(e) => Err(RedisError::new(
+      RedisErrorKind::Unknown, format!("Could not convert final count to i64: {:?} {:?}", num_inserted, e)
+    ))
+  }
 }
 
 pub fn smembers(data: &mut DataSet, mut args: Vec<RedisValue>) -> Result<Frame, RedisError> {
