@@ -6,6 +6,7 @@ use crate::error::*;
 use crate::protocol::types::*;
 use crate::types::RedisValue;
 
+use std::pin::Pin;
 use std::sync::Arc;
 use parking_lot::RwLock;
 use std::ops::{
@@ -24,14 +25,11 @@ use futures::{
   Future,
   Stream
 };
-use futures::future::{
-  Loop,
-  loop_fn
-};
-use tokio_core::reactor::Handle;
+//use tokio_core::reactor::Handle;
 
 use crate::client::RedisClientInner;
 use crate::types::ClientState;
+use crate::async_ng::*;
 
 use std::time::Duration;
 
@@ -340,9 +338,12 @@ pub fn frame_to_error(frame: ProtocolFrame) -> Option<RedisError> {
 
 /// Reconnect to the server based on the result of the previous connection.
 #[allow(unused_variables)]
-pub fn reconnect(handle: Handle, inner: Arc<RedisClientInner>, mut result: Result<Option<RedisError>, RedisError>, force_no_delay: bool)
-  -> Box<Future<Item=Loop<(), (Handle, Arc<RedisClientInner>)>, Error=RedisError>>
+//pub async fn reconnect(spawner: Spawner, inner: Arc<RedisClientInner>, mut result: Result<Option<RedisError>, RedisError>, force_no_delay: bool)
+pub async fn reconnect(spawner: Spawner, inner: Arc<RedisClientInner>, result: Result<Option<RedisError>, RedisError>, force_no_delay: bool)
+  -> Result<(), RedisError>
+//  -> Result<(Handle, Arc<RedisClientInner>), RedisError>
 {
+  /*
   // since framed sockets don't give an error when closed abruptly the client's state is
   // used to determine whether or not the socket was closed intentionally or not
   if client_utils::read_client_state(&inner.state) == ClientState::Disconnecting {
@@ -353,6 +354,8 @@ pub fn reconnect(handle: Handle, inner: Arc<RedisClientInner>, mut result: Resul
 
   debug!("{} Starting reconnect logic from error {:?}...", n!(inner), result);
 
+  loop {
+
   match result {
     Ok(err) => {
       if let Some(err) = err {
@@ -362,12 +365,13 @@ pub fn reconnect(handle: Handle, inner: Arc<RedisClientInner>, mut result: Resul
 
         let delay = match multiplexer_utils::next_reconnect_delay(&inner.policy) {
           Some(delay) => delay,
-          None => return client_utils::future_ok(Loop::Break(()))
+          None => return Ok(())
         };
 
         debug!("{} Waiting for {} ms before attempting to reconnect...", n!(inner), delay);
 
-        Box::new(inner.timer.sleep(Duration::from_millis(delay as u64)).from_err::<RedisError>().and_then(move |_| {
+        // Box::new(inner.timer.sleep(Duration::from_millis(delay as u64)).from_err::<RedisError>().and_then(move |_| {
+        tokio_02::time::delay_for(Duration::from_millis(delay as u64)).err_into::<RedisError>().and_then(move |_| {
           if client_utils::read_closed_flag(&inner.closed) {
             client_utils::set_closed_flag(&inner.closed, false);
 
@@ -375,9 +379,10 @@ pub fn reconnect(handle: Handle, inner: Arc<RedisClientInner>, mut result: Resul
               RedisErrorKind::Canceled, "Client closed while waiting to reconnect."
             ));
           }
+        }).await;
 
-          Ok(Loop::Continue((handle, inner)))
-        }))
+        continue;
+        // Ok(Loop::Continue((handle, inner)))
       } else {
         // socket was closed via Quit command
         debug!("{} Redis client closed via Quit.", n!(inner));
@@ -389,7 +394,8 @@ pub fn reconnect(handle: Handle, inner: Arc<RedisClientInner>, mut result: Resul
         multiplexer_utils::close_connect_tx(&inner.connect_tx);
         multiplexer_utils::close_messages_tx(&inner.message_tx);
 
-        client_utils::future_ok(Loop::Break(()))
+        // client_utils::future_ok(Loop::Break(()))
+        return Ok(());
       }
     },
     Err(e) => {
@@ -397,12 +403,13 @@ pub fn reconnect(handle: Handle, inner: Arc<RedisClientInner>, mut result: Resul
 
       let delay = match multiplexer_utils::next_reconnect_delay(&inner.policy) {
         Some(delay) => delay,
-        None => return client_utils::future_ok(Loop::Break(()))
+        None => return Ok(()) // client_utils::future_ok(Loop::Break(()))
       };
 
       debug!("{} Waiting for {} ms before attempting to reconnect...", n!(inner), delay);
 
-      Box::new(inner.timer.sleep(Duration::from_millis(delay as u64)).from_err::<RedisError>().and_then(move |_| {
+      // Box::new(inner.timer.sleep(Duration::from_millis(delay as u64)).from_err::<RedisError>().and_then(move |_| {
+      tokio_02::time::delay_for(Duration::from_millis(delay as u64)).err_into::<RedisError>().and_then(move |_| {
         if client_utils::read_closed_flag(&inner.closed) {
           client_utils::set_closed_flag(&inner.closed, false);
 
@@ -410,11 +417,16 @@ pub fn reconnect(handle: Handle, inner: Arc<RedisClientInner>, mut result: Resul
             RedisErrorKind::Canceled, "Client closed while waiting to reconnect."
           ));
         }
+      }).await;
 
-        Ok(Loop::Continue((handle, inner)))
-      }))
+      // Ok(Loop::Continue((handle, inner)))
+      continue;
     }
   }
+
+  } // loop
+   */
+  unimplemented!()
 }
 
 

@@ -9,8 +9,8 @@ use futures::{
   Stream,
   Sink
 };
-use futures::sync::mpsc::UnboundedSender;
-use futures::sync::oneshot::{
+use futures::channel::mpsc::UnboundedSender;
+use futures::channel::oneshot::{
   Sender as OneshotSender,
   channel as oneshot_channel
 };
@@ -32,6 +32,7 @@ use crate::types::{
 };
 use crate::protocol::types::{RedisCommand, ClusterKeyCache, RedisCommandKind};
 
+use std::pin::Pin;
 use std::fmt;
 use std::rc::Rc;
 use std::cell::RefCell;
@@ -159,7 +160,7 @@ impl Multiplexer {
   }
 
   /// Send a command to the Redis server(s).
-  pub fn write_command(&self, inner: &Arc<RedisClientInner>, request: &mut RedisCommand) -> Box<Future<Item=(), Error=RedisError>> {
+  pub fn write_command(&self, inner: &Arc<RedisClientInner>, request: &mut RedisCommand) -> Box<dyn Future<Output=Result<(), RedisError>>> {
     trace!("{} Multiplexer sending command {:?}", n!(inner), request.kind);
     if request.attempted > 0 {
       client_utils::incr_atomic(&inner.redeliver_count);
@@ -189,7 +190,7 @@ impl Multiplexer {
   /// Listen on the TCP socket(s) for incoming frames.
   ///
   /// The future returned here resolves when the socket is closed.
-  pub fn listen(&self) -> Box<Future<Item=(), Error=()>> {
+  pub fn listen(&self) -> Pin<Box<dyn Future<Output=Result<(),()>> + Send>> { // FIXME: make async
     let inner = self.inner.clone();
     let last_request = self.last_request.clone();
     let last_request_sent = self.last_request_sent.clone();

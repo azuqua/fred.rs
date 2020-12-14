@@ -5,14 +5,14 @@ use crate::RedisClient;
 use crate::types::*;
 use crate::utils;
 use crate::client::ConnectionFuture;
-use azuqua_core_async::*;
+use crate::async_ng::*;
 
 use futures::{
   Future,
   Stream,
   future
 };
-use tokio_timer::Timer;
+use tokio_timer::Timer; // FIXME: deprecated in 0.2, back in 0.3?
 
 use std::sync::Arc;
 use std::ops::{

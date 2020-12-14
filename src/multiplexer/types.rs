@@ -1,18 +1,25 @@
 
-use futures::sync::oneshot::{
+use futures::channel::oneshot::{
   Sender as OneshotSender
 };
 use futures::future::Future;
 use futures::stream::{
   self,
-  Stream
+  Stream,
+  StreamExt
 };
 use futures::sink::Sink;
 use futures::stream::{
   SplitSink,
   SplitStream
 };
+use futures::{
+  SinkExt,
+  FutureExt,
+  TryFutureExt
+};
 
+use std::pin::Pin;
 use std::fmt;
 use std::mem;
 
@@ -57,7 +64,7 @@ use native_tls::{
   TlsConnector
 };
 
-use tokio_core::net::{
+use tokio_02::net::{
   TcpStream
 };
 
@@ -66,13 +73,14 @@ use std::cell::RefCell;
 
 use crate::protocol::RedisCodec;
 use crate::protocol::types::ClusterKeyCache;
-use tokio_io::codec::Framed;
-use tokio_io::{AsyncWrite,AsyncRead};
+use tokio_util::codec::Framed;
+use tokio_02::io::{AsyncWrite,AsyncRead};
 
 use crate::utils as client_utils;
 use crate::multiplexer::utils;
 use crate::protocol::types::RedisCommandKind::Sinter;
-use futures::{StartSend, Poll};
+// use futures::{StartSend, Poll};
+use std::task::{Poll, Context};
 
 
 #[cfg(feature="enable-tls")]
@@ -113,7 +121,10 @@ impl PartialEq for SplitCommand {
 
 impl Eq for SplitCommand {}
 
-pub type FrameStream = Box<Stream<Item=Frame, Error=RedisError>>;
+pub type FrameStream = Box<dyn Stream<Item=Result<Frame, RedisError>>>;
+
+pub type RedisTcpStream = SplitStream<Framed<TcpStream, RedisCodec>>;
+pub type RedisTcpSink = SplitSink<Framed<TcpStream, RedisCodec>, Frame>;
 
 #[cfg(feature="enable-tls")]
 pub enum RedisSink {
@@ -123,35 +134,41 @@ pub enum RedisSink {
 
 #[cfg(not(feature="enable-tls"))]
 pub enum RedisSink {
-  Tls(SplitSink<Framed<TcpStream, RedisCodec>>),
-  Tcp(SplitSink<Framed<TcpStream, RedisCodec>>)
+  Tls(RedisTcpSink),
+  Tcp(RedisTcpSink)
 }
 
-impl Sink for RedisSink {
-  type SinkItem = Frame;
-  type SinkError = RedisError;
+impl Sink<Frame> for RedisSink {
+  // type SinkItem = Frame;
+  type Error = RedisError;
 
-  fn start_send(&mut self, item: Self::SinkItem) -> StartSend<Self::SinkItem, Self::SinkError> {
+  fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+    match *self {
+      RedisSink::Tls(ref mut inner) => inner.poll_ready(cx),
+      RedisSink::Tcp(ref mut inner) => inner.poll_ready(cx)
+    }
+  }
+
+  fn start_send(mut self: Pin<&mut Self>, item: Frame) -> Result<(), Self::Error> {
     match *self {
       RedisSink::Tls(ref mut inner) => inner.start_send(item),
       RedisSink::Tcp(ref mut inner) => inner.start_send(item)
     }
   }
 
-  fn poll_complete(&mut self) -> Poll<(), Self::SinkError> {
+  fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
     match *self {
-      RedisSink::Tls(ref mut inner) => inner.poll_complete(),
-      RedisSink::Tcp(ref mut inner) => inner.poll_complete()
+      RedisSink::Tls(ref mut inner) => inner.poll_flush(),
+      RedisSink::Tcp(ref mut inner) => inner.poll_flush()
     }
   }
 
-  fn close(&mut self) -> Poll<(), Self::SinkError> {
+  fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
     match *self {
-      RedisSink::Tls(ref mut inner) => inner.close(),
-      RedisSink::Tcp(ref mut inner) => inner.close()
+      RedisSink::Tls(ref mut inner) => inner.poll_close(),
+      RedisSink::Tcp(ref mut inner) => inner.poll_close()
     }
   }
-
 }
 
 #[cfg(feature="enable-tls")]
@@ -167,10 +184,9 @@ pub enum RedisStream {
 }
 
 impl Stream for RedisStream {
-  type Item = Frame;
-  type Error = RedisError;
-
-  fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
+  type Item = Result<Frame,RedisError>;
+  
+  fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
     match *self {
       RedisStream::Tls(ref mut inner) => inner.poll(),
       RedisStream::Tcp(ref mut inner) => inner.poll()
@@ -288,12 +304,16 @@ impl Sinks {
   }
 
   #[allow(deprecated)]
-  pub fn quit(&self, frame: Frame) -> Box<Future<Item=(), Error=RedisError>> {
+  //pub async fn quit(&self, frame: Frame) -> Result<(), RedisError> {
+  pub fn quit(&self, frame: Frame) -> Box<dyn Future<Output=Result<(), RedisError>>> {
+    unimplemented!()
+    /*
     match *self {
       Sinks::Centralized(_) => {
         self.write_command(None, frame, false)
       },
       Sinks::Clustered { ref sinks, .. } => {
+
         // close all the cluster sockets in parallel
 
         let (sinks_iter, sinks_len) = {
@@ -309,36 +329,59 @@ impl Sinks {
           (out, sinks_len)
         };
 
+        let quit_ft = stream::iter(sinks_iter).map(move |next| {
+          match next {
+            Ok((server, sink)) => {
+              let x: futures::sink::Send<'_, crate::multiplexer::types::RedisSink, redis_protocol::types::Frame> = sink.send(frame.clone());
+              Box::new(
+                sink.send(frame.clone()).and_then(|sink| {
+                 Ok::<(String,()),RedisError>((server, sink))
+                })
+              )
+            },
+            Err(e) => crate::utils::future_error(e.into()),
+          }
+        });
+        // FIXME: wrong!!!!!
+        /*
         let quit_ft = stream::iter(sinks_iter).map(move |(server, sink)| {
-          sink.send(frame.clone()).from_err::<RedisError>().and_then(|sink| {
+          sink.send(frame.clone()).err_into::<RedisError>().and_then(|sink| {
             Ok((server, sink))
           })
-          .from_err::<RedisError>()
+          .err_into::<RedisError>()
         })
-        .from_err::<RedisError>()
+        */
+        /*
+        let quit_ft = quit_ft
+        .err_into::<RedisError>()
         .buffer_unordered(sinks_len)
         .fold(sinks.clone(), |sinks_clone, (server, sink)| {
           sinks_clone.borrow_mut().insert(server, sink);
           Ok::<_, RedisError>(sinks_clone)
         })
         .map(|_| ());
+        */
 
         Box::new(quit_ft)
+        //quit_ft.await
+        //unimplemented!()
       }
     }
+    */
   }
 
-  pub fn write_command(&self, key: Option<String>, frame: Frame, no_cluster: bool) -> Box<Future<Item=(), Error=RedisError>> {
-
+  pub async fn write_command(&self, key: Option<String>, frame: Frame, no_cluster: bool) -> Result<(),RedisError> {
+    unimplemented!()
+    /*
     match *self {
       Sinks::Centralized(ref sink) => {
-        let owned_sink = {
+        let owned_sink: RedisSink = {
           let mut sink_ref = sink.borrow_mut();
 
           match sink_ref.take() {
             Some(s) => s,
             None => {
-              return client_utils::future_error(RedisError::new(
+              return Err(RedisError::new(
                 RedisErrorKind::Unknown, "Redis socket not found."
               ))
             }
@@ -346,15 +389,16 @@ impl Sinks {
         };
 
         let sink_copy = sink.clone();
+        let ft: () = owned_sink.send(frame);
 
-        Box::new(owned_sink.send(frame)
-          .map_err(|e| e.into())
+        owned_sink.send(frame)
+          //.map_err(|e| e.into())
           .and_then(move |sink| {
             let mut sink_ref = sink_copy.borrow_mut();
             *sink_ref = Some(sink);
 
             Ok(())
-          }))
+          }).await
       },
       Sinks::Clustered { ref sinks, ref cluster_cache } => {
         let node = if no_cluster {
@@ -363,7 +407,7 @@ impl Sinks {
           match cluster_cache_ref.random_slot() {
             Some(s) => s,
             None => {
-              return client_utils::future_error(RedisError::new(
+              return Err(RedisError::new(
                 RedisErrorKind::Unknown, "Could not find a valid Redis node for command."
               ))
             }
@@ -375,7 +419,7 @@ impl Sinks {
           let key = match key {
             Some(k) => k,
             None => {
-              return client_utils::future_error(RedisError::new(
+              return Err(RedisError::new(
                 RedisErrorKind::Unknown, "Invalid command. (Missing key)."
               ))
             }
@@ -387,7 +431,7 @@ impl Sinks {
           match cluster_cache_ref.get_server(slot) {
             Some(s) => s,
             None => {
-              return client_utils::future_error(RedisError::new(
+              return Err(RedisError::new(
                 RedisErrorKind::Unknown, "Invalid cluster state. Could not find Redis node for request."
               ))
             }
@@ -403,7 +447,7 @@ impl Sinks {
           match sinks_ref.remove(&node.server) {
             Some(s) => s,
             None => {
-              return client_utils::future_error(RedisError::new(
+              return Err(RedisError::new(
                 RedisErrorKind::Unknown, "Could not find Redis socket for cluster node."
               ))
             }
@@ -412,18 +456,19 @@ impl Sinks {
 
         let sinks = sinks.clone();
 
-        Box::new(owned_sink.send(frame)
+        owned_sink.send(frame)
           .map_err(|e| e.into())
           .and_then(move |sink| {
             let mut sinks_ref = sinks.borrow_mut();
             sinks_ref.insert(node.server.clone(), sink);
 
             Ok(())
-          }))
+          })
+          .await
       }
     }
+  */
   }
-
 }
 
 impl Streams {

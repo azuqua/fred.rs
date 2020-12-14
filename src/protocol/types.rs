@@ -3,11 +3,12 @@ use bytes::{
   BytesMut
 };
 
-use futures::sync::oneshot::{
+use futures::channel::oneshot::{
   Sender as OneshotSender
 };
 
 use std::fmt;
+use std::pin::Pin;
 
 use super::utils as protocol_utils;
 use crate::types::*;
@@ -50,7 +51,7 @@ pub use redis_protocol::{
 };
 
 use crate::multiplexer::types::SplitCommand;
-use futures::sync::mpsc::UnboundedSender;
+use futures::channel::mpsc::UnboundedSender;
 use std::collections::{VecDeque, HashMap};
 use std::rc::Rc;
 use std::cell::RefCell;
@@ -1157,6 +1158,7 @@ impl SlaveNodes {
 }
 
 // Range contains is still only on nightly...
+// FIXME: is 'range contains' something we can use now?
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct SlotRange {
   pub start: u16,

@@ -18,7 +18,7 @@ use redis_protocol::encode::encode_bytes;
 use redis_protocol::decode::decode_bytes;
 use redis_protocol::types::Frame as ProtocolFrame;
 
-use tokio_io::codec::{
+use tokio_util::codec::{
   Decoder,
   Encoder
 };
@@ -69,8 +69,7 @@ impl Decoder for RedisCodec {
 
 }
 
-impl Encoder for RedisCodec {
-  type Item = ProtocolFrame;
+impl Encoder<ProtocolFrame> for RedisCodec {
   type Error = RedisError;
 
   fn encode(&mut self, frame: ProtocolFrame, buf: &mut BytesMut) -> Result<(), RedisError> {

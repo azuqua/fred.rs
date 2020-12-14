@@ -1,16 +1,19 @@
-use futures::sync::oneshot::{
+use futures::channel::oneshot::{
   channel as oneshot_channel
 };
-use futures::sync::mpsc::{
+use futures::channel::mpsc::{
   UnboundedSender
 };
 use futures::future::{
   self,
   Future,
   Either,
-  FutureResult
+  FutureExt,
+  TryFutureExt
+  // FutureResult
 };
-use futures::Poll;
+// use futures::Poll;
+use futures::select;
 use futures::stream::{
   self,
   Stream
@@ -21,6 +24,7 @@ use rand::Rng;
 
 use std::time::Duration;
 
+use std::pin::Pin;
 use std::i64;
 use std::f64;
 use float_cmp::ApproxEq;
@@ -41,7 +45,7 @@ use crate::error::{
 };
 use crate::client::{RedisClient, RedisClientInner};
 
-use tokio_core::reactor::Handle;
+//use tokio_core::reactor::Handle;
 
 use crate::protocol::types::{
   RedisCommand,
@@ -62,9 +66,9 @@ use std::sync::atomic::{
 use crate::multiplexer::utils as multiplexer_utils;
 use crate::protocol::utils as protocol_utils;
 
-use azuqua_core_async::*;
+use crate::async_ng::*;
 
-use tokio_timer::Timer;
+//use tokio_timer::Timer;
 
 macro_rules! fry {
   ($expr:expr) => (match $expr {
@@ -127,25 +131,27 @@ pub fn read_client_state(state: &RwLock<ClientState>) -> ClientState {
   state.read().deref().clone()
 }
 
-pub fn future_error<T: 'static>(err: RedisError) -> Box<Future<Item = T, Error = RedisError>> {
+pub fn future_error<T: 'static>(err: RedisError) -> Box<dyn Future<Output=Result<T, RedisError>>> {
   Box::new(future::err(err))
 }
 
-pub fn future_ok<T: 'static>(d: T) -> Box<Future<Item = T, Error = RedisError>> {
+pub fn future_ok<T: 'static>(d: T) -> Box<dyn Future<Output=Result<T, RedisError>>> {
   Box::new(future::ok(d))
 }
 
-pub fn future_error_generic<T: 'static, E: 'static>(err: E) -> Box<Future<Item=T, Error=E>> {
+pub fn future_error_generic<T: 'static, E: 'static>(err: E) -> Box<dyn Future<Output=Result<T, E>>> {
   Box::new(future::err(err))
 }
 
-pub fn future_ok_generic<T: 'static, E: 'static>(d: T) -> Box<Future<Item=T, Error=E>> {
+pub fn future_ok_generic<T: 'static, E: 'static>(d: T) -> Box<dyn Future<Output=Result<T, E>>> {
   Box::new(future::ok(d))
 }
-
-pub fn stream_error<T: 'static>(e: RedisError) -> Box<Stream<Item=T, Error=RedisError>> {
+/*
+pub fn stream_error<T: 'static>(e: RedisError) -> Box<dyn Stream<Item=Result<T, RedisError>>> {
   Box::new(future::err(e).into_stream())
 }
+*/
+
 
 pub fn reset_reconnect_attempts(reconnect: &RwLock<Option<ReconnectPolicy>>) {
   if let Some(ref mut reconnect) = reconnect.write().deref_mut() {
@@ -233,20 +239,39 @@ pub fn send_command(inner: &Arc<RedisClientInner>, command: RedisCommand) -> Res
   }
 }
 
-pub fn request_response<F>(inner: &Arc<RedisClientInner>, func: F) -> Box<Future<Item=ProtocolFrame, Error=RedisError>>
+pub fn request_response<F>(inner: &Arc<RedisClientInner>, func: F) -> Pin<Box<dyn Future<Output=Result<ProtocolFrame, RedisError>>>>
   where F: FnOnce() -> Result<(RedisCommandKind, Vec<RedisValue>), RedisError>
 {
   //let _ = fry!(check_client_state(&inner.state, ClientState::Connected));
-  let (kind, args) = fry!(func());
+  let (kind, args) = fry!(func()); // FIXME: checkout the above?
 
   let (tx, rx) = oneshot_channel();
   let command = RedisCommand::new(kind, args, Some(tx));
 
    match send_command(&inner, command) {
-     Ok(_) => Box::new(rx.from_err::<RedisError>().flatten()),
+     Ok(_) => Box::pin(rx.from_err::<RedisError>().flatten()),
      Err(e) => future_error(e)
    }
 }
+/*
+pub async fn request_response<F>(inner: &Arc<RedisClientInner>, func: F) -> Result<ProtocolFrame, RedisError>
+  where F: FnOnce() -> Result<(RedisCommandKind, Vec<RedisValue>), RedisError>
+{
+  //let _ = fry!(check_client_state(&inner.state, ClientState::Connected));
+  let (kind, args) = match func() { // FIXME: checkout the above?
+    Ok(t) => t,
+    Err(e) => return Err(e)
+  };
+
+  let (tx, rx) = oneshot_channel();
+  let command = RedisCommand::new(kind, args, Some(tx));
+
+   match send_command(&inner, command) {
+     Ok(_) => rx.err_into::<RedisError>().flatten().await,
+     Err(e) => Err(e)
+   }
+}
+*/
 
 pub fn is_clustered(config: &RwLock<RedisConfig>) -> bool {
   config.read().deref().is_clustered()
@@ -258,9 +283,11 @@ pub fn set_reconnect_policy(policy: &RwLock<Option<ReconnectPolicy>>, new_policy
   *guard_ref = Some(new_policy);
 }
 
-
-pub fn split(inner: &Arc<RedisClientInner>, spawner: &Spawner, timeout: u64) -> Box<Future<Item=Vec<(RedisClient, RedisConfig)>, Error=RedisError>> {
-  use crate::owned::RedisClientOwned;
+pub fn split(inner: &Arc<RedisClientInner>, spawner: &Spawner, timeout: u64) -> Box<dyn Future<Output=Result<Vec<(RedisClient, RedisConfig)>, RedisError>>> {
+  unimplemented!(); // FIXME: just a little problem
+  /*
+//pub async fn split(inner: &Arc<RedisClientInner>, spawner: &Spawner, timeout: u64) -> Result<Vec<(RedisClient, RedisConfig)>, RedisError> {
+  //use crate::owned::RedisClientOwned;
 
   let timeout = Duration::from_millis(timeout);
   let (tx, rx) = oneshot_channel();
@@ -270,20 +297,36 @@ pub fn split(inner: &Arc<RedisClientInner>, spawner: &Spawner, timeout: u64) -> 
   }));
   let command = RedisCommand::new(split_command, vec![], None);
 
+  //send_command(inner, command)?;
   if let Err(e) = send_command(inner, command) {
+    //return Err(e);
     return future_error(e);
   }
 
   let uses_tls = inner.config.read().deref().tls();
   let spawner = spawner.clone();
-  let timer = inner.timer.clone();
+  let timer = inner.timer.clone(); // FIXME: can use global now?
 
-  let timout_ft = timer.sleep(timeout).from_err::<RedisError>();
+  // FIXME: do we want to use the original timer? for some reason err_into fails on it right now
+  // let timeout_ft = timer.sleep(timeout).err_into::<RedisError>();
+  let timeout_ft = tokio_02::time::delay_for(timeout);
 
-  let connect_ft =rx.flatten().and_then(move |configs| {
+  //let () = rx;
+  let rx2: futures::channel::oneshot::Receiver<std::result::Result<std::vec::Vec<RedisConfig>, RedisError>> = rx;
+  //let () = rx.flatten();
+  //let rxf: Box<dyn Future<Output=std::result::Result<std::vec::Vec<RedisConfig>, RedisError>>> = Box::new(&mut rx);
+  let connect_ft = rx2.flatten().and_then(move |configs| {
+  //let connect_ft = rx.and_then(move |configs| {
+
+    // FIXME: we should have been able to get around this with the flatten() above
+    let configs = match configs {
+      err@Err(_) => return err,
+      Ok(c) => c
+    };
+
     let all_len = configs.len();
 
-    stream::iter_ok(configs.into_iter()).map(move |mut config| {
+    stream::iter(configs.into_iter()).map(move |mut config| {
       // the underlying split() logic doesn't have the original tls flag, so it's copied above and restored here
       config.set_tls(uses_tls);
 
@@ -310,17 +353,41 @@ pub fn split(inner: &Arc<RedisClientInner>, spawner: &Spawner, timeout: u64) -> 
     })
   });
 
+  /*
+  select! {
+    timeout = timeout_ft => match timeout {
+      Ok((_, init_ft)) => {
+        // timer_ft finished first (timeout)
+        return Err(RedisError::new_timeout())
+      },
+      Err((timer_err, init_ft)) => {
+        // timer had an error, try again without backoff
+        warn!("Timer error splitting redis connections: {:?}", timer_err);
+        return Err(timer_err)
+      }
+    },
+    connect_done = connect_ft => match connect_done {
+      Ok((clients, _)) => {
+        return Ok(clients)
+      },
+      Err((init_err, _)) => {
+        return Err(init_err)
+      }
+    }
+  }
+  */
+  /*
   Box::new(timout_ft.select2(connect_ft).then(move |result| {
     match result {
-      Ok(Either::A((_, init_ft))) => {
+      Ok(Either::Left((_, init_ft))) => {
         // timer_ft finished first (timeout)
         future_error(RedisError::new_timeout())
       },
-      Ok(Either::B((clients, timer_ft))) => {
+      Ok(Either::Right((clients, timer_ft))) => {
         // initialization worked
         future_ok(clients)
       },
-      Err(Either::A((timer_err, init_ft))) => {
+      Err(Either::Left((timer_err, init_ft))) => {
         // timer had an error, try again without backoff
         warn!("Timer error splitting redis connections: {:?}", timer_err);
         future_error(timer_err)
@@ -331,6 +398,8 @@ pub fn split(inner: &Arc<RedisClientInner>, spawner: &Spawner, timeout: u64) -> 
       }
     }
   }))
+  */
+  */
 }
 
 pub fn random_string(len: usize) -> String {

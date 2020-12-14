@@ -24,6 +24,8 @@ use std::hash::Hash;
 
 use crate::commands;
 
+/*
+
 fn run_borrowed_empty<T, F>(_self: RedisClient, func: F) -> Box<Future<Item=RedisClient, Error=RedisError>>
   where T: 'static,
         F: FnOnce(&Arc<RedisClientInner>) -> Box<Future<Item=T, Error=RedisError>>
@@ -825,3 +827,4 @@ impl RedisClientOwned for RedisClient {
 
 
 
+*/

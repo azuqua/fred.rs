@@ -5,13 +5,13 @@ use parking_lot::RwLock;
 use futures::{
   Future,
   Stream,
-  lazy
+//  lazy
 };
-use futures::sync::mpsc::{
+use futures::channel::mpsc::{
   unbounded,
   UnboundedSender
 };
-use futures::sync::oneshot::{
+use futures::channel::oneshot::{
   channel as oneshot_channel,
   Sender as OneshotSender
 };
@@ -30,7 +30,7 @@ use crate::error::{RedisError, RedisErrorKind};
 use crate::protocol::types::RedisCommand;
 use crate::metrics::{LatencyStats, SizeStats, DistributionStats};
 use crate::multiplexer::init;
-use azuqua_core_async::*;
+use crate::async_ng::*;
 
 use std::sync::atomic::AtomicUsize;
 
@@ -54,10 +54,10 @@ pub use utils::f64_to_redis_string;
 /// A patched version of `tokio-timer` to avoid a `panic` under heavy load.
 ///
 /// See [tokio-timer-patched](https://crates.io/crates/tokio-timer-patched).
-pub use tokio_timer::Timer;
+pub use tokio_timer::Timer; // FIXME: look into patched timer vs current
 
 /// A future representing the connection to a Redis server.
-pub type ConnectionFuture = Box<dyn Future<Item=Option<RedisError>, Error=RedisError>>;
+pub type ConnectionFuture = Box<dyn Future<Output=Result<Option<RedisError>, RedisError>>>;
 
 #[doc(hidden)]
 pub struct RedisClientInner {
@@ -262,7 +262,8 @@ impl RedisClient {
   /// if set to 0. This function can be used to receive notifications whenever the client successfully reconnects
   /// in order to select the right database again, re-subscribe to channels, etc. A reconnection event is also
   /// triggered upon first connecting.
-  pub fn on_reconnect(&self) -> Box<Stream<Item=Self, Error=RedisError>> {
+  //pub fn on_reconnect(&self) -> Box<Stream<Item=Self, Error=RedisError>> {
+  pub fn on_reconnect(&self) -> Box<dyn Stream<Item=Result<Self, RedisError>>> {
     let (tx, rx) = unbounded();
     self.inner.reconnect_tx.write().deref_mut().push_back(tx);
 
@@ -274,7 +275,8 @@ impl RedisClient {
   ///
   /// This can be used with `on_reconnect` to separate initialization logic that needs
   /// to occur only on the first connection vs subsequent connections.
-  pub fn on_connect(&self) -> Box<Future<Item=Self, Error=RedisError>> {
+  //pub fn on_connect(&self) -> Box<Future<Item=Self, Error=RedisError>> {
+  pub fn on_connect(&self) -> Box<dyn Future<Output=Result<Self, RedisError>>> {
     if utils::read_client_state(&self.inner.state) == ClientState::Connected {
       return utils::future_ok(self.clone());
     }
@@ -289,7 +291,8 @@ impl RedisClient {
   /// not appear in the request-response cycle, and so cannot be handled by response futures.
   ///
   /// Similar to `on_message`, this function does not need to be called again if the connection goes down.
-  pub fn on_error(&self) -> Box<Stream<Item=RedisError, Error=RedisError>> {
+  /// FIXME: this interface could probably be smarter now that it only delivers errors...
+  pub fn on_error(&self) -> Box<dyn Stream<Item=Result<RedisError, RedisError>>> {
     let (tx, rx) = unbounded();
     self.inner.error_tx.write().deref_mut().push_back(tx);
 
@@ -300,7 +303,7 @@ impl RedisClient {
   ///
   /// If the connection to the Redis server goes down for any reason this function does *not* need to be called again.
   /// Messages will start appearing on the original stream after `subscribe` is called again.
-  pub fn on_message(&self) -> Box<Stream<Item=(String, RedisValue), Error=RedisError>> {
+  pub fn on_message(&self) -> Box<dyn Stream<Item=Result<(String, RedisValue), RedisError>>> {
     let (tx, rx) = unbounded();
     self.inner.message_tx.write().deref_mut().push_back(tx);
 
@@ -315,7 +318,7 @@ impl RedisClient {
   /// Split a clustered redis client into a list of centralized clients for each master node in the cluster.
   ///
   /// This is an expensive operation and should not be used frequently.
-  pub fn split_cluster(&self, spawner: &Spawner) -> Box<Future<Item=Vec<(RedisClient, RedisConfig)>, Error=RedisError>> {
+  pub fn split_cluster(&self, spawner: &Spawner) -> Box<dyn Future<Output=Result<Vec<(RedisClient, RedisConfig)>, RedisError>>> {
     if utils::is_clustered(&self.inner.config) {
       utils::split(&self.inner, spawner, SPLIT_TIMEOUT_MS)
     }else{
@@ -328,28 +331,28 @@ impl RedisClient {
   /// Scan the redis database for keys matching the given pattern, if any. The scan operation can be canceled by dropping the returned stream.
   ///
   /// <https://redis.io/commands/scan>
-  pub fn scan<P: Into<String>>(&self, pattern: Option<P>, count: Option<usize>, _type: Option<ScanType>) -> Box<Stream<Item=ScanResult, Error=RedisError>> {
+  pub fn scan<P: Into<String>>(&self, pattern: Option<P>, count: Option<usize>, _type: Option<ScanType>) -> Box<dyn Stream<Item=Result<ScanResult, RedisError>>> {
     commands::scan(&self.inner, pattern, count, _type)
   }
 
   /// Scan the redis database for keys within the given hash key, if any. The scan operation can be canceled by dropping the returned stream.
   ///
   /// <https://redis.io/commands/hscan>
-  pub fn hscan<K: Into<RedisKey>, P: Into<String>>(&self, key: K, pattern: Option<P>, count: Option<usize>) -> Box<Stream<Item=HScanResult, Error=RedisError>> {
+  pub fn hscan<K: Into<RedisKey>, P: Into<String>>(&self, key: K, pattern: Option<P>, count: Option<usize>) -> Box<dyn Stream<Item=Result<HScanResult, RedisError>>> {
     commands::hscan(&self.inner, key, pattern, count)
   }
 
   /// Scan the redis database for keys within the given set key, if any. The scan operation can be canceled by dropping the returned stream.
   ///
   /// <https://redis.io/commands/sscan>
-  pub fn sscan<K: Into<RedisKey>, P: Into<String>>(&self, key: K, pattern: Option<P>, count: Option<usize>) -> Box<Stream<Item=SScanResult, Error=RedisError>> {
+  pub fn sscan<K: Into<RedisKey>, P: Into<String>>(&self, key: K, pattern: Option<P>, count: Option<usize>) -> Box<dyn Stream<Item=Result<SScanResult, RedisError>>> {
     commands::sscan(&self.inner, key, pattern, count)
   }
 
   /// Scan the redis database for keys within the given sorted set key, if any. The scan operation can be canceled by dropping the returned stream.
   ///
   /// <https://redis.io/commands/zscan>
-  pub fn zscan<K: Into<RedisKey>, P: Into<String>>(&self, key: K, pattern: Option<P>, count: Option<usize>) -> Box<Stream<Item=ZScanResult, Error=RedisError>> {
+  pub fn zscan<K: Into<RedisKey>, P: Into<String>>(&self, key: K, pattern: Option<P>, count: Option<usize>) -> Box<dyn Stream<Item=Result<ZScanResult, RedisError>>> {
     commands::zscan(&self.inner, key, pattern, count)
   }
 

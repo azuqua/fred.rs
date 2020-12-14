@@ -1,7 +1,9 @@
 use crate::types::*;
 use crate::protocol::types::{RedisCommandKind, ResponseKind, RedisCommand, ValueScanInner, KeyScanInner};
 
-use futures::{Future, Stream, IntoFuture};
+// use futures::{Future, Stream, IntoFuture};
+use futures::{Future, Stream};
+use futures::future::IntoFuture;
 use crate::error::{
   RedisError,
   RedisErrorKind
@@ -22,7 +24,7 @@ use std::ops::{
 
 use std::hash::Hash;
 use std::collections::{HashMap, VecDeque};
-use futures::sync::mpsc::unbounded;
+use futures::channel::mpsc::unbounded;
 
 use futures::future;
 
@@ -38,7 +40,7 @@ const AGGREGATE: &'static str = "AGGREGATE";
 const WEIGHTS: &'static str = "WEIGHTS";
 
 
-pub fn quit(inner: &Arc<RedisClientInner>) -> Box<Future<Item=(), Error=RedisError>> {
+pub fn quit(inner: &Arc<RedisClientInner>) -> Box<dyn Future<Output=Result<(), RedisError>>> {
   debug!("{} Closing Redis connection with Quit command.", n!(inner));
 
   // need to lock the closed flag so any reconnect logic running in another thread doesn't screw this up,
@@ -80,7 +82,7 @@ pub fn quit(inner: &Arc<RedisClientInner>) -> Box<Future<Item=(), Error=RedisErr
   }
 }
 
-pub fn flushall(inner: &Arc<RedisClientInner>, _async: bool) -> Box<Future<Item=String, Error=RedisError>> {
+pub fn flushall(inner: &Arc<RedisClientInner>, _async: bool) -> Box<dyn Future<Output=Result<String, RedisError>>> {
   let args = if _async {
     vec![ASYNC.into()]
   }else{
@@ -100,7 +102,7 @@ pub fn flushall(inner: &Arc<RedisClientInner>, _async: bool) -> Box<Future<Item=
 }
 
 
-pub fn get<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Box<Future<Item=Option<RedisValue>, Error=RedisError>> {
+pub fn get<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Box<dyn Future<Output=Result<Option<RedisValue>, RedisError>>> {
   let key = key.into();
 
   Box::new(utils::request_response(inner, move || {
@@ -116,7 +118,7 @@ pub fn get<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Box<Futu
   }))
 }
 
-pub fn set<K: Into<RedisKey>, V: Into<RedisValue>>(inner: &Arc<RedisClientInner>, key: K, value: V, expire: Option<Expiration>, options: Option<SetOptions>) -> Box<Future<Item=bool, Error=RedisError>> {
+pub fn set<K: Into<RedisKey>, V: Into<RedisValue>>(inner: &Arc<RedisClientInner>, key: K, value: V, expire: Option<Expiration>, options: Option<SetOptions>) -> Box<dyn Future<Output=Result<bool, RedisError>>> {
   let (key, value) = (key.into(), value.into());
 
   Box::new(utils::request_response(inner, move || {
@@ -139,7 +141,7 @@ pub fn set<K: Into<RedisKey>, V: Into<RedisValue>>(inner: &Arc<RedisClientInner>
   }))
 }
 
-pub fn select(inner: &Arc<RedisClientInner>, db: u8) -> Box<Future<Item=(), Error=RedisError>> {
+pub fn select(inner: &Arc<RedisClientInner>, db: u8) -> Box<dyn Future<Output=Result<(), RedisError>>> {
   debug!("{} Selecting Redis database {}", n!(inner), db);
 
   Box::new(utils::request_response(inner, || {
@@ -152,7 +154,7 @@ pub fn select(inner: &Arc<RedisClientInner>, db: u8) -> Box<Future<Item=(), Erro
   }))
 }
 
-pub fn info(inner: &Arc<RedisClientInner>, section: Option<InfoKind>) -> Box<Future<Item=String, Error=RedisError>> {
+pub fn info(inner: &Arc<RedisClientInner>, section: Option<InfoKind>) -> Box<dyn Future<Output=Result<String, RedisError>>> {
   let section = section.map(|k| k.to_str());
 
   Box::new(utils::request_response(inner, move || {
@@ -179,7 +181,7 @@ pub fn info(inner: &Arc<RedisClientInner>, section: Option<InfoKind>) -> Box<Fut
   }))
 }
 
-pub fn del<K: Into<MultipleKeys>>(inner: &Arc<RedisClientInner>, keys: K) -> Box<Future<Item=usize, Error=RedisError>> {
+pub fn del<K: Into<MultipleKeys>>(inner: &Arc<RedisClientInner>, keys: K) -> Box<dyn Future<Output=Result<usize, RedisError>>> {
   let mut keys = keys.into().inner();
   let args: Vec<RedisValue> = keys.drain(..).map(|k| {
     k.into()
@@ -197,7 +199,7 @@ pub fn del<K: Into<MultipleKeys>>(inner: &Arc<RedisClientInner>, keys: K) -> Box
   }))
 }
 
-pub fn subscribe<T: Into<String>>(inner: &Arc<RedisClientInner>, channel: T) -> Box<Future<Item=usize, Error=RedisError>> {
+pub fn subscribe<T: Into<String>>(inner: &Arc<RedisClientInner>, channel: T) -> Box<dyn Future<Output=Result<usize, RedisError>>> {
   // note: if this ever changes to take in more than one channel then some additional work must be done
   // in the multiplexer to associate multiple responses with a single request
   let channel = channel.into();
@@ -224,7 +226,7 @@ pub fn subscribe<T: Into<String>>(inner: &Arc<RedisClientInner>, channel: T) -> 
   }))
 }
 
-pub fn unsubscribe<T: Into<String>>(inner: &Arc<RedisClientInner>, channel: T) -> Box<Future<Item=usize, Error=RedisError>> {
+pub fn unsubscribe<T: Into<String>>(inner: &Arc<RedisClientInner>, channel: T) -> Box<dyn Future<Output=Result<usize, RedisError>>> {
   // note: if this ever changes to take in more than one channel then some additional work must be done
   // in the multiplexer to associate multiple responses with a single request
   let channel = channel.into();
@@ -251,7 +253,7 @@ pub fn unsubscribe<T: Into<String>>(inner: &Arc<RedisClientInner>, channel: T) -
   }))
 }
 
-pub fn publish<T: Into<String>, V: Into<RedisValue>>(inner: &Arc<RedisClientInner>, channel: T, message: V) -> Box<Future<Item=i64, Error=RedisError>> {
+pub fn publish<T: Into<String>, V: Into<RedisValue>>(inner: &Arc<RedisClientInner>, channel: T, message: V) -> Box<dyn Future<Output=Result<i64, RedisError>>> {
   let channel = channel.into();
   let message = message.into();
 
@@ -272,7 +274,7 @@ pub fn publish<T: Into<String>, V: Into<RedisValue>>(inner: &Arc<RedisClientInne
 }
 
 
-pub fn incr<K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K) -> Box<Future<Item=i64, Error=RedisError>>  {
+pub fn incr<K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K) -> Box<dyn Future<Output=Result<i64, RedisError>>>  {
   let key = key.into();
 
   Box::new(utils::request_response(inner, move || {
@@ -287,7 +289,7 @@ pub fn incr<K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K) -> Box<Fu
   }))
 }
 
-pub fn incrby<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, incr: i64) -> Box<Future<Item=i64, Error=RedisError>> {
+pub fn incrby<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, incr: i64) -> Box<dyn Future<Output=Result<i64, RedisError>>> {
   let key = key.into();
 
   Box::new(utils::request_response(inner, move || {
@@ -304,7 +306,7 @@ pub fn incrby<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, incr: i6
   }))
 }
 
-pub fn incrbyfloat<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, incr: f64) -> Box<Future<Item=f64, Error=RedisError>> {
+pub fn incrbyfloat<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, incr: f64) -> Box<dyn Future<Output=Result<f64, RedisError>>> {
   let key = key.into();
 
   Box::new(utils::request_response(inner, move || {
@@ -324,7 +326,7 @@ pub fn incrbyfloat<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, inc
   }))
 }
 
-pub fn decr<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Box<Future<Item=i64, Error=RedisError>> {
+pub fn decr<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Box<dyn Future<Output=Result<i64, RedisError>>> {
   let key = key.into();
 
   Box::new(utils::request_response(inner, move || {
@@ -341,7 +343,7 @@ pub fn decr<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Box<Fut
   }))
 }
 
-pub fn decrby<V: Into<RedisValue>, K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, value: V) -> Box<Future<Item=i64, Error=RedisError>> {
+pub fn decrby<V: Into<RedisValue>, K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, value: V) -> Box<dyn Future<Output=Result<i64, RedisError>>> {
   let key = key.into();
 
   Box::new(utils::request_response(inner, move || {
@@ -360,7 +362,7 @@ pub fn decrby<V: Into<RedisValue>, K: Into<RedisKey>>(inner: &Arc<RedisClientInn
   }))
 }
 
-pub fn ping(inner: &Arc<RedisClientInner>) -> Box<Future<Item=String, Error=RedisError>> {
+pub fn ping(inner: &Arc<RedisClientInner>) -> Box<dyn Future<Output=Result<String, RedisError>>> {
   let inner = inner.clone();
   debug!("{} Pinging Redis server.", n!(inner));
 
@@ -385,7 +387,7 @@ pub fn ping(inner: &Arc<RedisClientInner>) -> Box<Future<Item=String, Error=Redi
   }))
 }
 
-pub fn auth<V: Into<String>>(inner: &Arc<RedisClientInner>, value: V) -> Box<Future<Item=String, Error=RedisError>> {
+pub fn auth<V: Into<String>>(inner: &Arc<RedisClientInner>, value: V) -> Box<dyn Future<Output=Result<String, RedisError>>> {
   let value = value.into();
 
   Box::new(utils::request_response(inner, move || {
@@ -402,7 +404,7 @@ pub fn auth<V: Into<String>>(inner: &Arc<RedisClientInner>, value: V) -> Box<Fut
   }))
 }
 
-pub fn bgrewriteaof(inner: &Arc<RedisClientInner>) -> Box<Future<Item=String, Error=RedisError>> {
+pub fn bgrewriteaof(inner: &Arc<RedisClientInner>) -> Box<dyn Future<Output=Result<String, RedisError>>> {
   Box::new(utils::request_response(inner, move || {
     Ok((RedisCommandKind::BgreWriteAof, vec![]))
   }).and_then(|frame| {
@@ -417,7 +419,7 @@ pub fn bgrewriteaof(inner: &Arc<RedisClientInner>) -> Box<Future<Item=String, Er
   }))
 }
 
-pub fn bgsave(inner: &Arc<RedisClientInner>) -> Box<Future<Item=String, Error=RedisError>> {
+pub fn bgsave(inner: &Arc<RedisClientInner>) -> Box<dyn Future<Output=Result<String, RedisError>>> {
   Box::new(utils::request_response(inner, move || {
     Ok((RedisCommandKind::BgSave, vec![]))
   }).and_then(|frame| {
@@ -432,7 +434,7 @@ pub fn bgsave(inner: &Arc<RedisClientInner>) -> Box<Future<Item=String, Error=Re
   }))
 }
 
-pub fn client_list(inner: &Arc<RedisClientInner>) -> Box<Future<Item=String, Error=RedisError>> {
+pub fn client_list(inner: &Arc<RedisClientInner>) -> Box<dyn Future<Output=Result<String, RedisError>>> {
   Box::new(utils::request_response(inner, move || {
     let args = vec![];
 
@@ -449,7 +451,7 @@ pub fn client_list(inner: &Arc<RedisClientInner>) -> Box<Future<Item=String, Err
   }))
 }
 
-pub fn client_getname(inner: &Arc<RedisClientInner>) -> Box<Future<Item=Option<String>, Error=RedisError>> {
+pub fn client_getname(inner: &Arc<RedisClientInner>) -> Box<dyn Future<Output=Result<Option<String>, RedisError>>> {
   Box::new(utils::request_response(inner, move || {
     Ok((RedisCommandKind::ClientGetName, vec![]))
   }).and_then(|frame| {
@@ -462,7 +464,7 @@ pub fn client_getname(inner: &Arc<RedisClientInner>) -> Box<Future<Item=Option<S
   }))
 }
 
-pub fn client_setname<V: Into<String>>(inner: &Arc<RedisClientInner>, name: V) -> Box<Future<Item=Option<String>, Error=RedisError>> {
+pub fn client_setname<V: Into<String>>(inner: &Arc<RedisClientInner>, name: V) -> Box<dyn Future<Output=Result<Option<String>, RedisError>>> {
   let name = name.into();
   inner.change_client_name(name.clone());
 
@@ -478,7 +480,7 @@ pub fn client_setname<V: Into<String>>(inner: &Arc<RedisClientInner>, name: V) -
   }))
 }
 
-pub fn dbsize(inner: &Arc<RedisClientInner>) -> Box<Future<Item=usize, Error=RedisError>> {
+pub fn dbsize(inner: &Arc<RedisClientInner>) -> Box<dyn Future<Output=Result<usize, RedisError>>> {
   Box::new(utils::request_response(inner, move || {
     Ok((RedisCommandKind::DBSize, vec![]))
   }).and_then(|frame| {
@@ -493,7 +495,7 @@ pub fn dbsize(inner: &Arc<RedisClientInner>) -> Box<Future<Item=usize, Error=Red
   }))
 }
 
-pub fn dump<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Box<Future<Item=Option<String>, Error=RedisError>> {
+pub fn dump<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Box<dyn Future<Output=Result<Option<String>, RedisError>>> {
   let key = key.into();
 
   Box::new(utils::request_response(inner, move || {
@@ -511,7 +513,7 @@ pub fn dump<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Box<Fut
   }))
 }
 
-pub fn exists<K: Into<MultipleKeys>>(inner: &Arc<RedisClientInner>, keys: K) -> Box<Future<Item=usize, Error=RedisError>> {
+pub fn exists<K: Into<MultipleKeys>>(inner: &Arc<RedisClientInner>, keys: K) -> Box<dyn Future<Output=Result<usize, RedisError>>> {
   let mut keys = keys.into().inner();
 
   Box::new(utils::request_response(inner, move || {
@@ -530,7 +532,7 @@ pub fn exists<K: Into<MultipleKeys>>(inner: &Arc<RedisClientInner>, keys: K) -> 
   }))
 }
 
-pub fn expire<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, seconds: i64) -> Box<Future<Item=bool, Error=RedisError>> {
+pub fn expire<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, seconds: i64) -> Box<dyn Future<Output=Result<bool, RedisError>>> {
   let key = key.into();
 
   Box::new(utils::request_response(inner, move || {
@@ -556,7 +558,7 @@ pub fn expire<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, seconds:
   }))
 }
 
-pub fn expire_at<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, timestamp: i64) -> Box<Future<Item=bool, Error=RedisError>> {
+pub fn expire_at<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, timestamp: i64) -> Box<dyn Future<Output=Result<bool, RedisError>>> {
   let key = key.into();
 
   Box::new(utils::request_response(inner, move || {
@@ -581,7 +583,7 @@ pub fn expire_at<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, times
   }))
 }
 
-pub fn persist<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Box<Future<Item=bool, Error=RedisError>> {
+pub fn persist<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Box<dyn Future<Output=Result<bool, RedisError>>> {
   let key = key.into();
 
   Box::new(utils::request_response(inner, move ||{
@@ -604,7 +606,7 @@ pub fn persist<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Box<
   }))
 }
 
-pub fn flushdb(inner: &Arc<RedisClientInner>, _async: bool) -> Box<Future<Item=String, Error=RedisError>> {
+pub fn flushdb(inner: &Arc<RedisClientInner>, _async: bool) -> Box<dyn Future<Output=Result<String, RedisError>>> {
   let args = if _async {
     vec![ASYNC.into()]
   }else{
@@ -625,7 +627,7 @@ pub fn flushdb(inner: &Arc<RedisClientInner>, _async: bool) -> Box<Future<Item=S
   }))
 }
 
-pub fn getrange<K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K, start: usize, end: usize) -> Box<Future<Item=String, Error=RedisError>> {
+pub fn getrange<K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K, start: usize, end: usize) -> Box<dyn Future<Output=Result<String, RedisError>>> {
   let key = key.into();
   let start = fry!(RedisValue::from_usize(start));
   let end = fry!(RedisValue::from_usize(end));
@@ -650,7 +652,7 @@ pub fn getrange<K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K, start
   }))
 }
 
-pub fn getset<V: Into<RedisValue>, K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K, value: V) -> Box<Future<Item=Option<RedisValue>, Error=RedisError>> {
+pub fn getset<V: Into<RedisValue>, K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K, value: V) -> Box<dyn Future<Output=Result<Option<RedisValue>, RedisError>>> {
   let (key, value) = (key.into(), value.into());
 
   Box::new(utils::request_response(inner, move || {
@@ -667,7 +669,7 @@ pub fn getset<V: Into<RedisValue>, K: Into<RedisKey>> (inner: &Arc<RedisClientIn
   }))
 }
 
-pub fn hdel<F: Into<MultipleKeys>, K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K, fields: F) -> Box<Future<Item=usize, Error=RedisError>> {
+pub fn hdel<F: Into<MultipleKeys>, K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K, fields: F) -> Box<dyn Future<Output=Result<usize, RedisError>>> {
   let key = key.into();
   let mut fields = fields.into().inner();
 
@@ -692,7 +694,7 @@ pub fn hdel<F: Into<MultipleKeys>, K: Into<RedisKey>> (inner: &Arc<RedisClientIn
   }))
 }
 
-pub fn hexists<F: Into<RedisKey>, K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K, field: F) -> Box<Future<Item=bool, Error=RedisError>> {
+pub fn hexists<F: Into<RedisKey>, K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K, field: F) -> Box<dyn Future<Output=Result<bool, RedisError>>> {
   let key = key.into();
   let field = field.into();
 
@@ -718,7 +720,7 @@ pub fn hexists<F: Into<RedisKey>, K: Into<RedisKey>> (inner: &Arc<RedisClientInn
   }))
 }
 
-pub fn hget<F: Into<RedisKey>, K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K, field: F) -> Box<Future<Item=Option<RedisValue>, Error=RedisError>> {
+pub fn hget<F: Into<RedisKey>, K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K, field: F) -> Box<dyn Future<Output=Result<Option<RedisValue>, RedisError>>> {
   let key = key.into();
   let field = field.into();
 
@@ -736,7 +738,7 @@ pub fn hget<F: Into<RedisKey>, K: Into<RedisKey>> (inner: &Arc<RedisClientInner>
   }))
 }
 
-pub fn hgetall<K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K) -> Box<Future<Item=HashMap<String, RedisValue>, Error=RedisError>> {
+pub fn hgetall<K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K) -> Box<dyn Future<Output=Result<HashMap<String, RedisValue>, RedisError>>> {
   let key = key.into();
 
   Box::new(utils::request_response(inner, move || {
@@ -764,7 +766,7 @@ pub fn hgetall<K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K) -> Box
   }))
 }
 
-pub fn hincrby<F: Into<RedisKey>, K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K, field: F, incr: i64) -> Box<Future<Item=i64, Error=RedisError>> {
+pub fn hincrby<F: Into<RedisKey>, K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K, field: F, incr: i64) -> Box<dyn Future<Output=Result<i64, RedisError>>> {
   let (key, field) = (key.into(), field.into());
 
   let args: Vec<RedisValue> = vec![
@@ -787,7 +789,7 @@ pub fn hincrby<F: Into<RedisKey>, K: Into<RedisKey>> (inner: &Arc<RedisClientInn
   }))
 }
 
-pub fn hincrbyfloat<K: Into<RedisKey>, F: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K, field: F, incr: f64) -> Box<Future<Item=f64, Error=RedisError>> {
+pub fn hincrbyfloat<K: Into<RedisKey>, F: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K, field: F, incr: f64) -> Box<dyn Future<Output=Result<f64, RedisError>>> {
   let (key, field) = (key.into(), field.into());
 
   let args = vec![
@@ -815,7 +817,7 @@ pub fn hincrbyfloat<K: Into<RedisKey>, F: Into<RedisKey>> (inner: &Arc<RedisClie
   }))
 }
 
-pub fn hkeys<K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K) -> Box<Future<Item=Vec<String>, Error=RedisError>> {
+pub fn hkeys<K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K) -> Box<dyn Future<Output=Result<Vec<String>, RedisError>>> {
   let key = key.into();
 
   Box::new(utils::request_response(inner, move || {
@@ -840,7 +842,7 @@ pub fn hkeys<K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K) -> Box<F
   }))
 }
 
-pub fn hlen<K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K) -> Box<Future<Item=usize, Error=RedisError>> {
+pub fn hlen<K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K) -> Box<dyn Future<Output=Result<usize, RedisError>>> {
   let key = key.into();
 
   Box::new(utils::request_response(inner, move || {
@@ -857,7 +859,7 @@ pub fn hlen<K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K) -> Box<Fu
   }))
 }
 
-pub fn hmget<F: Into<MultipleKeys>, K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K, fields: F) -> Box<Future<Item=Vec<RedisValue>, Error=RedisError>> {
+pub fn hmget<F: Into<MultipleKeys>, K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K, fields: F) -> Box<dyn Future<Output=Result<Vec<RedisValue>, RedisError>>> {
   let key = key.into();
   let mut fields = fields.into().inner();
 
@@ -875,7 +877,7 @@ pub fn hmget<F: Into<MultipleKeys>, K: Into<RedisKey>> (inner: &Arc<RedisClientI
   }))
 }
 
-pub fn hmset<V: Into<RedisValue>, F: Into<RedisKey> + Hash + Eq, K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K, mut values: HashMap<F, V>) -> Box<Future<Item=String, Error=RedisError>> {
+pub fn hmset<V: Into<RedisValue>, F: Into<RedisKey> + Hash + Eq, K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K, mut values: HashMap<F, V>) -> Box<dyn Future<Output=Result<String, RedisError>>> {
   let key = key.into();
 
   let mut args = Vec::with_capacity(values.len() * 2 + 1);
@@ -901,7 +903,7 @@ pub fn hmset<V: Into<RedisValue>, F: Into<RedisKey> + Hash + Eq, K: Into<RedisKe
   }))
 }
 
-pub fn hset<K: Into<RedisKey>, F: Into<RedisKey>, V: Into<RedisValue>> (inner: &Arc<RedisClientInner>, key: K, field: F, value: V) -> Box<Future<Item=usize, Error=RedisError>> {
+pub fn hset<K: Into<RedisKey>, F: Into<RedisKey>, V: Into<RedisValue>> (inner: &Arc<RedisClientInner>, key: K, field: F, value: V) -> Box<dyn Future<Output=Result<usize, RedisError>>> {
   let key = key.into();
   let field = field.into();
 
@@ -923,7 +925,7 @@ pub fn hset<K: Into<RedisKey>, F: Into<RedisKey>, V: Into<RedisValue>> (inner: &
   }))
 }
 
-pub fn hsetnx<K: Into<RedisKey>, F: Into<RedisKey>, V: Into<RedisValue>> (inner: &Arc<RedisClientInner>, key: K, field: F, value: V) -> Box<Future<Item=usize, Error=RedisError>> {
+pub fn hsetnx<K: Into<RedisKey>, F: Into<RedisKey>, V: Into<RedisValue>> (inner: &Arc<RedisClientInner>, key: K, field: F, value: V) -> Box<dyn Future<Output=Result<usize, RedisError>>> {
   let (key, field, value) = (key.into(), field.into(), value.into());
 
   Box::new(utils::request_response(inner, move || {
@@ -942,7 +944,7 @@ pub fn hsetnx<K: Into<RedisKey>, F: Into<RedisKey>, V: Into<RedisValue>> (inner:
   }))
 }
 
-pub fn hstrlen<K: Into<RedisKey>, F: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K, field: F) -> Box<Future<Item=usize, Error=RedisError>> {
+pub fn hstrlen<K: Into<RedisKey>, F: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K, field: F) -> Box<dyn Future<Output=Result<usize, RedisError>>> {
   let (key, field) = (key.into(), field.into());
 
   Box::new(utils::request_response(inner, move || {
@@ -961,7 +963,7 @@ pub fn hstrlen<K: Into<RedisKey>, F: Into<RedisKey>> (inner: &Arc<RedisClientInn
   }))
 }
 
-pub fn hvals<K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K) -> Box<Future<Item=Vec<RedisValue>, Error=RedisError>> {
+pub fn hvals<K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K) -> Box<dyn Future<Output=Result<Vec<RedisValue>, RedisError>>> {
   let key = key.into();
 
   Box::new(utils::request_response(inner, move || {
@@ -971,7 +973,7 @@ pub fn hvals<K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K) -> Box<F
   }))
 }
 
-pub fn llen<K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K) -> Box<Future<Item=usize, Error=RedisError>> {
+pub fn llen<K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K) -> Box<dyn Future<Output=Result<usize, RedisError>>> {
   let key = key.into();
 
   Box::new(utils::request_response(inner, move || {
@@ -988,7 +990,7 @@ pub fn llen<K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K) -> Box<Fu
   }))
 }
 
-pub fn lpush<K: Into<RedisKey>, V: Into<RedisValue>> (inner: &Arc<RedisClientInner>, key: K, value: V) -> Box<Future<Item=usize, Error=RedisError>> {
+pub fn lpush<K: Into<RedisKey>, V: Into<RedisValue>> (inner: &Arc<RedisClientInner>, key: K, value: V) -> Box<dyn Future<Output=Result<usize, RedisError>>> {
   let key = key.into();
   let value = value.into();
 
@@ -1008,7 +1010,7 @@ pub fn lpush<K: Into<RedisKey>, V: Into<RedisValue>> (inner: &Arc<RedisClientInn
   }))
 }
 
-pub fn lpop<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Box<Future<Item=Option<RedisValue>, Error=RedisError>> {
+pub fn lpop<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Box<dyn Future<Output=Result<Option<RedisValue>, RedisError>>> {
   let key = key.into();
 
   Box::new(utils::request_response(inner, move || {
@@ -1028,7 +1030,7 @@ pub fn lpop<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Box<Fut
   }))
 }
 
-pub fn sadd<K: Into<RedisKey>, V: Into<MultipleValues>>(inner: &Arc<RedisClientInner>, key: K, values: V) -> Box<Future<Item=usize, Error=RedisError>> {
+pub fn sadd<K: Into<RedisKey>, V: Into<MultipleValues>>(inner: &Arc<RedisClientInner>, key: K, values: V) -> Box<dyn Future<Output=Result<usize, RedisError>>> {
   let key = key.into();
   let value = values.into();
 
@@ -1053,7 +1055,7 @@ pub fn sadd<K: Into<RedisKey>, V: Into<MultipleValues>>(inner: &Arc<RedisClientI
   }))
 }
 
-pub fn srem<K: Into<RedisKey>, V: Into<MultipleValues>>(inner: &Arc<RedisClientInner>, key: K, values: V) -> Box<Future<Item=usize, Error=RedisError>> {
+pub fn srem<K: Into<RedisKey>, V: Into<MultipleValues>>(inner: &Arc<RedisClientInner>, key: K, values: V) -> Box<dyn Future<Output=Result<usize, RedisError>>> {
   let key = key.into();
   let value = values.into();
 
@@ -1078,7 +1080,7 @@ pub fn srem<K: Into<RedisKey>, V: Into<MultipleValues>>(inner: &Arc<RedisClientI
   }))
 }
 
-pub fn smembers<K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K) -> Box<Future<Item=Vec<RedisValue>, Error=RedisError>> {
+pub fn smembers<K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K) -> Box<dyn Future<Output=Result<Vec<RedisValue>, RedisError>>> {
   let key = key.into();
 
   Box::new(utils::request_response(inner, move || {
@@ -1088,7 +1090,7 @@ pub fn smembers<K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K) -> Bo
   }))
 }
 
-pub fn psubscribe<K: Into<MultipleKeys>>(inner: &Arc<RedisClientInner>, patterns: K) -> Box<Future<Item=Vec<usize>, Error=RedisError>> {
+pub fn psubscribe<K: Into<MultipleKeys>>(inner: &Arc<RedisClientInner>, patterns: K) -> Box<dyn Future<Output=Result<Vec<usize>, RedisError>>> {
   let patterns = patterns.into().inner();
 
   Box::new(utils::request_response(inner, move || {
@@ -1110,7 +1112,7 @@ pub fn psubscribe<K: Into<MultipleKeys>>(inner: &Arc<RedisClientInner>, patterns
   }))
 }
 
-pub fn punsubscribe<K: Into<MultipleKeys>>(inner: &Arc<RedisClientInner>, patterns: K) -> Box<Future<Item=Vec<usize>, Error=RedisError>> {
+pub fn punsubscribe<K: Into<MultipleKeys>>(inner: &Arc<RedisClientInner>, patterns: K) -> Box<dyn Future<Output=Result<Vec<usize>, RedisError>>> {
   let patterns = patterns.into().inner();
 
   Box::new(utils::request_response(inner, move || {
@@ -1132,7 +1134,7 @@ pub fn punsubscribe<K: Into<MultipleKeys>>(inner: &Arc<RedisClientInner>, patter
   }))
 }
 
-pub fn scan<P: Into<String>>(inner: &Arc<RedisClientInner>, pattern: Option<P>, count: Option<usize>, _type: Option<ScanType>) -> Box<Stream<Item=ScanResult, Error=RedisError>> {
+pub fn scan<P: Into<String>>(inner: &Arc<RedisClientInner>, pattern: Option<P>, count: Option<usize>, _type: Option<ScanType>) -> Box<dyn Stream<Item=Result<ScanResult, RedisError>>> {
   let pattern = pattern.map(|s| s.into());
   let (tx, rx) = unbounded();
   let cursor = "0".to_owned();
@@ -1177,7 +1179,7 @@ pub fn scan<P: Into<String>>(inner: &Arc<RedisClientInner>, pattern: Option<P>, 
   Box::new(rx.from_err::<RedisError>().and_then(|res| res.into_future()))
 }
 
-pub fn hscan<K: Into<RedisKey>, P: Into<String>>(inner: &Arc<RedisClientInner>, key: K, pattern: Option<P>, count: Option<usize>) -> Box<Stream<Item=HScanResult, Error=RedisError>> {
+pub fn hscan<K: Into<RedisKey>, P: Into<String>>(inner: &Arc<RedisClientInner>, key: K, pattern: Option<P>, count: Option<usize>) -> Box<dyn Stream<Item=Result<HScanResult, RedisError>>> {
   let pattern = pattern.map(|s| s.into());
   let (tx, rx) = unbounded();
   let cursor = "0".to_owned();
@@ -1228,7 +1230,7 @@ pub fn hscan<K: Into<RedisKey>, P: Into<String>>(inner: &Arc<RedisClientInner>, 
   }))
 }
 
-pub fn sscan<K: Into<RedisKey>, P: Into<String>>(inner: &Arc<RedisClientInner>, key: K, pattern: Option<P>, count: Option<usize>) -> Box<Stream<Item=SScanResult, Error=RedisError>> {
+pub fn sscan<K: Into<RedisKey>, P: Into<String>>(inner: &Arc<RedisClientInner>, key: K, pattern: Option<P>, count: Option<usize>) -> Box<dyn Stream<Item=Result<SScanResult, RedisError>>> {
   let pattern = pattern.map(|s| s.into());
   let (tx, rx) = unbounded();
   let cursor = "0".to_owned();
@@ -1279,7 +1281,7 @@ pub fn sscan<K: Into<RedisKey>, P: Into<String>>(inner: &Arc<RedisClientInner>, 
   }))
 }
 
-pub fn zscan<K: Into<RedisKey>, P: Into<String>>(inner: &Arc<RedisClientInner>, key: K, pattern: Option<P>, count: Option<usize>) -> Box<Stream<Item=ZScanResult, Error=RedisError>> {
+pub fn zscan<K: Into<RedisKey>, P: Into<String>>(inner: &Arc<RedisClientInner>, key: K, pattern: Option<P>, count: Option<usize>) -> Box<dyn Stream<Item=Result<ZScanResult, RedisError>>> {
   let pattern = pattern.map(|s| s.into());
   let (tx, rx) = unbounded();
   let cursor = "0".to_owned();
@@ -1330,7 +1332,7 @@ pub fn zscan<K: Into<RedisKey>, P: Into<String>>(inner: &Arc<RedisClientInner>, 
   }))
 }
 
-pub fn mget<K: Into<MultipleKeys>>(inner: &Arc<RedisClientInner>, keys: K) -> Box<Future<Item=Vec<RedisValue>, Error=RedisError>> {
+pub fn mget<K: Into<MultipleKeys>>(inner: &Arc<RedisClientInner>, keys: K) -> Box<dyn Future<Output=Result<Vec<RedisValue>, RedisError>>> {
   let keys = keys.into();
 
   Box::new(utils::request_response(inner, move || {
@@ -1346,7 +1348,7 @@ pub fn mget<K: Into<MultipleKeys>>(inner: &Arc<RedisClientInner>, keys: K) -> Bo
   }))
 }
 
-pub fn zadd<K: Into<RedisKey>, V: Into<MultipleZaddValues>>(inner: &Arc<RedisClientInner>, key: K, options: Option<SetOptions>, changed: bool, incr: bool, values: V) -> Box<Future<Item=RedisValue, Error=RedisError>> {
+pub fn zadd<K: Into<RedisKey>, V: Into<MultipleZaddValues>>(inner: &Arc<RedisClientInner>, key: K, options: Option<SetOptions>, changed: bool, incr: bool, values: V) -> Box<dyn Future<Output=Result<RedisValue, RedisError>>> {
   let key = key.into();
   let values = values.into().inner();
 
@@ -1375,7 +1377,7 @@ pub fn zadd<K: Into<RedisKey>, V: Into<MultipleZaddValues>>(inner: &Arc<RedisCli
   }))
 }
 
-pub fn zcard<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Box<Future<Item=usize, Error=RedisError>> {
+pub fn zcard<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Box<dyn Future<Output=Result<usize, RedisError>>> {
   let key = key.into();
 
   Box::new(utils::request_response(inner, move || {
@@ -1392,7 +1394,7 @@ pub fn zcard<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Box<Fu
   }))
 }
 
-pub fn zcount<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, min: f64, max: f64) -> Box<Future<Item=usize, Error=RedisError>> {
+pub fn zcount<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, min: f64, max: f64) -> Box<dyn Future<Output=Result<usize, RedisError>>> {
   let key = key.into();
 
   Box::new(utils::request_response(inner, move || {
@@ -1412,7 +1414,7 @@ pub fn zcount<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, min: f64
   }))
 }
 
-pub fn zlexcount<K: Into<RedisKey>, M: Into<String>, N: Into<String>>(inner: &Arc<RedisClientInner>, key: K, min: M, max: N) -> Box<Future<Item=usize, Error=RedisError>> {
+pub fn zlexcount<K: Into<RedisKey>, M: Into<String>, N: Into<String>>(inner: &Arc<RedisClientInner>, key: K, min: M, max: N) -> Box<dyn Future<Output=Result<usize, RedisError>>> {
   let key = key.into();
   let min = min.into();
   let max = max.into();
@@ -1431,7 +1433,7 @@ pub fn zlexcount<K: Into<RedisKey>, M: Into<String>, N: Into<String>>(inner: &Ar
   }))
 }
 
-pub fn zincrby<K: Into<RedisKey>, V: Into<RedisValue>>(inner: &Arc<RedisClientInner>, key: K, incr: f64, value: V) -> Box<Future<Item=f64, Error=RedisError>> {
+pub fn zincrby<K: Into<RedisKey>, V: Into<RedisValue>>(inner: &Arc<RedisClientInner>, key: K, incr: f64, value: V) -> Box<dyn Future<Output=Result<f64, RedisError>>> {
   let key = key.into();
   let value = value.into();
 
@@ -1447,7 +1449,7 @@ pub fn zincrby<K: Into<RedisKey>, V: Into<RedisValue>>(inner: &Arc<RedisClientIn
   }))
 }
 
-pub fn zrange<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, start: i64, stop: i64, with_scores: bool) -> Box<Future<Item=Vec<RedisValue>, Error=RedisError>> {
+pub fn zrange<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, start: i64, stop: i64, with_scores: bool) -> Box<dyn Future<Output=Result<Vec<RedisValue>, RedisError>>> {
   let key = key.into();
 
   Box::new(utils::request_response(inner, move || {
@@ -1463,7 +1465,7 @@ pub fn zrange<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, start: i
   }))
 }
 
-pub fn zrangebylex<K: Into<RedisKey>, M: Into<String>, N: Into<String>>(inner: &Arc<RedisClientInner>, key: K, min: M, max: N, limit: Option<(usize, usize)>) -> Box<Future<Item=Vec<RedisValue>, Error=RedisError>> {
+pub fn zrangebylex<K: Into<RedisKey>, M: Into<String>, N: Into<String>>(inner: &Arc<RedisClientInner>, key: K, min: M, max: N, limit: Option<(usize, usize)>) -> Box<dyn Future<Output=Result<Vec<RedisValue>, RedisError>>> {
   let key = key.into();
   let min = min.into();
   let max = max.into();
@@ -1483,7 +1485,7 @@ pub fn zrangebylex<K: Into<RedisKey>, M: Into<String>, N: Into<String>>(inner: &
   }))
 }
 
-pub fn zrangebyscore<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, min: f64, max: f64, with_scores: bool, limit: Option<(usize, usize)>) -> Box<Future<Item=Vec<RedisValue>, Error=RedisError>> {
+pub fn zrangebyscore<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, min: f64, max: f64, with_scores: bool, limit: Option<(usize, usize)>) -> Box<dyn Future<Output=Result<Vec<RedisValue>, RedisError>>> {
   let key = key.into();
 
   Box::new(utils::request_response(inner, move || {
@@ -1511,7 +1513,7 @@ pub fn zrangebyscore<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, m
   }))
 }
 
-pub fn zpopmax<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, count: Option<usize>) -> Box<Future<Item=Vec<RedisValue>, Error=RedisError>> {
+pub fn zpopmax<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, count: Option<usize>) -> Box<dyn Future<Output=Result<Vec<RedisValue>, RedisError>>> {
   let key = key.into();
 
   Box::new(utils::request_response(inner, move || {
@@ -1528,7 +1530,7 @@ pub fn zpopmax<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, count: 
   }))
 }
 
-pub fn zpopmin<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, count: Option<usize>) -> Box<Future<Item=Vec<RedisValue>, Error=RedisError>> {
+pub fn zpopmin<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, count: Option<usize>) -> Box<dyn Future<Output=Result<Vec<RedisValue>, RedisError>>> {
   let key = key.into();
 
   Box::new(utils::request_response(inner, move || {
@@ -1545,7 +1547,7 @@ pub fn zpopmin<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, count: 
   }))
 }
 
-pub fn zrank<K: Into<RedisKey>, V: Into<RedisValue>>(inner: &Arc<RedisClientInner>, key: K, value: V) -> Box<Future<Item=RedisValue, Error=RedisError>> {
+pub fn zrank<K: Into<RedisKey>, V: Into<RedisValue>>(inner: &Arc<RedisClientInner>, key: K, value: V) -> Box<dyn Future<Output=Result<RedisValue, RedisError>>> {
   let key = key.into();
   let value = value.into();
 
@@ -1556,7 +1558,7 @@ pub fn zrank<K: Into<RedisKey>, V: Into<RedisValue>>(inner: &Arc<RedisClientInne
   }))
 }
 
-pub fn zrem<K: Into<RedisKey>, V: Into<MultipleValues>>(inner: &Arc<RedisClientInner>, key: K, values: V) -> Box<Future<Item=usize, Error=RedisError>> {
+pub fn zrem<K: Into<RedisKey>, V: Into<MultipleValues>>(inner: &Arc<RedisClientInner>, key: K, values: V) -> Box<dyn Future<Output=Result<usize, RedisError>>> {
   let key = key.into();
   let values = values.into();
 
@@ -1581,7 +1583,7 @@ pub fn zrem<K: Into<RedisKey>, V: Into<MultipleValues>>(inner: &Arc<RedisClientI
   }))
 }
 
-pub fn zremrangebylex<K: Into<RedisKey>, M: Into<String>, N: Into<String>>(inner: &Arc<RedisClientInner>, key: K, min: M, max: N) -> Box<Future<Item=usize, Error=RedisError>> {
+pub fn zremrangebylex<K: Into<RedisKey>, M: Into<String>, N: Into<String>>(inner: &Arc<RedisClientInner>, key: K, min: M, max: N) -> Box<dyn Future<Output=Result<usize, RedisError>>> {
   let key = key.into();
   let min = min.into();
   let max = max.into();
@@ -1600,7 +1602,7 @@ pub fn zremrangebylex<K: Into<RedisKey>, M: Into<String>, N: Into<String>>(inner
   }))
 }
 
-pub fn zremrangebyrank<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, start: i64, stop: i64) -> Box<Future<Item=usize, Error=RedisError>> {
+pub fn zremrangebyrank<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, start: i64, stop: i64) -> Box<dyn Future<Output=Result<usize, RedisError>>> {
   let key = key.into();
 
   Box::new(utils::request_response(inner, move || {
@@ -1617,7 +1619,7 @@ pub fn zremrangebyrank<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K,
   }))
 }
 
-pub fn zremrangebyscore<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, min: f64, max: f64) -> Box<Future<Item=usize, Error=RedisError>> {
+pub fn zremrangebyscore<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, min: f64, max: f64) -> Box<dyn Future<Output=Result<usize, RedisError>>> {
   let key = key.into();
 
   Box::new(utils::request_response(inner, move || {
@@ -1640,7 +1642,7 @@ pub fn zremrangebyscore<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K
   }))
 }
 
-pub fn zrevrange<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, start: i64, stop: i64, with_scores: bool) -> Box<Future<Item=Vec<RedisValue>, Error=RedisError>> {
+pub fn zrevrange<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, start: i64, stop: i64, with_scores: bool) -> Box<dyn Future<Output=Result<Vec<RedisValue>, RedisError>>> {
   let key = key.into();
 
   Box::new(utils::request_response(inner, move || {
@@ -1659,7 +1661,7 @@ pub fn zrevrange<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, start
   }))
 }
 
-pub fn zrevrangebylex<K: Into<RedisKey>, M: Into<String>, N: Into<String>>(inner: &Arc<RedisClientInner>, key: K, max: M, min: N, limit: Option<(usize, usize)>) -> Box<Future<Item=Vec<RedisValue>, Error=RedisError>> {
+pub fn zrevrangebylex<K: Into<RedisKey>, M: Into<String>, N: Into<String>>(inner: &Arc<RedisClientInner>, key: K, max: M, min: N, limit: Option<(usize, usize)>) -> Box<dyn Future<Output=Result<Vec<RedisValue>, RedisError>>> {
   let key = key.into();
   let max = max.into();
   let min = min.into();
@@ -1682,7 +1684,7 @@ pub fn zrevrangebylex<K: Into<RedisKey>, M: Into<String>, N: Into<String>>(inner
   }))
 }
 
-pub fn zrevrangebyscore<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, max: f64, min: f64, with_scores: bool, limit: Option<(usize, usize)>) -> Box<Future<Item=Vec<RedisValue>, Error=RedisError>> {
+pub fn zrevrangebyscore<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, max: f64, min: f64, with_scores: bool, limit: Option<(usize, usize)>) -> Box<dyn Future<Output=Result<Vec<RedisValue>, RedisError>>> {
   let key = key.into();
 
   Box::new(utils::request_response(inner, move || {
@@ -1708,7 +1710,7 @@ pub fn zrevrangebyscore<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K
   }))
 }
 
-pub fn zrevrank<K: Into<RedisKey>, V: Into<RedisValue>>(inner: &Arc<RedisClientInner>, key: K, value: V) -> Box<Future<Item=RedisValue, Error=RedisError>> {
+pub fn zrevrank<K: Into<RedisKey>, V: Into<RedisValue>>(inner: &Arc<RedisClientInner>, key: K, value: V) -> Box<dyn Future<Output=Result<RedisValue, RedisError>>> {
   let key = key.into();
   let value = value.into();
 
@@ -1719,7 +1721,7 @@ pub fn zrevrank<K: Into<RedisKey>, V: Into<RedisValue>>(inner: &Arc<RedisClientI
   }))
 }
 
-pub fn zscore<K: Into<RedisKey>, V: Into<RedisValue>>(inner: &Arc<RedisClientInner>, key: K, value: V) -> Box<Future<Item=RedisValue, Error=RedisError>> {
+pub fn zscore<K: Into<RedisKey>, V: Into<RedisValue>>(inner: &Arc<RedisClientInner>, key: K, value: V) -> Box<dyn Future<Output=Result<RedisValue, RedisError>>> {
   let key = key.into();
   let value = value.into();
 
@@ -1735,7 +1737,7 @@ pub fn zinterstore<D: Into<RedisKey>, K: Into<MultipleKeys>, W: Into<MultipleWei
                                                                                        keys: K,
                                                                                        weights: W,
                                                                                        aggregate: Option<AggregateOptions>)
-  -> Box<Future<Item=usize, Error=RedisError>>
+  -> Box<dyn Future<Output=Result<usize, RedisError>>>
 {
   let destination = destination.into();
   let keys = keys.into();
@@ -1784,7 +1786,7 @@ pub fn zunionstore<D: Into<RedisKey>, K: Into<MultipleKeys>, W: Into<MultipleWei
                                                                                        keys: K,
                                                                                        weights: W,
                                                                                        aggregate: Option<AggregateOptions>)
-  -> Box<Future<Item=usize, Error=RedisError>>
+  -> Box<dyn Future<Output=Result<usize, RedisError>>>
 {
   let destination = destination.into();
   let keys = keys.into();
@@ -1828,7 +1830,7 @@ pub fn zunionstore<D: Into<RedisKey>, K: Into<MultipleKeys>, W: Into<MultipleWei
   }))
 }
 
-pub fn ttl<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Box<Future<Item=i64, Error=RedisError>> {
+pub fn ttl<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Box<dyn Future<Output=Result<i64, RedisError>>> {
   let key = key.into();
 
   Box::new(utils::request_response(inner, move || {
@@ -1841,7 +1843,7 @@ pub fn ttl<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Box<Futu
   }))
 }
 
-pub fn pttl<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Box<Future<Item=i64, Error=RedisError>> {
+pub fn pttl<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Box<dyn Future<Output=Result<i64, RedisError>>> {
   let key = key.into();
 
   Box::new(utils::request_response(inner, move || {

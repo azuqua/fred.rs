@@ -17,10 +17,10 @@ use futures::{
   Future,
   Stream
 };
-use futures::sync::oneshot::{
+use futures::channel::oneshot::{
   channel as oneshot_channel
 };
-use futures::sync::mpsc::{
+use futures::channel::mpsc::{
   unbounded
 };
 

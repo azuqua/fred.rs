@@ -8,8 +8,9 @@ use url::ParseError;
 use std::string::FromUtf8Error;
 use std::num::ParseFloatError;
 use std::num::ParseIntError;
-use futures::sync::mpsc::SendError;
-use futures::Canceled;
+use futures::channel::mpsc::SendError;
+// use futures::Canceled;
+use futures::channel::oneshot::Canceled;
 
 use redis_protocol::types::{
   RedisProtocolError,
@@ -17,7 +18,7 @@ use redis_protocol::types::{
 };
 
 use redis_protocol::types::Frame;
-use tokio_timer::TimerError;
+// use tokio_timer::TimerError;
 
 /// An enum representing the type of error from Redis.
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -91,17 +92,20 @@ impl From<()> for RedisError {
   }
 }
 
-impl<T: Into<RedisError>> From<SendError<T>> for RedisError {
-  fn from(e: SendError<T>) -> Self {
+impl From<SendError> for RedisError
+{
+  fn from(e: SendError) -> Self { // FIXME: make sure we're not losing something here now that we're dropping T
     RedisError::new(RedisErrorKind::Unknown, format!("{}", e))
   }
 }
 
+/*
 impl From<TimerError> for RedisError {
   fn from(e: TimerError) -> Self {
     RedisError::new(RedisErrorKind::Unknown, format!("{:?}", e))
   }
 }
+*/
 
 impl From<IoError> for RedisError {
   fn from(e: IoError) -> Self {
@@ -169,7 +173,7 @@ impl Error for RedisError {
     self.kind.to_str()
   }
 
-  fn cause(&self) -> Option<&Error> {
+  fn cause(&self) -> Option<&dyn Error> {
     None
   }
 

@@ -15,13 +15,13 @@ use futures::{
   Stream,
   stream
 };
-use futures::sync::oneshot::{
+use futures::channel::oneshot::{
   Sender as OneshotSender,
   Receiver as OneshotReceiver,
   channel as oneshot_channel
 };
 use futures::stream::ForEach;
-use futures::sync::mpsc::{
+use futures::channel::mpsc::{
   Sender,
   Receiver,
   channel

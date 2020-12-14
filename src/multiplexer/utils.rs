@@ -21,7 +21,7 @@ use futures::{
   Future,
   Sink
 };
-use futures::sync::oneshot::Sender as OneshotSender;
+use futures::channel::oneshot::Sender as OneshotSender;
 
 use redis_protocol::prelude::*;
 
@@ -40,7 +40,7 @@ use std::mem;
 use crate::protocol::types::{RedisCommand, RedisCommandKind};
 use crate::client::{RedisClientInner, RedisClient};
 use crate::types::{RedisConfig, ReconnectPolicy, RedisValue, RedisKey, ScanResult, ZScanResult, SScanResult, HScanResult};
-use futures::sync::mpsc::UnboundedSender;
+use futures::channel::mpsc::UnboundedSender;
 use crate::protocol::utils::frame_to_single_result;
 use crate::utils::send_command;
 

@@ -3,11 +3,13 @@ use futures::{
   Future,
   Stream,
   Sink,
-  lazy
+  select,
+  // lazy
 };
-use futures::future::{loop_fn, Loop, Either};
-use futures::sync::mpsc::{UnboundedSender, unbounded};
-use futures::sync::oneshot::{
+// use futures::future::{loop_fn, Loop, Either};
+use futures::future::{Either, lazy, TryFutureExt, FutureExt};
+use futures::channel::mpsc::{UnboundedSender, unbounded};
+use futures::channel::oneshot::{
   Sender as OneshotSender,
   channel as oneshot_channel
 };
@@ -18,7 +20,7 @@ use crate::mocks;
 use crate::utils as client_utils;
 use crate::multiplexer::utils;
 use crate::multiplexer::connection;
-use azuqua_core_async::*;
+use crate::async_ng::*;
 
 use std::ops::{Deref, DerefMut, Mul};
 
@@ -55,7 +57,7 @@ use std::time::{Instant, Duration};
 
 use crate::multiplexer::Multiplexer;
 
-use tokio_core::net::{
+use tokio_02::net::{
   TcpStream
 };
 use std::net::{
@@ -65,7 +67,7 @@ use std::net::{
 
 use crate::error::*;
 
-use tokio_io::codec::Framed;
+use tokio_util::codec::Framed;
 use crate::protocol::RedisCodec;
 
 #[cfg(feature="enable-tls")]
@@ -78,7 +80,13 @@ use native_tls::{
   TlsConnector
 };
 
+/*
 use futures::stream::{
+  SplitSink,
+  SplitStream
+};
+*/
+use futures_util::stream::{
   SplitSink,
   SplitStream
 };
@@ -106,11 +114,11 @@ type TlsTransportSink = SplitSink<TlsFramed>;
 type TlsTransportStream = SplitStream<TlsFramed>;
 
 #[cfg(not(feature="enable-tls"))]
-type TlsTransportSink = SplitSink<TcpFramed>;
+type TlsTransportSink = futures_util::stream::SplitSink<TcpFramed,Frame>; // FIXME: this appears to be in futures::stream too
 #[cfg(not(feature="enable-tls"))]
-type TlsTransportStream = SplitStream<TcpFramed>;
+type TlsTransportStream = futures_util::stream::SplitStream<TcpFramed>;
 
-type TcpTransportSink = SplitSink<TcpFramed>;
+type TcpTransportSink = SplitSink<TcpFramed, Frame>;
 type TcpTransportStream = SplitStream<TcpFramed>;
 
 type SplitTlsTransport = (TlsTransportSink, TlsTransportStream);
@@ -130,14 +138,13 @@ fn init_tls_transports(inner: &Arc<RedisClientInner>, spawner: Spawner, key: Opt
 }
 
 #[cfg(not(feature="enable-tls"))]
-fn init_tls_transports(inner: &Arc<RedisClientInner>, spawner: Spawner, key: Option<String>, cache: ClusterKeyCache)
-  -> Box<Future<Item=(Either<TlsTransports, TcpTransports>, ClusterKeyCache), Error=RedisError>>
+async fn init_tls_transports(inner: &Arc<RedisClientInner>, spawner: Spawner, key: Option<String>, cache: ClusterKeyCache)
+  -> Result<(Either<TlsTransports, TcpTransports>, ClusterKeyCache), RedisError>
 {
   debug!("{} Initialize clustered tls transports without real tls.", n!(inner));
 
-  Box::new(connection::create_all_transports(spawner, &cache, key, inner).map(move |result| {
-    (Either::B(result), cache)
-  }))
+  let result = connection::create_all_transports(spawner, &cache, key, inner).await?;
+  Ok((Either::Right(result), cache))
 }
 
 #[cfg(feature="enable-tls")]
@@ -152,40 +159,45 @@ fn create_centralized_transport_tls(inner: &Arc<RedisClientInner>, addr: &Socket
 }
 
 #[cfg(not(feature="enable-tls"))]
-fn create_centralized_transport_tls(inner: &Arc<RedisClientInner>, addr: &SocketAddr, spawner: &Spawner)
-  -> Box<Future<Item=Either<SplitTlsTransport, SplitTcpTransport>, Error=RedisError>>
+async fn create_centralized_transport_tls(inner: &Arc<RedisClientInner>, addr: &SocketAddr, spawner: &Spawner)
+  -> Result<Either<SplitTlsTransport, SplitTcpTransport>, RedisError>
 {
   debug!("{} Initialize centralized tls transports without real tls.", n!(inner));
 
-  Box::new(connection::create_transport_tls(&addr, &spawner, inner).map(|(sink, stream)| {
-    Either::A((sink, stream))
-  }))
+  let (sink, stream) = connection::create_transport_tls(&addr, &spawner, inner).await?;
+  Ok(Either::Left((sink, stream)))
 }
 
-fn create_centralized_transport(inner: &Arc<RedisClientInner>, addr: &SocketAddr, spawner: &Spawner)
-  -> Box<Future<Item=Either<SplitTlsTransport, SplitTcpTransport>, Error=RedisError>>
+async fn create_centralized_transport(inner: &Arc<RedisClientInner>, addr: &SocketAddr, spawner: &Spawner)
+  -> Result<Either<SplitTlsTransport, SplitTcpTransport>, RedisError>
 {
   debug!("{} Initialize centralized transports.", n!(inner));
 
-  Box::new(connection::create_transport(&addr, &spawner, inner).map(|(sink, stream)| {
-    Either::B((sink, stream))
-  }))
+  let (sink,stream) = connection::create_transport(&addr, &spawner, inner).await?;
+  Ok(Either::Right((sink, stream)))
 }
 
 type InitState = (Spawner, Arc<RedisClientInner>, Multiplexer);
 type CommandLoopState = (Spawner, Arc<RedisClientInner>, Multiplexer, Option<RedisError>);
 
-fn backoff_and_retry(inner: Arc<RedisClientInner>, spawner: Spawner, multiplexer: Multiplexer, force_no_backoff: bool) -> Box<Future<Item=Loop<InitState, InitState>, Error=RedisError>> {
+async fn backoff_and_retry(inner: Arc<RedisClientInner>, spawner: Spawner, multiplexer: Multiplexer, force_no_backoff: bool) -> Result<InitState, RedisError> {
   let delay = if force_no_backoff {
     None
   }else{
     if let Some(delay) = utils::next_reconnect_delay(&inner.policy) {
       Some(delay)
     }else{
-      return client_utils::future_error(RedisError::new_canceled());
+      return Err(RedisError::new_canceled());
     }
   };
 
+  if let Some(delay) = delay {
+    tokio_02::time::delay_for(Duration::from_millis(delay as u64)).await;
+  }
+
+  Ok((spawner, inner, multiplexer))
+
+  /*
   let timer_ft = if let Some(delay) = delay {
     let dur = Duration::from_millis(delay as u64);
 
@@ -199,14 +211,16 @@ fn backoff_and_retry(inner: Arc<RedisClientInner>, spawner: Spawner, multiplexer
   Box::new(timer_ft.and_then(move |_| {
     Ok::<_, RedisError>(Loop::Continue((spawner, inner, multiplexer)))
   }))
+   */
 }
 
-fn build_centralized_multiplexer(spawner: Spawner, inner: Arc<RedisClientInner>, multiplexer: Multiplexer, force_no_backoff: bool) -> Box<Future<Item=InitState, Error=RedisError>> {
-  Box::new(loop_fn((spawner, inner, multiplexer), move |(spawner, inner, multiplexer)| {
+async fn build_centralized_multiplexer(spawner: Spawner, inner: Arc<RedisClientInner>, multiplexer: Multiplexer, force_no_backoff: bool) -> Result<InitState, RedisError> {
+  //Box::new(loop_fn((spawner, inner, multiplexer), move |(spawner, inner, multiplexer)| {
+  loop {
     debug!("{} Attempting to rebuild centralized connection.", n!(inner));
     if client_utils::read_closed_flag(&inner.closed) {
       debug!("{} Emitting canceled error checking closed flag.", n!(inner));
-      return client_utils::future_error(RedisError::new_canceled());
+      return Err(RedisError::new_canceled());
     }
 
     let init_inner = inner.clone();
@@ -217,46 +231,73 @@ fn build_centralized_multiplexer(spawner: Spawner, inner: Arc<RedisClientInner>,
     let final_inner = inner.clone();
 
     let dur = Duration::from_millis(INIT_TIMEOUT_MS);
-    let timer_ft = inner.timer.sleep(dur)
-      .from_err::<RedisError>()
-      .map(|_| ());
+    let timer_ft = Box::new(inner.timer.sleep(dur).fuse());
+      //.err_into::<RedisError>()
+      //.map(|_| ());
 
     let uses_tls = inner.config.read().deref().tls();
     let auth_key = utils::read_auth_key(&inner.config);
 
     // initialize a connection to the server and split it, then attach the sink and stream to the multiplexer
-    let init_ft = lazy(move || {
+    /*
+    let init_ft = lazy(move |_| {
       let addr_str = fry!(utils::read_centralized_host(&init_inner.config));
       let mut addr = fry!(addr_str.to_socket_addrs());
 
       let addr = match addr.next() {
         Some(a) => a,
-        None => return client_utils::future_error(RedisError::new(
+        None => return crate::utils::future_error(RedisError::new(
           RedisErrorKind::Unknown, format!("Could not resolve hostname {}.", addr_str)
         ))
       };
 
       if uses_tls {
-        create_centralized_transport_tls(&init_inner, &addr, &init_spawner)
+        //Box::new(create_centralized_transport_tls(&init_inner, &addr, &init_spawner))
+        Box::new(create_centralized_transport_tls(&init_inner, &addr, &init_spawner))
       }else{
-        create_centralized_transport(&init_inner, &addr, &init_spawner)
+        //Box::new(create_centralized_transport(&init_inner, &addr, &init_spawner))
+        Box::new(create_centralized_transport(&init_inner, &addr, &init_spawner))
       }
     })
-    .and_then(move |transport| {
+     */
+    let init_ft = async move {
+      let addr_str = utils::read_centralized_host(&init_inner.config)?;
+      let mut addr = addr_str.to_socket_addrs()?;
+
+      let addr = match addr.next() {
+        Some(a) => a,
+        None => return Err(RedisError::new(
+          RedisErrorKind::Unknown, format!("Could not resolve hostname {}.", addr_str)
+        ))
+      };
+
+      if uses_tls {
+        //Box::new(create_centralized_transport_tls(&init_inner, &addr, &init_spawner))
+        create_centralized_transport_tls(&init_inner, &addr, &init_spawner).await
+      }else{
+        //Box::new(create_centralized_transport(&init_inner, &addr, &init_spawner))
+        create_centralized_transport(&init_inner, &addr, &init_spawner).await
+      }
+    };
+
+    let init_ft = init_ft.map_ok(move |transport| {
       debug!("{} Adding transports to centralized multiplexer.", n!(inner));
       match transport {
-        Either::A((tls_sink, tls_stream)) => {
+        Either::Left((tls_sink, tls_stream)) => {
           multiplexer.sinks.set_centralized_sink(RedisSink::Tls(tls_sink));
           multiplexer.streams.add_stream(RedisStream::Tls(tls_stream));
         },
-        Either::B((tcp_sink, tcp_stream)) => {
+        Either::Right((tcp_sink, tcp_stream)) => {
           multiplexer.sinks.set_centralized_sink(RedisSink::Tcp(tcp_sink));
           multiplexer.streams.add_stream(RedisStream::Tcp(tcp_stream));
         }
       };
 
+      // FIXME: recheck logic here in case of error, and for both spawned tasks
+
       // notify callers that the connection is ready to use on the next event loop tick
-      spawner.spawn(lazy(move || {
+      /*
+      spawner.spawn_std(lazy(move |_| {
         debug!("{} Emitting connect message after reconnecting.", n!(inner));
         let new_client: RedisClient = (&inner).into();
 
@@ -264,13 +305,52 @@ fn build_centralized_multiplexer(spawner: Spawner, inner: Arc<RedisClientInner>,
         utils::emit_reconnect(&inner.reconnect_tx, &new_client);
         client_utils::set_client_state(&inner.state, ClientState::Connected);
 
-        Ok::<_, ()>(())
+        //Ok::<_, ()>(())
       }));
 
-      spawner.spawn_remote(multiplexer.listen());
-      Ok(multiplexer)
+      spawner.spawn_std(multiplexer.listen());
+      */
+      multiplexer
     });
 
+    select! {
+      timeout = timer_ft => match timeout {
+        Ok(_) => {
+          // timer_ft finished first (timeout)
+          let err = RedisError::new_timeout();
+          utils::emit_connect_error(&final_inner.connect_tx, &err);
+          utils::emit_error(&final_inner.error_tx, &err);
+
+          backoff_and_retry(final_inner, final_spawner, final_multiplexer, force_no_backoff).await;
+          continue;
+        },
+        Err((timer_err,_)) => {
+          // timer had an error, try again without backoff
+          warn!("{} Timer error building redis connections: {:?}", nw!(final_inner), timer_err);
+          //client_utils::future_ok(Loop::Continue((final_spawner, final_inner, final_multiplexer)))
+          continue;
+        }
+      },
+      init_done = init_ft => match init_done {
+        Ok(_) => {
+          // initialization worked
+          // client_utils::future_ok(Loop::Break((final_spawner, final_inner, final_multiplexer)))
+          return Ok(())
+        },
+        Err((init_err, _)) => {
+          // initialization had an error
+          debug!("{} Error initializing connection: {:?}", n!(final_inner), init_err);
+
+          utils::emit_connect_error(&final_inner.connect_tx, &init_err);
+          utils::emit_error(&final_inner.error_tx, &init_err);
+
+          backoff_and_retry(final_inner, final_spawner, final_multiplexer, force_no_backoff).await;
+          continue;
+        }
+      }
+    }
+
+    /*
     Box::new(timer_ft.select2(init_ft).then(move |result| {
       match result {
         Ok(Either::A((_, init_ft))) => {
@@ -301,15 +381,18 @@ fn build_centralized_multiplexer(spawner: Spawner, inner: Arc<RedisClientInner>,
         }
       }
     }))
-  }))
+    */
+  // }))
+  }
 }
 
-fn build_clustered_multiplexer(spawner: Spawner, inner: Arc<RedisClientInner>, multiplexer: Multiplexer, force_no_backoff: bool) -> Box<Future<Item=InitState, Error=RedisError>> {
-  Box::new(loop_fn((spawner, inner, multiplexer), move |(spawner, inner, multiplexer)| {
+async fn build_clustered_multiplexer(spawner: Spawner, inner: Arc<RedisClientInner>, multiplexer: Multiplexer, force_no_backoff: bool) -> Result<InitState, RedisError> {
+  //Box::new(loop_fn((spawner, inner, multiplexer), move |(spawner, inner, multiplexer)| {
+  loop {
     debug!("{} Attempting to rebuild centralized connection.", n!(inner));
     if client_utils::read_closed_flag(&inner.closed) {
       debug!("{} Emitting canceled error checking closed flag.", n!(inner));
-      return client_utils::future_error(RedisError::new_canceled());
+      return Err(RedisError::new_canceled());
     }
 
     let init_inner = inner.clone();
@@ -321,7 +404,7 @@ fn build_clustered_multiplexer(spawner: Spawner, inner: Arc<RedisClientInner>, m
 
     let dur = Duration::from_millis(INIT_TIMEOUT_MS);
     let timer_ft = inner.timer.sleep(dur)
-      .from_err::<RedisError>()
+      .err_info::<RedisError>()
       .map(|_| ());
 
     let uses_tls = inner.config.read().deref().tls();
@@ -332,9 +415,9 @@ fn build_clustered_multiplexer(spawner: Spawner, inner: Arc<RedisClientInner>, m
       if uses_tls {
         init_tls_transports(&init_inner, init_spawner, auth_key, cache)
       }else{
-        Box::new(connection::create_all_transports(init_spawner, &cache, auth_key, &init_inner).map(move |result| {
+        connection::create_all_transports(init_spawner, &cache, auth_key, &init_inner).map(move |result| {
           (Either::B(result), cache)
-        }))
+        })
       }
     })
     .and_then(move |(mut transports, cache)| {
@@ -344,7 +427,7 @@ fn build_clustered_multiplexer(spawner: Spawner, inner: Arc<RedisClientInner>, m
       multiplexer.sinks.set_cluster_cache(cache);
 
       match transports {
-        Either::A(tls_transports) => {
+        Either::Left(tls_transports) => {
           for (server, transport) in tls_transports.into_iter() {
             let (sink, stream) = transport.split();
 
@@ -352,7 +435,7 @@ fn build_clustered_multiplexer(spawner: Spawner, inner: Arc<RedisClientInner>, m
             multiplexer.streams.add_stream(RedisStream::Tls(stream));
           }
         },
-        Either::B(tcp_transports) => {
+        Either::Right(tcp_transports) => {
           for (server, transport) in tcp_transports.into_iter() {
             let (sink, stream) = transport.split();
 
@@ -377,7 +460,40 @@ fn build_clustered_multiplexer(spawner: Spawner, inner: Arc<RedisClientInner>, m
       Ok(multiplexer)
     });
 
-    Box::new(timer_ft.select2(init_ft).then(move |result| {
+    select! {
+      timeout = timer_ft => match timeout {
+        Ok(_) => {
+          // timer_ft finished first (timeout)
+          let err = RedisError::new_timeout();
+          utils::emit_connect_error(&final_inner.connect_tx, &err);
+          utils::emit_error(&final_inner.error_tx, &err);
+
+          backoff_and_retry(final_inner, final_spawner, final_multiplexer, force_no_backoff).await?;
+        },
+        Err((timer_err, _)) => {
+          // timer had an error, try again without backoff
+          warn!("{} Timer error building redis connections: {:?}", nw!(final_inner), timer_err);
+          //client_utils::future_ok(Loop::Continue((final_spawner, final_inner, final_multiplexer)))
+          continue;
+        }
+      },
+      init_done = init_ft => match init_done {
+        Ok(_) => {
+          // initialization worked
+          return Ok((final_spawner, final_inner, final_multiplexer))
+        },
+        Err((init_err, _)) => {
+          // initialization had an error
+          debug!("{} Error initializing connection: {:?}", n!(final_inner), init_err);
+
+          utils::emit_connect_error(&final_inner.connect_tx, &init_err);
+          utils::emit_error(&final_inner.error_tx, &init_err);
+
+          backoff_and_retry(final_inner, final_spawner, final_multiplexer, force_no_backoff).await?;
+        }
+      }
+    }
+    /* Box::new(timer_ft.select2(init_ft).then(move |result| {
       match result {
         Ok(Either::A((_, init_ft))) => {
           // timer_ft finished first (timeout)
@@ -407,12 +523,21 @@ fn build_clustered_multiplexer(spawner: Spawner, inner: Arc<RedisClientInner>, m
         }
       }
     }))
-  }))
+     */
+
+  //}))
+  }
 }
 
 /// Rebuild the connection and attempt to send the last command until it succeeds or the max number of reconnects are hit.
-fn rebuild_connection(spawner: Spawner, inner: Arc<RedisClientInner>, multiplexer: Multiplexer, force_no_backoff: bool, last_command: RedisCommand) -> Box<Future<Item=(Spawner, Arc<RedisClientInner>, Multiplexer, Option<RedisError>), Error=RedisError>> {
-  Box::new(loop_fn((spawner, inner, multiplexer, force_no_backoff, last_command), move |(spawner, inner, multiplexer, force_no_backoff, mut last_command)| {
+//fn rebuild_connection(spawner: Spawner, inner: Arc<RedisClientInner>, multiplexer: Multiplexer, force_no_backoff: bool, last_command: RedisCommand) -> Box<Future<Item=(Spawner, Arc<RedisClientInner>, Multiplexer, Option<RedisError>), Error=RedisError>> {
+async fn rebuild_connection(spawner: Spawner, inner: Arc<RedisClientInner>, multiplexer: Multiplexer, force_no_backoff: bool, last_command: RedisCommand) ->
+  Result<(Spawner, Arc<RedisClientInner>, Multiplexer, Option<RedisError>), RedisError>
+{
+  //Box::new(loop_fn((spawner, inner, multiplexer, force_no_backoff, last_command), move |(spawner, inner, multiplexer, force_no_backoff, mut last_command)| {
+
+  /*
+  loop {
     multiplexer.sinks.close();
     multiplexer.streams.close();
 
@@ -429,7 +554,7 @@ fn rebuild_connection(spawner: Spawner, inner: Arc<RedisClientInner>, multiplexe
         Ok((h, i, m)) => (h, i, m),
         Err(e) => {
           warn!("{} Could not reconnect to redis server when rebuilding connection: {:?}", nw!(logging_inner), e);
-          return client_utils::future_error(e)
+          return Err(e);
         },
       };
       client_utils::set_client_state(&inner.state, ClientState::Connected);
@@ -440,7 +565,7 @@ fn rebuild_connection(spawner: Spawner, inner: Arc<RedisClientInner>, multiplexe
           let _ = tx.send(Err(RedisError::new(RedisErrorKind::Unknown, "Max write attempts exceeded.")));
         }
 
-        return client_utils::future_ok((spawner, inner, multiplexer, None));
+        return Ok((spawner, inner, multiplexer, None));
       }
 
       debug!("{} Retry sending last command after building connection: {:?}", n!(inner), last_command.kind);
@@ -451,13 +576,13 @@ fn rebuild_connection(spawner: Spawner, inner: Arc<RedisClientInner>, multiplexe
       let write_ft = multiplexer.write_command(&inner, &mut last_command);
       multiplexer.set_last_request(Some(last_command));
 
-      Box::new(write_ft.then(move |result| Ok((spawner, inner, multiplexer, Some((rx, result))))))
+      write_ft.then(move |result| Ok((spawner, inner, multiplexer, Some((rx, result)))))
     })
     .and_then(move |(spawner, inner, multiplexer, result)| {
       let (rx, result) = match result {
         Some((rx, result)) => (rx, result),
         // we didnt attempt to send the last command again, so break out
-        None => return client_utils::future_ok(Loop::Break((spawner, inner, multiplexer, None)))
+        None => return Ok((spawner, inner, multiplexer, None))
       };
 
       if let Err(e) = result {
@@ -468,15 +593,16 @@ fn rebuild_connection(spawner: Spawner, inner: Arc<RedisClientInner>, multiplexe
 
         let last_command = match multiplexer.take_last_request() {
           Some(c) => c,
-          None => return client_utils::future_error(RedisError::new(
+          None => return Err(RedisError::new(
             RedisErrorKind::Unknown, "Missing last command rebuilding connection."
           ))
         };
 
-        client_utils::future_ok(Loop::Continue((spawner, inner, multiplexer, force_no_backoff, last_command)))
+        //client_utils::future_ok(Loop::Continue((spawner, inner, multiplexer, force_no_backoff, last_command)))
+        continue;
       }else{
         // wait on the last request callback, if successful break, else continue retrying
-        Box::new(rx.from_err::<RedisError>().then(move |result| {
+        rx.err_into::<RedisError>().then(move |result| {
           match result {
             Ok(Some((last_command, error))) => {
               if let Some(ref mut p) = inner.policy.write().deref_mut() {
@@ -484,24 +610,30 @@ fn rebuild_connection(spawner: Spawner, inner: Arc<RedisClientInner>, multiplexe
               }
 
               debug!("{} Continue to retry connections after trying to write command: {:?}", n!(inner), error);
-              Ok(Loop::Continue((spawner, inner, multiplexer, force_no_backoff, last_command)))
+              //Ok(Loop::Continue((spawner, inner, multiplexer, force_no_backoff, last_command)))
+              continue;
             },
-            Ok(None) => Ok(Loop::Break((spawner, inner, multiplexer, None))),
-            Err(e) => Err(e)
+            //Ok(None) => Ok(Loop::Break((spawner, inner, multiplexer, None))),
+            Ok(None) => return Ok((spawner, inner, multiplexer, None)),
+            Err(e) => return Err(e) // FIXME: double check logic here
           }
-        }))
+        })
       }
     })
-  }))
+  }
+   */
+  unimplemented!()
 }
 
-fn create_commands_ft(spawner: Spawner, inner: Arc<RedisClientInner>) -> Box<Future<Item=Option<RedisError>, Error=RedisError>> {
+async fn create_commands_ft(spawner: Spawner, inner: Arc<RedisClientInner>) -> Result<Option<RedisError>, RedisError> {
+  //Box<Future<Item=Option<RedisError>, Error=RedisError>> {
   let (tx, rx) = unbounded();
   utils::set_command_tx(&inner, tx);
 
   let multiplexer = Multiplexer::new(&inner);
 
-  Box::new(lazy(move || {
+  //Box::new(lazy(move || {
+  lazy(move || {
     if multiplexer.is_clustered() {
       build_clustered_multiplexer(spawner, inner, multiplexer, true)
     }else{
@@ -603,15 +735,17 @@ fn create_commands_ft(spawner: Spawner, inner: Arc<RedisClientInner>) -> Box<Fut
       Ok(e) => Ok(e),
       Err(e) => Ok::<_, RedisError>(Some(e))
     })
-  }))
+  //}))
+  }).await
 }
 
 /// Initialize a connection to the Redis server.
 #[cfg(not(feature="mocks"))]
-pub fn connect(spawner: &Spawner, inner: Arc<RedisClientInner>) -> Box<Future<Item=Option<RedisError>, Error=RedisError>> {
+pub async fn connect(spawner: &Spawner, inner: Arc<RedisClientInner>) -> Result<Option<RedisError>, RedisError> {
+  //Box<Future<Item=Option<RedisError>, Error=RedisError>> {
   client_utils::set_client_state(&inner.state, ClientState::Connecting);
 
-  Box::new(create_commands_ft(spawner.clone(), inner.clone()).then(move |result| {
+  create_commands_ft(spawner.clone(), inner.clone()).then(move |result| {
     if let Err(ref e) = result {
       if e.is_canceled() {
         debug!("{} Suppressing canceled redis error: {:?}", n!(inner), e);
@@ -623,7 +757,7 @@ pub fn connect(spawner: &Spawner, inner: Arc<RedisClientInner>) -> Box<Future<It
     }else{
       result
     }
-  }))
+  }).await
 }
 
 #[cfg(feature="mocks")]

@@ -17,12 +17,12 @@ use futures::{
   Stream
 };
 
-use futures::sync::oneshot::{
+use futures::channel::oneshot::{
   Sender as OneshotSender,
   Receiver as OneshotReceiver,
   channel as oneshot_channel
 };
-use futures::sync::mpsc::{
+use futures::channel::mpsc::{
   UnboundedReceiver,
   UnboundedSender,
   unbounded

@@ -6,15 +6,16 @@
 
 
 extern crate futures;
-extern crate tokio_core;
-extern crate tokio_proto;
+// extern crate tokio_core;
+//extern crate tokio_compat;
+//extern crate tokio_proto;
 extern crate bytes;
 extern crate parking_lot;
 extern crate url;
 extern crate redis_protocol;
 extern crate float_cmp;
 extern crate tokio_timer_patched as tokio_timer;
-extern crate tokio_io;
+// extern crate tokio_io;
 extern crate rand;
 
 #[macro_use]
@@ -51,6 +52,8 @@ mod commands;
 pub mod borrowed;
 pub mod owned;
 
+mod async_ng;
+
 pub use client::RedisClient;
 
 /// A helper module to re-export several common dependencies.
@@ -59,22 +62,3 @@ pub mod prelude {
   pub use crate::types::*;
   pub use crate::client::RedisClient;
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
