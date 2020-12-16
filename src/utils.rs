@@ -73,6 +73,7 @@ use crate::async_ng::*;
 macro_rules! fry {
   ($expr:expr) => (match $expr {
     Ok(val) => val,
+    //Err(err) => return Err(err.into())
     Err(err) => return crate::utils::future_error(err.into())
   })
 }
@@ -239,26 +240,38 @@ pub fn send_command(inner: &Arc<RedisClientInner>, command: RedisCommand) -> Res
   }
 }
 
+/*
 pub fn request_response<F>(inner: &Arc<RedisClientInner>, func: F) -> Pin<Box<dyn Future<Output=Result<ProtocolFrame, RedisError>>>>
   where F: FnOnce() -> Result<(RedisCommandKind, Vec<RedisValue>), RedisError>
 {
-  //let _ = fry!(check_client_state(&inner.state, ClientState::Connected));
-  let (kind, args) = fry!(func()); // FIXME: checkout the above?
+  let _ = match check_client_state(&inner.state, ClientState::Connected) {
+    Ok(_) => (),
+    Err(e) => return Box::pin(future::err(e))
+  };
+  let (kind, args) = match func() { // FIXME: get fry back
+    Ok(t) => t,
+    Err(e) => return Box::pin(future::err(e))
+  };
+
 
   let (tx, rx) = oneshot_channel();
   let command = RedisCommand::new(kind, args, Some(tx));
 
    match send_command(&inner, command) {
-     Ok(_) => Box::pin(rx.from_err::<RedisError>().flatten()),
+     Ok(_) => Box::pin(rx.err_into::<RedisError>().flatten()),
      Err(e) => future_error(e)
    }
 }
-/*
+*/
+
 pub async fn request_response<F>(inner: &Arc<RedisClientInner>, func: F) -> Result<ProtocolFrame, RedisError>
   where F: FnOnce() -> Result<(RedisCommandKind, Vec<RedisValue>), RedisError>
 {
-  //let _ = fry!(check_client_state(&inner.state, ClientState::Connected));
-  let (kind, args) = match func() { // FIXME: checkout the above?
+  let _ = match check_client_state(&inner.state, ClientState::Connected) {
+    Ok(_) => (),
+    Err(e) => return Err(e.into())
+  };
+  let (kind, args) = match func() { // FIXME: get fry back
     Ok(t) => t,
     Err(e) => return Err(e)
   };
@@ -267,11 +280,14 @@ pub async fn request_response<F>(inner: &Arc<RedisClientInner>, func: F) -> Resu
   let command = RedisCommand::new(kind, args, Some(tx));
 
    match send_command(&inner, command) {
-     Ok(_) => rx.err_into::<RedisError>().flatten().await,
+     Ok(_) => match rx.await {
+       Ok(result) => result,
+       Err(e) => Err(e.into())
+     }
      Err(e) => Err(e)
    }
 }
-*/
+
 
 pub fn is_clustered(config: &RwLock<RedisConfig>) -> bool {
   config.read().deref().is_clustered()

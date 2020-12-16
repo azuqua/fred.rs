@@ -643,8 +643,8 @@ async fn rebuild_connection(spawner: Spawner, inner: Arc<RedisClientInner>, mult
     let (tx, rx) = oneshot_channel();
     multiplexer.set_last_command_callback(Some(tx));
 
-    let write_ft = multiplexer.write_command(&inner, &mut last_command);
-    multiplexer.set_last_request(Some(last_command));
+    let write_ft = multiplexer.write_and_take_command(&inner, last_command);
+    //multiplexer.set_last_request(Some(last_command));
     let result = write_ft.await;
 
     if let Err(e) = result {
@@ -834,11 +834,9 @@ async fn create_commands_ft(spawner: Spawner, inner: Arc<RedisClientInner>) -> R
       let (tx, rx) = oneshot_channel();
       multiplexer.set_last_command_callback(Some(tx));
 
-      // FIXME: this is now waiting to set the last command until after waiting for
-      //  the future, double-check that that doesn't need to be set earlier
-      let write_ft = multiplexer.write_command(&inner, &mut command);
+      let write_ft = multiplexer.write_and_take_command(&inner, command);
       let result = write_ft.await;
-      multiplexer.set_last_request(Some(command));
+      // multiplexer.set_last_request(Some(command));
 
       if let Err(e) = result {
         // if an error while writing then check reconnect policy and try to reconnect, build multiplexer state and cluster state
@@ -1005,6 +1003,20 @@ pub async fn connect(spawner: &Spawner, inner: Arc<RedisClientInner>) -> Result<
   //Box<Future<Item=Option<RedisError>, Error=RedisError>> {
   client_utils::set_client_state(&inner.state, ClientState::Connecting);
 
+  let result = create_commands_ft(spawner.clone(), inner.clone()).await;
+  if let Err(ref e) = result {
+    if e.is_canceled() {
+      debug!("{} Suppressing canceled redis error: {:?}", n!(inner), e);
+
+      Ok(None)
+    }else{
+      result
+    }
+  }else{
+    result
+  }
+  
+  /*
   create_commands_ft(spawner.clone(), inner.clone()).then(move |result| {
     if let Err(ref e) = result {
       if e.is_canceled() {
@@ -1017,7 +1029,8 @@ pub async fn connect(spawner: &Spawner, inner: Arc<RedisClientInner>) -> Result<
     }else{
       result
     }
-  }).await
+  })
+  */
 }
 
 #[cfg(feature="mocks")]

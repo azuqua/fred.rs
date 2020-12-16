@@ -187,6 +187,38 @@ impl Multiplexer {
     }
   }
 
+
+  // FIXME: see if we can modify write_command to do this universally
+  pub async fn write_and_take_command(&self, inner: &Arc<RedisClientInner>, mut request: RedisCommand) -> Result<(), RedisError> {
+    trace!("{} Multiplexer sending command {:?}", n!(inner), request.kind);
+    if request.attempted > 0 {
+      client_utils::incr_atomic(&inner.redeliver_count);
+    }
+
+    request.incr_attempted();
+
+    let no_cluster = request.no_cluster();
+    let key = if self.is_clustered() {
+      request.extract_key().map(|s| s.to_owned())
+    }else{
+      None
+    };
+
+    let frame = match request.to_frame() {
+      Ok(f) => f,
+      Err(e) => return Err(e)
+    };
+
+    let is_quit = request.kind ==  RedisCommandKind::Quit;
+    self.set_last_request(Some(request));
+
+    if is_quit {
+      self.sinks.quit(frame).await
+    }else{
+      self.sinks.write_command(key, frame, no_cluster).await
+    }
+  }
+
   /// Listen on the TCP socket(s) for incoming frames.
   ///
   /// The future returned here resolves when the socket is closed.
