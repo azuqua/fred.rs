@@ -304,8 +304,8 @@ impl Sinks {
   }
 
   #[allow(deprecated)]
-  //pub async fn quit(&self, frame: Frame) -> Result<(), RedisError> {
-  pub fn quit(&self, frame: Frame) -> Box<dyn Future<Output=Result<(), RedisError>>> {
+  pub async fn quit(&self, frame: Frame) -> Result<(), RedisError> {
+  //pub fn quit(&self, frame: Frame) -> Box<dyn Future<Output=Result<(), RedisError>>> {
     unimplemented!()
     /*
     match *self {

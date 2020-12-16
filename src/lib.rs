@@ -5,7 +5,7 @@
 #![allow(unused_imports)]
 
 
-extern crate futures;
+extern crate futures_03 as futures;
 // extern crate tokio_core;
 //extern crate tokio_compat;
 //extern crate tokio_proto;
