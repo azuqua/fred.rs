@@ -10,10 +10,14 @@ use crate::async_ng::*;
 use futures::{
   Future,
   Stream,
-  future
+  future,
+  TryFuture,
+  FutureExt,
+  TryFutureExt
 };
 use tokio_timer::Timer; // FIXME: deprecated in 0.2, back in 0.3?
 
+use std::pin::Pin;
 use std::sync::Arc;
 use std::ops::{
   DerefMut,
@@ -82,20 +86,35 @@ impl RedisPool {
     }
     let timer = timer.unwrap_or(Timer::default());
 
+    type PinnedConnection = Pin<Box<dyn Future<Output=Result<Option<RedisError>, RedisError>>>>;
+    
     let clients = Vec::with_capacity(size);
-    let memo = (spawner.clone(), config, timer, clients, utils::future_ok(None));
+    let init_ft: PinnedConnection = Box::pin(futures::future::ok::<Option<RedisError>,RedisError>(None));
+    let memo = (spawner.clone(), config, timer, clients, init_ft);
 
     let (_, _, _, clients, connections) = (0..size).fold(memo, |(spawner, config, timer, mut clients, connections), _| {
       let client = RedisClient::new(config.clone(), Some(timer.clone()));
-      let connections = Box::new(client.connect(&spawner).join(connections).map(|error| {
+      let connections: Pin<Box<dyn Future<Output=Result<Option<RedisError>, RedisError>>>> = connections;
+      let next_connection: Pin<Box<dyn Future<Output=Result<Option<RedisError>, RedisError>>>> = Box::pin(client.connect(&spawner));
+      //let connections = Box::new(client.connect(&spawner).join(connections).map(|error| {
+      let connections: PinnedConnection = Box::pin(futures::future::join(next_connection, connections).map(|error| {
         // errors are given priority in the same order that clients are initialized
         // since all clients connect to the same server it's likely that they'd all hit the same error anyways
+        match error {
+          (Err(e1), _)         => Err(e1),
+          (_, Err(e2))         => Err(e2),
+          (Ok(Some(e1)), _)    => Ok(Some(e1)),
+          (_, Ok(Some(e2)))    => Ok(Some(e2)),
+          (_, _)               => Ok(None)
+        }
+        /*
         match error {
           (Some(e1), Some(e2)) => Some(e1),
           (Some(e1), None)     => Some(e1),
           (None, Some(e2))     => Some(e2),
           (None, None)         => None
         }
+        */
       }));
 
       clients.push(client);
@@ -122,20 +141,35 @@ impl RedisPool {
     }
     let timer = timer.unwrap_or(Timer::default());
 
+    type PinnedConnection = Pin<Box<dyn Future<Output=Result<Option<RedisError>, RedisError>>>>;
+
     let clients = Vec::with_capacity(size);
-    let memo = (spawner.clone(), config, policy, timer, clients, utils::future_ok(None));
+    //let memo = (spawner.clone(), config, policy, timer, clients, utils::future_ok(None));
+    let init_ft: PinnedConnection = Box::pin(futures::future::ok::<Option<RedisError>,RedisError>(None));
+    let memo = (spawner.clone(), config, policy, timer, clients, init_ft);
 
     let (_, _, _, _, clients, connections) = (0..size).fold(memo, |(spawner, config, policy, timer, mut clients, connections), _| {
       let client = RedisClient::new(config.clone(), Some(timer.clone()));
-      let connections = Box::new(client.connect_with_policy(&spawner, policy.clone()).join(connections).map(|error| {
+      let connections: PinnedConnection = connections;
+      let next_connection: PinnedConnection = Box::pin(client.connect_with_policy(&spawner, policy.clone()));
+      let connections = Box::pin(futures::future::join(next_connection, connections).map(|error| {
         // errors are given priority in the same order that clients are initialized
         // since all clients connect to the same server it's likely that they'd all hit the same error anyways
+        match error {
+          (Err(e1), _)         => Err(e1),
+          (_, Err(e2))         => Err(e2),
+          (Ok(Some(e1)), _)    => Ok(Some(e1)),
+          (_, Ok(Some(e2)))    => Ok(Some(e2)),
+          (_, _)               => Ok(None)
+        }
+        /*
         match error {
           (Some(e1), Some(e2)) => Some(e1),
           (Some(e1), None)     => Some(e1),
           (None, Some(e2))     => Some(e2),
           (None, None)         => None
         }
+        */
       }));
 
       clients.push(client);

@@ -121,7 +121,7 @@ impl PartialEq for SplitCommand {
 
 impl Eq for SplitCommand {}
 
-pub type FrameStream = Box<dyn Stream<Item=Result<Frame, RedisError>>>;
+pub type FrameStream = Pin<Box<dyn Stream<Item=Result<Frame, RedisError>>>>;
 
 pub type RedisTcpStream = SplitStream<Framed<TcpStream, RedisCodec>>;
 pub type RedisTcpSink = SplitSink<Framed<TcpStream, RedisCodec>, Frame>;
@@ -142,31 +142,33 @@ impl Sink<Frame> for RedisSink {
   // type SinkItem = Frame;
   type Error = RedisError;
 
+  // FIXME: the mass of Box::pin(inner).as_mut() here seems questionable...
+
   fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
     match *self {
-      RedisSink::Tls(ref mut inner) => inner.poll_ready(cx),
-      RedisSink::Tcp(ref mut inner) => inner.poll_ready(cx)
+      RedisSink::Tls(ref mut inner) => Box::pin(inner).as_mut().poll_ready(cx),
+      RedisSink::Tcp(ref mut inner) => Box::pin(inner).as_mut().poll_ready(cx)
     }
   }
 
   fn start_send(mut self: Pin<&mut Self>, item: Frame) -> Result<(), Self::Error> {
     match *self {
-      RedisSink::Tls(ref mut inner) => inner.start_send(item),
-      RedisSink::Tcp(ref mut inner) => inner.start_send(item)
+      RedisSink::Tls(ref mut inner) => Box::pin(inner).as_mut().start_send(item),
+      RedisSink::Tcp(ref mut inner) => Box::pin(inner).as_mut().start_send(item)
     }
   }
 
   fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
     match *self {
-      RedisSink::Tls(ref mut inner) => inner.poll_flush(),
-      RedisSink::Tcp(ref mut inner) => inner.poll_flush()
+      RedisSink::Tls(ref mut inner) => Box::pin(inner).as_mut().poll_flush(cx),
+      RedisSink::Tcp(ref mut inner) => Box::pin(inner).as_mut().poll_flush(cx)
     }
   }
 
   fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
     match *self {
-      RedisSink::Tls(ref mut inner) => inner.poll_close(),
-      RedisSink::Tcp(ref mut inner) => inner.poll_close()
+      RedisSink::Tls(ref mut inner) => Box::pin(inner).as_mut().poll_close(cx),
+      RedisSink::Tcp(ref mut inner) => Box::pin(inner).as_mut().poll_close(cx)
     }
   }
 }
@@ -188,8 +190,8 @@ impl Stream for RedisStream {
   
   fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
     match *self {
-      RedisStream::Tls(ref mut inner) => inner.poll(),
-      RedisStream::Tcp(ref mut inner) => inner.poll()
+      RedisStream::Tls(ref mut inner) => Box::pin(inner).as_mut().poll_next(cx),
+      RedisStream::Tcp(ref mut inner) => Box::pin(inner).as_mut().poll_next(cx)
     }
   }
 
@@ -505,7 +507,7 @@ impl Streams {
         let mut stream_ref = stream.borrow_mut();
 
         match stream_ref.take() {
-          Some(stream) => Ok(Box::new(stream)),
+          Some(stream) => Ok(Box::pin(stream)),
           None => Err(RedisError::new(
             RedisErrorKind::Unknown, "Redis socket not initialized."
           ))
@@ -517,10 +519,10 @@ impl Streams {
         // fold all the streams into one
         let memo: Option<FrameStream> = None;
 
-        let merged = streams_ref.drain(..).fold(memo, |memo, stream| {
+        let merged = streams_ref.drain(..).fold(memo, |memo, next| {
           match memo {
-            Some(last) => Some(Box::new(last.select(stream))),
-            None => Some(Box::new(stream))
+            Some(last) => Some(Box::pin(stream::select(last, next))),
+            None => Some(Box::pin(next))
           }
         });
 

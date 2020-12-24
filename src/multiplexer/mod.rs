@@ -7,7 +7,9 @@ pub mod init;
 use futures::{
   Future,
   Stream,
-  Sink
+  Sink,
+  FutureExt,
+  StreamExt
 };
 use futures::channel::mpsc::UnboundedSender;
 use futures::channel::oneshot::{
@@ -222,7 +224,8 @@ impl Multiplexer {
   /// Listen on the TCP socket(s) for incoming frames.
   ///
   /// The future returned here resolves when the socket is closed.
-  pub fn listen(&self) -> Pin<Box<dyn Future<Output=Result<(),()>> + Send>> { // FIXME: make async
+  pub async fn listen(&self) -> Result<(),()> { // FIXME: make async
+  // pub fn listen(&self) -> Pin<Box<dyn Future<Output=Result<(),()>> + Send>> { // FIXME: make async
     let inner = self.inner.clone();
     let last_request = self.last_request.clone();
     let last_request_sent = self.last_request_sent.clone();
@@ -238,7 +241,7 @@ impl Multiplexer {
 
         let last_command_callback = match self.last_command_callback.borrow_mut().take() {
           Some(tx) => tx,
-          None => return client_utils::future_error_generic(())
+          None => return Err(())
         };
         let last_command = match self.last_request.borrow_mut().take() {
           Some(cmd) => cmd,
@@ -252,7 +255,7 @@ impl Multiplexer {
           warn!("{} Error notifying last command callback of the incoming message stream ending.", nw!(inner));
         }
 
-        return client_utils::future_error_generic(());
+        return Err(())
       }
     };
     let final_self = self.clone();
@@ -261,6 +264,10 @@ impl Multiplexer {
     let final_last_request = last_request.clone();
     let final_last_command_callback = last_command_callback.clone();
 
+    // FIXME: loop
+    unimplemented!()
+
+    /*
     Box::new(frame_stream.fold((inner, last_request, last_request_sent, last_command_callback), |memo, frame: Frame| {
       let (inner, last_request, last_request_sent, last_command_callback) = memo;
       trace!("{} Multiplexer stream recv frame.", n!(inner));
@@ -337,6 +344,7 @@ impl Multiplexer {
         }
       }
     }))
+     */
   }
 
 

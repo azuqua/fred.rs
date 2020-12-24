@@ -40,14 +40,14 @@ const AGGREGATE: &'static str = "AGGREGATE";
 const WEIGHTS: &'static str = "WEIGHTS";
 
 
-pub fn quit(inner: &Arc<RedisClientInner>) -> Box<dyn Future<Output=Result<(), RedisError>>> {
+pub async fn quit(inner: &Arc<RedisClientInner>) -> Result<(), RedisError> {
   debug!("{} Closing Redis connection with Quit command.", n!(inner));
 
   // need to lock the closed flag so any reconnect logic running in another thread doesn't screw this up,
   // but we also don't want to hold the lock if the client is connected
   let exit_early = {
     let mut closed_guard = inner.closed.write();
-    let mut closed_ref = closed_guard.deref_mut();
+    let closed_ref = closed_guard.deref_mut();
 
     debug!("{} Checking client state in quit command: {:?}", n!(inner), utils::read_client_state(&inner.state));
     if utils::read_client_state(&inner.state) != ClientState::Connected {
@@ -72,56 +72,55 @@ pub fn quit(inner: &Arc<RedisClientInner>) -> Box<dyn Future<Output=Result<(), R
 
   if exit_early {
     debug!("{} Exit early in quit command.", n!(inner));
-    utils::future_ok(())
+    return Ok(())
   }else{
-    Box::new(utils::request_response(&inner, || {
+    utils::request_response(&inner, || {
       Ok((RedisCommandKind::Quit, vec![]))
-    }).and_then(|_| {
-      Ok(())
-    }))
+    }).await?;
+    Ok(())
   }
 }
 
-pub fn flushall(inner: &Arc<RedisClientInner>, _async: bool) -> Box<dyn Future<Output=Result<String, RedisError>>> {
+pub async fn flushall(inner: &Arc<RedisClientInner>, _async: bool) -> Result<String, RedisError> {
   let args = if _async {
     vec![ASYNC.into()]
   }else{
     Vec::new()
   };
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     Ok((RedisCommandKind::FlushAll, args))
-  }).and_then(|frame| {
-    match protocol_utils::frame_to_single_result(frame)? {
-      RedisValue::String(s) => Ok(s),
-      _ => Err(RedisError::new(
-        RedisErrorKind::ProtocolError, "Invalid FLUSHALL response."
-      ))
-    }
-  }))
+  }).await?;
+
+  match protocol_utils::frame_to_single_result(frame)? {
+    RedisValue::String(s) => Ok(s),
+    _ => Err(RedisError::new(
+      RedisErrorKind::ProtocolError, "Invalid FLUSHALL response."
+    ))
+  }
 }
 
 
-pub fn get<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Box<dyn Future<Output=Result<Option<RedisValue>, RedisError>>> {
+pub async fn get<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Result<Option<RedisValue>, RedisError> {
   let key = key.into();
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     Ok((RedisCommandKind::Get, vec![key.into()]))
-  }).and_then(|frame| {
-    let resp = protocol_utils::frame_to_single_result(frame)?;
+  }).await?;
 
-    Ok(if resp.kind() == RedisValueKind::Null {
-      None
-    } else {
-      Some(resp)
-    })
-  }))
+  let resp = protocol_utils::frame_to_single_result(frame)?;
+
+  Ok(if resp.kind() == RedisValueKind::Null {
+    None
+  } else {
+    Some(resp)
+  })
 }
 
-pub fn set<K: Into<RedisKey>, V: Into<RedisValue>>(inner: &Arc<RedisClientInner>, key: K, value: V, expire: Option<Expiration>, options: Option<SetOptions>) -> Box<dyn Future<Output=Result<bool, RedisError>>> {
+pub async fn set<K: Into<RedisKey>, V: Into<RedisValue>>(inner: &Arc<RedisClientInner>, key: K, value: V, expire: Option<Expiration>, options: Option<SetOptions>) ->Result<bool, RedisError> {
   let (key, value) = (key.into(), value.into());
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     let mut args = vec![key.into(), value];
 
     if let Some(expire) = expire {
@@ -134,51 +133,51 @@ pub fn set<K: Into<RedisKey>, V: Into<RedisValue>>(inner: &Arc<RedisClientInner>
     }
 
     Ok((RedisCommandKind::Set, args))
-  }).and_then(|frame| {
-    let resp = protocol_utils::frame_to_single_result(frame)?;
+  }).await?;
 
-    Ok(resp.kind() != RedisValueKind::Null)
-  }))
+  let resp = protocol_utils::frame_to_single_result(frame)?;
+
+  Ok(resp.kind() != RedisValueKind::Null)
 }
 
-pub fn select(inner: &Arc<RedisClientInner>, db: u8) -> Box<dyn Future<Output=Result<(), RedisError>>> {
+pub async fn select(inner: &Arc<RedisClientInner>, db: u8) -> Result<(), RedisError> {
   debug!("{} Selecting Redis database {}", n!(inner), db);
 
-  Box::new(utils::request_response(inner, || {
+  let frame = utils::request_response(inner, || {
     Ok((RedisCommandKind::Select, vec![RedisValue::from(db)]))
-  }).and_then(|frame| {
-    match protocol_utils::frame_to_single_result(frame) {
-      Ok(_) => Ok(()),
-      Err(e) => Err(e)
-    }
-  }))
+  }).await?;
+
+  match protocol_utils::frame_to_single_result(frame) {
+    Ok(_) => Ok(()),
+    Err(e) => Err(e)
+  }
 }
 
-pub fn info(inner: &Arc<RedisClientInner>, section: Option<InfoKind>) -> Box<dyn Future<Output=Result<String, RedisError>>> {
+pub async fn info(inner: &Arc<RedisClientInner>, section: Option<InfoKind>) -> Result<String, RedisError> {
   let section = section.map(|k| k.to_str());
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     let vec = match section {
       Some(s) => vec![RedisValue::from(s)],
       None => vec![]
     };
 
     Ok((RedisCommandKind::Info, vec))
-  }).and_then(|frame| {
-    match protocol_utils::frame_to_single_result(frame) {
-      Ok(resp) => {
-        let kind = resp.kind();
+  }).await?;
 
-        match resp.into_string() {
-          Some(s) => Ok(s),
-          None => Err(RedisError::new(
-            RedisErrorKind::Unknown, format!("Invalid INFO response. Expected String, found {:?}", kind)
-          ))
-        }
+  match protocol_utils::frame_to_single_result(frame) {
+    Ok(resp) => {
+      let kind = resp.kind();
+
+      match resp.into_string() {
+        Some(s) => Ok(s),
+        None => Err(RedisError::new(
+          RedisErrorKind::Unknown, format!("Invalid INFO response. Expected String, found {:?}", kind)
+        ))
+      }
       },
-      Err(e) => Err(e)
-    }
-  }))
+    Err(e) => Err(e)
+  }
 }
 
 pub fn del<K: Into<MultipleKeys>>(inner: &Arc<RedisClientInner>, keys: K) -> Box<dyn Future<Output=Result<usize, RedisError>>> {

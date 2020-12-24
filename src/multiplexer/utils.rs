@@ -19,7 +19,8 @@ use crate::metrics::LatencyStats;
 use futures::{
   Stream,
   Future,
-  Sink
+  Sink,
+  SinkExt
 };
 use futures::channel::oneshot::Sender as OneshotSender;
 

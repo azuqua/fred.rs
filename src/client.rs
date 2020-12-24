@@ -1,4 +1,5 @@
 
+use std::pin::Pin;
 use std::sync::Arc;
 use parking_lot::RwLock;
 
@@ -57,7 +58,7 @@ pub use utils::f64_to_redis_string;
 pub use tokio_timer::Timer; // FIXME: look into patched timer vs current
 
 /// A future representing the connection to a Redis server.
-pub type ConnectionFuture = Box<dyn Future<Output=Result<Option<RedisError>, RedisError>>>;
+pub type ConnectionFuture = Pin<Box<dyn Future<Output=Result<Option<RedisError>, RedisError>>>>;
 
 #[doc(hidden)]
 pub struct RedisClientInner {
@@ -228,13 +229,15 @@ impl RedisClient {
   /// Connect to the Redis server. The returned future will resolve when the connection to the Redis server has been fully closed by both ends.
   ///
   /// The `on_connect` function can be used to be notified when the client first successfully connects.
-  pub fn connect(&self, spawner: &Spawner) -> ConnectionFuture {
-    fry!(utils::check_client_state(&self.inner.state, ClientState::Disconnected));
-    fry!(utils::check_and_set_closed_flag(&self.inner.closed, false));
+  // pub fn connect(&self, spawner: &Spawner) -> ConnectionFuture {
+  // FIXME: this interface can probably be cleaned up now that we don't have to be returning a Result
+  pub async fn connect(&self, spawner: &Spawner) -> Result<Option<RedisError>, RedisError> {
+    utils::check_client_state(&self.inner.state, ClientState::Disconnected)?;
+    utils::check_and_set_closed_flag(&self.inner.closed, false)?;
 
     debug!("{} Connecting to Redis server.", n!(self.inner));
 
-    init::connect(spawner, self.inner.clone())
+    init::connect(spawner, self.inner.clone()).await
   }
 
   /// Connect to the Redis server with a `ReconnectPolicy` to apply if the connection closes due to an error.
@@ -246,15 +249,16 @@ impl RedisClient {
   ///
   /// Additionally, `on_connect` can be used to be notified when the client first successfully connects, since sometimes
   /// some special initialization is needed upon first connecting.
-  pub fn connect_with_policy(&self, spawner: &Spawner, mut policy: ReconnectPolicy) -> ConnectionFuture {
-    fry!(utils::check_client_state(&self.inner.state, ClientState::Disconnected));
-    fry!(utils::check_and_set_closed_flag(&self.inner.closed, false));
+  // pub fn connect_with_policy(&self, spawner: &Spawner, mut policy: ReconnectPolicy) -> ConnectionFuture {
+  pub async fn connect_with_policy(&self, spawner: &Spawner, mut policy: ReconnectPolicy) -> Result<Option<RedisError>, RedisError> {
+    utils::check_client_state(&self.inner.state, ClientState::Disconnected)?;
+    utils::check_and_set_closed_flag(&self.inner.closed, false)?;
 
     policy.reset_attempts();
     utils::set_reconnect_policy(&self.inner.policy, policy);
 
     debug!("{} Connecting to Redis server with reconnect policy.", n!(self.inner));
-    init::connect(spawner, self.inner.clone())
+    init::connect(spawner, self.inner.clone()).await
   }
 
   /// Listen for successful reconnection notifications. When using a config with a `ReconnectPolicy` the future
@@ -262,12 +266,14 @@ impl RedisClient {
   /// if set to 0. This function can be used to receive notifications whenever the client successfully reconnects
   /// in order to select the right database again, re-subscribe to channels, etc. A reconnection event is also
   /// triggered upon first connecting.
+  // FIXME: do we need to preserve the abilty to return the Error here, or is that state in the Client/Self already
   //pub fn on_reconnect(&self) -> Box<Stream<Item=Self, Error=RedisError>> {
-  pub fn on_reconnect(&self) -> Box<dyn Stream<Item=Result<Self, RedisError>>> {
+  pub fn on_reconnect(&self) -> Box<dyn Stream<Item=Self>> {
     let (tx, rx) = unbounded();
-    self.inner.reconnect_tx.write().deref_mut().push_back(tx);
+    self.inner.reconnect_tx.write().deref_mut().push_back(tx); // FIXME: do we actually need this stream to capture error state?
 
-    Box::new(rx.from_err::<RedisError>())
+    //Box::new(rx.into_err::<RedisError>())
+    Box::new(rx)
   }
 
   /// Returns a future that resolves when the client connects to the server.
@@ -276,15 +282,17 @@ impl RedisClient {
   /// This can be used with `on_reconnect` to separate initialization logic that needs
   /// to occur only on the first connection vs subsequent connections.
   //pub fn on_connect(&self) -> Box<Future<Item=Self, Error=RedisError>> {
-  pub fn on_connect(&self) -> Box<dyn Future<Output=Result<Self, RedisError>>> {
+  //pub fn on_connect(&self) -> Box<dyn Future<Output=Result<Self, RedisError>>> {
+  pub async fn on_connect(&self) -> Result<Self, RedisError> {
     if utils::read_client_state(&self.inner.state) == ClientState::Connected {
-      return utils::future_ok(self.clone());
+      return Ok(self.clone());
     }
 
     let (tx, rx) = oneshot_channel();
     self.inner.connect_tx.write().deref_mut().push_back(tx);
 
-    Box::new(rx.from_err::<RedisError>().flatten())
+    // Box::new(rx.from_err::<RedisError>().flatten())
+    rx.await? // FIXME: check result type
   }
 
   /// Listen for protocol and connection errors. This stream can be used to more intelligently handle errors that may
@@ -292,22 +300,25 @@ impl RedisClient {
   ///
   /// Similar to `on_message`, this function does not need to be called again if the connection goes down.
   /// FIXME: this interface could probably be smarter now that it only delivers errors...
-  pub fn on_error(&self) -> Box<dyn Stream<Item=Result<RedisError, RedisError>>> {
+  pub fn on_error(&self) -> Box<dyn Stream<Item=RedisError>> {
     let (tx, rx) = unbounded();
     self.inner.error_tx.write().deref_mut().push_back(tx);
 
-    Box::new(rx.from_err::<RedisError>())
+    //Box::new(rx.from_err::<RedisError>())
+    Box::new(rx)
   }
 
   /// Listen for `(channel, message)` tuples on the PubSub interface.
   ///
   /// If the connection to the Redis server goes down for any reason this function does *not* need to be called again.
   /// Messages will start appearing on the original stream after `subscribe` is called again.
-  pub fn on_message(&self) -> Box<dyn Stream<Item=Result<(String, RedisValue), RedisError>>> {
+  // pub fn on_message(&self) -> Box<dyn Stream<Item=Result<(String, RedisValue), RedisError>>> {
+  pub fn on_message(&self) -> Box<dyn Stream<Item=(String, RedisValue)>> {
     let (tx, rx) = unbounded();
     self.inner.message_tx.write().deref_mut().push_back(tx);
 
-    Box::new(rx.from_err::<RedisError>())
+    // Box::new(rx.from_err::<RedisError>())
+    Box::new(rx)
   }
 
   /// Whether or not the client is using a clustered Redis deployment.

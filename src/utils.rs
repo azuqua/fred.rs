@@ -140,8 +140,8 @@ pub fn future_ok<T: 'static>(d: T) -> Box<dyn Future<Output=Result<T, RedisError
   Box::new(future::ok(d))
 }
 
-pub fn future_error_generic<T: 'static, E: 'static>(err: E) -> Box<dyn Future<Output=Result<T, E>>> {
-  Box::new(future::err(err))
+pub fn future_error_generic<T: 'static, E: 'static>(err: E) -> Pin<Box<dyn Future<Output=Result<T, E>>>> {
+  Box::pin(future::err(err))
 }
 
 pub fn future_ok_generic<T: 'static, E: 'static>(d: T) -> Box<dyn Future<Output=Result<T, E>>> {
