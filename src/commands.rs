@@ -2,7 +2,7 @@ use crate::types::*;
 use crate::protocol::types::{RedisCommandKind, ResponseKind, RedisCommand, ValueScanInner, KeyScanInner};
 
 // use futures::{Future, Stream, IntoFuture};
-use futures::{Future, Stream};
+use futures::{Future, Stream, FutureExt, StreamExt};
 use futures::future::IntoFuture;
 use crate::error::{
   RedisError,
@@ -180,32 +180,31 @@ pub async fn info(inner: &Arc<RedisClientInner>, section: Option<InfoKind>) -> R
   }
 }
 
-pub fn del<K: Into<MultipleKeys>>(inner: &Arc<RedisClientInner>, keys: K) -> Box<dyn Future<Output=Result<usize, RedisError>>> {
+pub async fn del<K: Into<MultipleKeys>>(inner: &Arc<RedisClientInner>, keys: K) -> Result<usize, RedisError>  {
   let mut keys = keys.into().inner();
   let args: Vec<RedisValue> = keys.drain(..).map(|k| {
     k.into()
   }).collect();
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     Ok((RedisCommandKind::Del, args))
-  }).and_then(|frame| {
+  }).await?;
     match protocol_utils::frame_to_single_result(frame)? {
       RedisValue::Integer(num) => Ok(num as usize),
       _ => Err(RedisError::new(
         RedisErrorKind::ProtocolError, "Invalid DEL response."
       ))
     }
-  }))
 }
 
-pub fn subscribe<T: Into<String>>(inner: &Arc<RedisClientInner>, channel: T) -> Box<dyn Future<Output=Result<usize, RedisError>>> {
+pub async fn subscribe<T: Into<String>>(inner: &Arc<RedisClientInner>, channel: T) -> Result<usize, RedisError>  {
   // note: if this ever changes to take in more than one channel then some additional work must be done
   // in the multiplexer to associate multiple responses with a single request
   let channel = channel.into();
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     Ok((RedisCommandKind::Subscribe, vec![channel.into()]))
-  }).and_then(|frame| {
+  }).await?;
     let mut results = protocol_utils::frame_to_results(frame)?;
 
     // last value in the array is number of channels
@@ -222,17 +221,16 @@ pub fn subscribe<T: Into<String>>(inner: &Arc<RedisClientInner>, channel: T) -> 
     };
 
     Ok(count as usize)
-  }))
 }
 
-pub fn unsubscribe<T: Into<String>>(inner: &Arc<RedisClientInner>, channel: T) -> Box<dyn Future<Output=Result<usize, RedisError>>> {
+pub async fn unsubscribe<T: Into<String>>(inner: &Arc<RedisClientInner>, channel: T) -> Result<usize, RedisError>  {
   // note: if this ever changes to take in more than one channel then some additional work must be done
   // in the multiplexer to associate multiple responses with a single request
   let channel = channel.into();
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     Ok((RedisCommandKind::Unsubscribe, vec![channel.into()]))
-  }).and_then(|frame| {
+  }).await?;
     let mut results = protocol_utils::frame_to_results(frame)?;
 
     // last value in the array is number of channels
@@ -249,16 +247,15 @@ pub fn unsubscribe<T: Into<String>>(inner: &Arc<RedisClientInner>, channel: T) -
     };
 
     Ok(count as usize)
-  }))
 }
 
-pub fn publish<T: Into<String>, V: Into<RedisValue>>(inner: &Arc<RedisClientInner>, channel: T, message: V) -> Box<dyn Future<Output=Result<i64, RedisError>>> {
+pub async fn publish<T: Into<String>, V: Into<RedisValue>>(inner: &Arc<RedisClientInner>, channel: T, message: V) -> Result<i64, RedisError>  {
   let channel = channel.into();
   let message = message.into();
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     Ok((RedisCommandKind::Publish, vec![channel.into(), message]))
-  }).and_then(|frame| {
+  }).await?;
     let resp = protocol_utils::frame_to_single_result(frame)?;
 
     let count = match resp.as_i64() {
@@ -269,31 +266,29 @@ pub fn publish<T: Into<String>, V: Into<RedisValue>>(inner: &Arc<RedisClientInne
     };
 
     Ok(count)
-  }))
 }
 
 
-pub fn incr<K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K) -> Box<dyn Future<Output=Result<i64, RedisError>>>  {
+pub async fn incr<K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K) -> Result<i64, RedisError>   {
   let key = key.into();
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     Ok((RedisCommandKind::Incr, vec![key.into()]))
-  }).and_then(|frame| {
+  }).await?;
     match protocol_utils::frame_to_single_result(frame)? {
       RedisValue::Integer(num) => Ok(num as i64),
       _ => Err(RedisError::new(
         RedisErrorKind::InvalidArgument, "Invalid INCR response."
       ))
     }
-  }))
 }
 
-pub fn incrby<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, incr: i64) -> Box<dyn Future<Output=Result<i64, RedisError>>> {
+pub async fn incrby<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, incr: i64) -> Result<i64, RedisError>  {
   let key = key.into();
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     Ok((RedisCommandKind::IncrBy, vec![key.into(), incr.into()]))
-  }).and_then(|frame| {
+  }).await?;
     let resp = protocol_utils::frame_to_single_result(frame)?;
 
     match resp {
@@ -302,15 +297,14 @@ pub fn incrby<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, incr: i6
         RedisErrorKind::InvalidArgument, "Invalid INCRBY response."
       ))
     }
-  }))
 }
 
-pub fn incrbyfloat<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, incr: f64) -> Box<dyn Future<Output=Result<f64, RedisError>>> {
+pub async fn incrbyfloat<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, incr: f64) -> Result<f64, RedisError>  {
   let key = key.into();
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     Ok((RedisCommandKind::IncrByFloat, vec![key.into(), incr.to_string().into()]))
-  }).and_then(|frame| {
+  }).await?;
     let resp = protocol_utils::frame_to_single_result(frame)?;
 
     match resp {
@@ -322,15 +316,14 @@ pub fn incrbyfloat<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, inc
         RedisErrorKind::Unknown, "Invalid INCRBYFLOAT response."
       ))
     }
-  }))
 }
 
-pub fn decr<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Box<dyn Future<Output=Result<i64, RedisError>>> {
+pub async fn decr<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Result<i64, RedisError>  {
   let key = key.into();
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     Ok((RedisCommandKind::Decr, vec![key.into()]))
-  }).and_then(|frame| {
+  }).await?;
     let resp = protocol_utils::frame_to_single_result(frame)?;
 
     match resp {
@@ -339,17 +332,16 @@ pub fn decr<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Box<dyn
         RedisErrorKind::ProtocolError, "Invalid DECR response."
       ))
     }
-  }))
 }
 
-pub fn decrby<V: Into<RedisValue>, K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, value: V) -> Box<dyn Future<Output=Result<i64, RedisError>>> {
+pub async fn decrby<V: Into<RedisValue>, K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, value: V) -> Result<i64, RedisError>  {
   let key = key.into();
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     let args = vec![key.into(), value.into()];
 
     Ok((RedisCommandKind::DecrBy, args))
-  }).and_then(|frame| {
+  }).await?;
     let resp = protocol_utils::frame_to_single_result(frame)?;
 
     match resp {
@@ -358,16 +350,15 @@ pub fn decrby<V: Into<RedisValue>, K: Into<RedisKey>>(inner: &Arc<RedisClientInn
         RedisErrorKind::ProtocolError, "Invalid DECRBY response."
       ))
     }
-  }))
 }
 
-pub fn ping(inner: &Arc<RedisClientInner>) -> Box<dyn Future<Output=Result<String, RedisError>>> {
+pub async fn ping(inner: &Arc<RedisClientInner>) -> Result<String, RedisError>  {
   let inner = inner.clone();
   debug!("{} Pinging Redis server.", n!(inner));
 
-  Box::new(utils::request_response(&inner, move || {
+  let frame = utils::request_response(&inner, move || {
     Ok((RedisCommandKind::Ping, vec![]))
-  }).and_then(move |frame| {
+  }).await?;
     debug!("{} Received Redis ping response.", n!(inner));
 
     match protocol_utils::frame_to_single_result(frame) {
@@ -383,15 +374,14 @@ pub fn ping(inner: &Arc<RedisClientInner>) -> Box<dyn Future<Output=Result<Strin
       },
       Err(e) => Err(e)
     }
-  }))
 }
 
-pub fn auth<V: Into<String>>(inner: &Arc<RedisClientInner>, value: V) -> Box<dyn Future<Output=Result<String, RedisError>>> {
+pub async fn auth<V: Into<String>>(inner: &Arc<RedisClientInner>, value: V) -> Result<String, RedisError>  {
   let value = value.into();
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     Ok((RedisCommandKind::Auth, vec![value.into()]))
-  }).and_then(|frame| {
+  }).await?;
     let resp = protocol_utils::frame_to_single_result(frame)?;
 
     match resp.into_string() {
@@ -400,13 +390,12 @@ pub fn auth<V: Into<String>>(inner: &Arc<RedisClientInner>, value: V) -> Box<dyn
         RedisErrorKind::Auth, "AUTH denied."
       ))
     }
-  }))
 }
 
-pub fn bgrewriteaof(inner: &Arc<RedisClientInner>) -> Box<dyn Future<Output=Result<String, RedisError>>> {
-  Box::new(utils::request_response(inner, move || {
+pub async fn bgrewriteaof(inner: &Arc<RedisClientInner>) -> Result<String, RedisError>  {
+  let frame = utils::request_response(inner, move || {
     Ok((RedisCommandKind::BgreWriteAof, vec![]))
-  }).and_then(|frame| {
+  }).await?;
     let resp = protocol_utils::frame_to_single_result(frame)?;
 
     match resp.into_string() {
@@ -415,13 +404,12 @@ pub fn bgrewriteaof(inner: &Arc<RedisClientInner>) -> Box<dyn Future<Output=Resu
         RedisErrorKind::ProtocolError, "Invalid BGREWRITEAOF response."
       ))
     }
-  }))
 }
 
-pub fn bgsave(inner: &Arc<RedisClientInner>) -> Box<dyn Future<Output=Result<String, RedisError>>> {
-  Box::new(utils::request_response(inner, move || {
+pub async fn bgsave(inner: &Arc<RedisClientInner>) -> Result<String, RedisError>  {
+  let frame = utils::request_response(inner, move || {
     Ok((RedisCommandKind::BgSave, vec![]))
-  }).and_then(|frame| {
+  }).await?;
     let resp = protocol_utils::frame_to_single_result(frame)?;
 
     match resp.into_string() {
@@ -430,15 +418,14 @@ pub fn bgsave(inner: &Arc<RedisClientInner>) -> Box<dyn Future<Output=Result<Str
         RedisErrorKind::ProtocolError, "Invalid BGSAVE response."
       ))
     }
-  }))
 }
 
-pub fn client_list(inner: &Arc<RedisClientInner>) -> Box<dyn Future<Output=Result<String, RedisError>>> {
-  Box::new(utils::request_response(inner, move || {
+pub async fn client_list(inner: &Arc<RedisClientInner>) -> Result<String, RedisError>  {
+  let frame = utils::request_response(inner, move || {
     let args = vec![];
 
     Ok((RedisCommandKind::ClientList, args))
-  }).and_then(|frame| {
+  }).await?;
     let resp = protocol_utils::frame_to_single_result(frame)?;
 
     match resp.into_string() {
@@ -447,42 +434,39 @@ pub fn client_list(inner: &Arc<RedisClientInner>) -> Box<dyn Future<Output=Resul
         RedisErrorKind::ProtocolError, "Invalid CLIENTLIST response."
       ))
     }
-  }))
 }
 
-pub fn client_getname(inner: &Arc<RedisClientInner>) -> Box<dyn Future<Output=Result<Option<String>, RedisError>>> {
-  Box::new(utils::request_response(inner, move || {
+pub async fn client_getname(inner: &Arc<RedisClientInner>) -> Result<Option<String>, RedisError>  {
+  let frame = utils::request_response(inner, move || {
     Ok((RedisCommandKind::ClientGetName, vec![]))
-  }).and_then(|frame| {
+  }).await?;
     let resp = protocol_utils::frame_to_single_result(frame)?;
 
     match resp.into_string() {
       Some(s) => Ok(Some(s)),
       None => Ok(None)
     }
-  }))
 }
 
-pub fn client_setname<V: Into<String>>(inner: &Arc<RedisClientInner>, name: V) -> Box<dyn Future<Output=Result<Option<String>, RedisError>>> {
+pub async fn client_setname<V: Into<String>>(inner: &Arc<RedisClientInner>, name: V) -> Result<Option<String>, RedisError>  {
   let name = name.into();
   inner.change_client_name(name.clone());
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     Ok((RedisCommandKind::ClientSetname, vec![name.into()]))
-  }).and_then(|frame| {
+  }).await?;
     let resp = protocol_utils::frame_to_single_result(frame)?;
 
     match resp.into_string() {
       Some(s) => Ok(Some(s)),
       None => Ok(None)
     }
-  }))
 }
 
-pub fn dbsize(inner: &Arc<RedisClientInner>) -> Box<dyn Future<Output=Result<usize, RedisError>>> {
-  Box::new(utils::request_response(inner, move || {
+pub async fn dbsize(inner: &Arc<RedisClientInner>) -> Result<usize, RedisError>  {
+  let frame = utils::request_response(inner, move || {
     Ok((RedisCommandKind::DBSize, vec![]))
-  }).and_then(|frame| {
+  }).await?;
     let resp = protocol_utils::frame_to_single_result(frame)?;
 
     match resp {
@@ -491,15 +475,14 @@ pub fn dbsize(inner: &Arc<RedisClientInner>) -> Box<dyn Future<Output=Result<usi
         RedisErrorKind::ProtocolError, "Invalid DBSIZE response."
       ))
     }
-  }))
 }
 
-pub fn dump<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Box<dyn Future<Output=Result<Option<String>, RedisError>>> {
+pub async fn dump<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Result<Option<String>, RedisError>  {
   let key = key.into();
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     Ok((RedisCommandKind::Dump, vec![key.into()]))
-  }).and_then(|frame| {
+  }).await?;
     let resp = protocol_utils::frame_to_single_result(frame)?;
 
     match resp {
@@ -509,17 +492,16 @@ pub fn dump<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Box<dyn
         RedisErrorKind::ProtocolError, "Invalid DUMP response."
       ))
     }
-  }))
 }
 
-pub fn exists<K: Into<MultipleKeys>>(inner: &Arc<RedisClientInner>, keys: K) -> Box<dyn Future<Output=Result<usize, RedisError>>> {
+pub async fn exists<K: Into<MultipleKeys>>(inner: &Arc<RedisClientInner>, keys: K) -> Result<usize, RedisError>  {
   let mut keys = keys.into().inner();
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     let args: Vec<RedisValue> = keys.drain(..).map(|k| k.into()).collect();
 
     Ok((RedisCommandKind::Exists, args))
-  }).and_then(|frame| {
+  }).await?;
     let resp = protocol_utils::frame_to_single_result(frame)?;
 
     match resp {
@@ -528,18 +510,17 @@ pub fn exists<K: Into<MultipleKeys>>(inner: &Arc<RedisClientInner>, keys: K) -> 
         RedisErrorKind::ProtocolError, "Invalid EXISTS response."
       ))
     }
-  }))
 }
 
-pub fn expire<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, seconds: i64) -> Box<dyn Future<Output=Result<bool, RedisError>>> {
+pub async fn expire<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, seconds: i64) -> Result<bool, RedisError>  {
   let key = key.into();
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     Ok((RedisCommandKind::Expire, vec![
       key.into(),
       seconds.into()
     ]))
-  }).and_then(|frame| {
+  }).await?;
     let resp = protocol_utils::frame_to_single_result(frame)?;
 
     match resp {
@@ -554,17 +535,16 @@ pub fn expire<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, seconds:
         RedisErrorKind::ProtocolError, "Invalid EXPIRE response."
       ))
     }
-  }))
 }
 
-pub fn expire_at<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, timestamp: i64) -> Box<dyn Future<Output=Result<bool, RedisError>>> {
+pub async fn expire_at<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, timestamp: i64) -> Result<bool, RedisError>  {
   let key = key.into();
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     let args = vec![key.into(), timestamp.into()];
 
     Ok((RedisCommandKind::ExpireAt, args))
-  }).and_then(|frame| {
+  }).await?;
     let resp = protocol_utils::frame_to_single_result(frame)?;
 
     match resp {
@@ -579,15 +559,14 @@ pub fn expire_at<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, times
         RedisErrorKind::ProtocolError, "Invalid EXPIREAT response."
       ))
     }
-  }))
 }
 
-pub fn persist<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Box<dyn Future<Output=Result<bool, RedisError>>> {
+pub async fn persist<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Result<bool, RedisError>  {
   let key = key.into();
 
-  Box::new(utils::request_response(inner, move ||{
+  let frame = utils::request_response(inner, move ||{
     Ok((RedisCommandKind::Persist,vec![key.into()]))
-  }).and_then(|frame| {
+  }).await?;
     let resp = protocol_utils::frame_to_single_result(frame)?;
 
     match resp {
@@ -602,19 +581,18 @@ pub fn persist<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Box<
         RedisErrorKind::ProtocolError, "Invalid PERSIST response."
       ))
     }
-  }))
 }
 
-pub fn flushdb(inner: &Arc<RedisClientInner>, _async: bool) -> Box<dyn Future<Output=Result<String, RedisError>>> {
+pub async fn flushdb(inner: &Arc<RedisClientInner>, _async: bool) -> Result<String, RedisError>  {
   let args = if _async {
     vec![ASYNC.into()]
   }else{
     Vec::new()
   };
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     Ok((RedisCommandKind::FlushDB, args))
-  }).and_then(|frame| {
+  }).await?;
     let resp = protocol_utils::frame_to_single_result(frame)?;
 
     match resp {
@@ -623,13 +601,12 @@ pub fn flushdb(inner: &Arc<RedisClientInner>, _async: bool) -> Box<dyn Future<Ou
         RedisErrorKind::ProtocolError, "Invalid FLUSHALLDB response."
       ))
     }
-  }))
 }
 
-pub fn getrange<K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K, start: usize, end: usize) -> Box<dyn Future<Output=Result<String, RedisError>>> {
+pub async fn getrange<K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K, start: usize, end: usize) -> Result<String, RedisError>  {
   let key = key.into();
-  let start = fry!(RedisValue::from_usize(start));
-  let end = fry!(RedisValue::from_usize(end));
+  let start = RedisValue::from_usize(start)?;
+  let end = RedisValue::from_usize(end)?;
 
   let args = vec![
     key.into(),
@@ -637,9 +614,9 @@ pub fn getrange<K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K, start
     end
   ];
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     Ok((RedisCommandKind::GetRange, args))
-  }).and_then(|frame| {
+  }).await?;
     let resp = protocol_utils::frame_to_single_result(frame)?;
 
     match resp {
@@ -648,31 +625,29 @@ pub fn getrange<K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K, start
         RedisErrorKind::ProtocolError, "Invalid GETRANGE response."
       ))
     }
-  }))
 }
 
-pub fn getset<V: Into<RedisValue>, K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K, value: V) -> Box<dyn Future<Output=Result<Option<RedisValue>, RedisError>>> {
+pub async fn getset<V: Into<RedisValue>, K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K, value: V) -> Result<Option<RedisValue>, RedisError>  {
   let (key, value) = (key.into(), value.into());
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     let args: Vec<RedisValue> = vec![key.into(), value.into()];
 
     Ok((RedisCommandKind::GetSet, args))
-  }).and_then(|frame| {
+  }).await?;
     let resp = protocol_utils::frame_to_single_result(frame)?;
 
     match resp {
       RedisValue::Null => Ok(None),
       _ => Ok(Some(resp))
     }
-  }))
 }
 
-pub fn hdel<F: Into<MultipleKeys>, K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K, fields: F) -> Box<dyn Future<Output=Result<usize, RedisError>>> {
+pub async fn hdel<F: Into<MultipleKeys>, K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K, fields: F) -> Result<usize, RedisError>  {
   let key = key.into();
   let mut fields = fields.into().inner();
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     let mut args: Vec<RedisValue> = Vec::with_capacity(fields.len() + 1);
     args.push(key.into());
 
@@ -681,7 +656,7 @@ pub fn hdel<F: Into<MultipleKeys>, K: Into<RedisKey>> (inner: &Arc<RedisClientIn
     }
 
     Ok((RedisCommandKind::HDel, args))
-  }).and_then(|frame| {
+  }).await?;
     let resp = protocol_utils::frame_to_single_result(frame)?;
 
     match resp {
@@ -690,18 +665,17 @@ pub fn hdel<F: Into<MultipleKeys>, K: Into<RedisKey>> (inner: &Arc<RedisClientIn
         RedisErrorKind::ProtocolError, "Invalid HDEL response."
       ))
     }
-  }))
 }
 
-pub fn hexists<F: Into<RedisKey>, K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K, field: F) -> Box<dyn Future<Output=Result<bool, RedisError>>> {
+pub async fn hexists<F: Into<RedisKey>, K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K, field: F) -> Result<bool, RedisError>  {
   let key = key.into();
   let field = field.into();
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     let args: Vec<RedisValue> = vec![key.into(), field.into()];
 
     Ok((RedisCommandKind::HExists, args))
-  }).and_then(|frame| {
+  }).await?;
     let resp = protocol_utils::frame_to_single_result(frame)?;
 
     match resp {
@@ -716,40 +690,38 @@ pub fn hexists<F: Into<RedisKey>, K: Into<RedisKey>> (inner: &Arc<RedisClientInn
         RedisErrorKind::ProtocolError, "Invalid HEXISTS response."
       ))
     }
-  }))
 }
 
-pub fn hget<F: Into<RedisKey>, K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K, field: F) -> Box<dyn Future<Output=Result<Option<RedisValue>, RedisError>>> {
+pub async fn hget<F: Into<RedisKey>, K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K, field: F) -> Result<Option<RedisValue>, RedisError>  {
   let key = key.into();
   let field = field.into();
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     let args: Vec<RedisValue> = vec![key.into(), field.into()];
 
     Ok((RedisCommandKind::HGet, args))
-  }).and_then(|frame| {
+  }).await?;
     let resp = protocol_utils::frame_to_single_result(frame)?;
 
     match resp {
       RedisValue::Null => Ok(None),
       _ => Ok(Some(resp))
     }
-  }))
 }
 
-pub fn hgetall<K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K) -> Box<dyn Future<Output=Result<HashMap<String, RedisValue>, RedisError>>> {
+pub async fn hgetall<K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K) -> Result<HashMap<String, RedisValue>, RedisError>  {
   let key = key.into();
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     let args: Vec<RedisValue> = vec![key.into()];
 
     Ok((RedisCommandKind::HGetAll, args))
-  }).and_then(|frame| {
+  }).await?;
     let mut resp = protocol_utils::frame_to_results(frame)?;
 
     let mut map: HashMap<String, RedisValue> = HashMap::with_capacity(resp.len() / 2);
 
-    for mut chunk in resp.chunks_mut(2) {
+    for chunk in resp.chunks_mut(2) {
       let (key, val) = (chunk[0].take(), chunk[1].take());
       let key = match key {
         RedisValue::String(s) => s,
@@ -762,10 +734,9 @@ pub fn hgetall<K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K) -> Box
     }
 
     Ok(map)
-  }))
 }
 
-pub fn hincrby<F: Into<RedisKey>, K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K, field: F, incr: i64) -> Box<dyn Future<Output=Result<i64, RedisError>>> {
+pub async fn hincrby<F: Into<RedisKey>, K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K, field: F, incr: i64) -> Result<i64, RedisError>  {
   let (key, field) = (key.into(), field.into());
 
   let args: Vec<RedisValue> = vec![
@@ -774,9 +745,9 @@ pub fn hincrby<F: Into<RedisKey>, K: Into<RedisKey>> (inner: &Arc<RedisClientInn
     incr.into()
   ];
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     Ok((RedisCommandKind::HIncrBy, args))
-  }).and_then(|frame| {
+  }).await?;
     let resp = protocol_utils::frame_to_single_result(frame)?;
 
     match resp {
@@ -785,10 +756,9 @@ pub fn hincrby<F: Into<RedisKey>, K: Into<RedisKey>> (inner: &Arc<RedisClientInn
         RedisErrorKind::ProtocolError, "Invalid HINCRBY response."
       ))
     }
-  }))
 }
 
-pub fn hincrbyfloat<K: Into<RedisKey>, F: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K, field: F, incr: f64) -> Box<dyn Future<Output=Result<f64, RedisError>>> {
+pub async fn hincrbyfloat<K: Into<RedisKey>, F: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K, field: F, incr: f64) -> Result<f64, RedisError>  {
   let (key, field) = (key.into(), field.into());
 
   let args = vec![
@@ -797,9 +767,9 @@ pub fn hincrbyfloat<K: Into<RedisKey>, F: Into<RedisKey>> (inner: &Arc<RedisClie
     incr.to_string().into()
   ];
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     Ok((RedisCommandKind::HIncrByFloat, args))
-  }).and_then(|frame| {
+  }).await?;
     let resp = protocol_utils::frame_to_single_result(frame)?;
 
     match resp {
@@ -813,15 +783,14 @@ pub fn hincrbyfloat<K: Into<RedisKey>, F: Into<RedisKey>> (inner: &Arc<RedisClie
         RedisErrorKind::InvalidArgument, "Invalid HINCRBYFLOAT response."
       ))
     }
-  }))
 }
 
-pub fn hkeys<K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K) -> Box<dyn Future<Output=Result<Vec<String>, RedisError>>> {
+pub async fn hkeys<K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K) -> Result<Vec<String>, RedisError>  {
   let key = key.into();
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     Ok((RedisCommandKind::HKeys, vec![key.into()]))
-  }).and_then(|frame| {
+  }).await?;
     let mut resp = protocol_utils::frame_to_results(frame)?;
 
     let mut out = Vec::with_capacity(resp.len());
@@ -838,15 +807,14 @@ pub fn hkeys<K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K) -> Box<d
     }
 
     Ok(out)
-  }))
 }
 
-pub fn hlen<K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K) -> Box<dyn Future<Output=Result<usize, RedisError>>> {
+pub async fn hlen<K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K) -> Result<usize, RedisError>  {
   let key = key.into();
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     Ok((RedisCommandKind::HLen, vec![key.into()]))
-  }).and_then(|frame| {
+  }).await?;
     let resp = protocol_utils::frame_to_single_result(frame)?;
 
     match resp {
@@ -855,10 +823,9 @@ pub fn hlen<K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K) -> Box<dy
         RedisErrorKind::Unknown, "Invalid HLEN response."
       ))
     }
-  }))
 }
 
-pub fn hmget<F: Into<MultipleKeys>, K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K, fields: F) -> Box<dyn Future<Output=Result<Vec<RedisValue>, RedisError>>> {
+pub async fn hmget<F: Into<MultipleKeys>, K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K, fields: F) -> Result<Vec<RedisValue>, RedisError>  {
   let key = key.into();
   let mut fields = fields.into().inner();
 
@@ -869,14 +836,13 @@ pub fn hmget<F: Into<MultipleKeys>, K: Into<RedisKey>> (inner: &Arc<RedisClientI
     args.push(field.into());
   }
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     Ok((RedisCommandKind::HMGet, args))
-  }).and_then(|frame| {
+  }).await?;
     Ok(protocol_utils::frame_to_results(frame)?)
-  }))
 }
 
-pub fn hmset<V: Into<RedisValue>, F: Into<RedisKey> + Hash + Eq, K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K, mut values: HashMap<F, V>) -> Box<dyn Future<Output=Result<String, RedisError>>> {
+pub async fn hmset<V: Into<RedisValue>, F: Into<RedisKey> + Hash + Eq, K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K, mut values: HashMap<F, V>) -> Result<String, RedisError>  {
   let key = key.into();
 
   let mut args = Vec::with_capacity(values.len() * 2 + 1);
@@ -888,9 +854,9 @@ pub fn hmset<V: Into<RedisValue>, F: Into<RedisKey> + Hash + Eq, K: Into<RedisKe
     args.push(value.into());
   }
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     Ok((RedisCommandKind::HMSet, args))
-  }).and_then(|frame| {
+  }).await?;
     let resp = protocol_utils::frame_to_single_result(frame)?;
 
     match resp {
@@ -899,18 +865,17 @@ pub fn hmset<V: Into<RedisValue>, F: Into<RedisKey> + Hash + Eq, K: Into<RedisKe
         RedisErrorKind::Unknown, "Invalid HMSET response."
       ))
     }
-  }))
 }
 
-pub fn hset<K: Into<RedisKey>, F: Into<RedisKey>, V: Into<RedisValue>> (inner: &Arc<RedisClientInner>, key: K, field: F, value: V) -> Box<dyn Future<Output=Result<usize, RedisError>>> {
+pub async fn hset<K: Into<RedisKey>, F: Into<RedisKey>, V: Into<RedisValue>> (inner: &Arc<RedisClientInner>, key: K, field: F, value: V) -> Result<usize, RedisError>  {
   let key = key.into();
   let field = field.into();
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     let args: Vec<RedisValue> = vec![key.into(), field.into(), value.into()];
 
     Ok((RedisCommandKind::HSet, args))
-  }).and_then(|frame| {
+  }).await?;
     let resp = protocol_utils::frame_to_single_result(frame)?;
 
     let res = match resp {
@@ -921,17 +886,16 @@ pub fn hset<K: Into<RedisKey>, F: Into<RedisKey>, V: Into<RedisValue>> (inner: &
     };
 
     res
-  }))
 }
 
-pub fn hsetnx<K: Into<RedisKey>, F: Into<RedisKey>, V: Into<RedisValue>> (inner: &Arc<RedisClientInner>, key: K, field: F, value: V) -> Box<dyn Future<Output=Result<usize, RedisError>>> {
+pub async fn hsetnx<K: Into<RedisKey>, F: Into<RedisKey>, V: Into<RedisValue>> (inner: &Arc<RedisClientInner>, key: K, field: F, value: V) -> Result<usize, RedisError>  {
   let (key, field, value) = (key.into(), field.into(), value.into());
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     let args: Vec<RedisValue> = vec![key.into(), field.into(), value];
 
     Ok((RedisCommandKind::HSetNx, args))
-  }).and_then(|frame| {
+  }).await?;
     let resp = protocol_utils::frame_to_single_result(frame)?;
 
     match resp {
@@ -940,17 +904,16 @@ pub fn hsetnx<K: Into<RedisKey>, F: Into<RedisKey>, V: Into<RedisValue>> (inner:
         RedisErrorKind::Unknown , "Invalid HSETNX response."
       ))
     }
-  }))
 }
 
-pub fn hstrlen<K: Into<RedisKey>, F: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K, field: F) -> Box<dyn Future<Output=Result<usize, RedisError>>> {
+pub async fn hstrlen<K: Into<RedisKey>, F: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K, field: F) -> Result<usize, RedisError>  {
   let (key, field) = (key.into(), field.into());
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     let args: Vec<RedisValue> = vec![key.into(), field.into()];
 
     Ok((RedisCommandKind::HStrLen, args))
-  }).and_then(|frame| {
+  }).await?;
     let resp = protocol_utils::frame_to_single_result(frame)?;
 
     match resp {
@@ -959,25 +922,23 @@ pub fn hstrlen<K: Into<RedisKey>, F: Into<RedisKey>> (inner: &Arc<RedisClientInn
         RedisErrorKind::Unknown , "Invalid HSTRLEN response."
       ))
     }
-  }))
 }
 
-pub fn hvals<K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K) -> Box<dyn Future<Output=Result<Vec<RedisValue>, RedisError>>> {
+pub async fn hvals<K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K) -> Result<Vec<RedisValue>, RedisError>  {
   let key = key.into();
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     Ok((RedisCommandKind::HVals, vec![key.into()]))
-  }).and_then(|frame| {
+  }).await?;
     Ok(protocol_utils::frame_to_results(frame)?)
-  }))
 }
 
-pub fn llen<K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K) -> Box<dyn Future<Output=Result<usize, RedisError>>> {
+pub async fn llen<K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K) -> Result<usize, RedisError>  {
   let key = key.into();
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     Ok((RedisCommandKind::LLen, vec![key.into()]))
-  }).and_then(|frame| {
+  }).await?;
     let resp = protocol_utils::frame_to_single_result(frame)?;
 
     match resp {
@@ -986,18 +947,17 @@ pub fn llen<K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K) -> Box<dy
         RedisErrorKind::Unknown, "Invalid LLEN response."
       ))
     }
-  }))
 }
 
-pub fn lpush<K: Into<RedisKey>, V: Into<RedisValue>> (inner: &Arc<RedisClientInner>, key: K, value: V) -> Box<dyn Future<Output=Result<usize, RedisError>>> {
+pub async fn lpush<K: Into<RedisKey>, V: Into<RedisValue>> (inner: &Arc<RedisClientInner>, key: K, value: V) -> Result<usize, RedisError>  {
   let key = key.into();
   let value = value.into();
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     let args: Vec<RedisValue> = vec![key.into(), value.into()];
 
     Ok((RedisCommandKind::LPush, args))
-  }).and_then(|frame| {
+  }).await?;
     let resp = protocol_utils::frame_to_single_result(frame)?;
 
     match resp {
@@ -1006,17 +966,16 @@ pub fn lpush<K: Into<RedisKey>, V: Into<RedisValue>> (inner: &Arc<RedisClientInn
         RedisErrorKind::Unknown , "Invalid LPUSH response."
       ))
     }
-  }))
 }
 
-pub fn lpop<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Box<dyn Future<Output=Result<Option<RedisValue>, RedisError>>> {
+pub async fn lpop<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Result<Option<RedisValue>, RedisError>  {
   let key = key.into();
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     let args: Vec<RedisValue> = vec![key.into()];
 
     Ok((RedisCommandKind::LPop, args))
-  }).and_then(|frame| {
+  }).await?;
     let resp = protocol_utils::frame_to_single_result(frame)?;
 
     let resp = if resp.kind() == RedisValueKind::Null {
@@ -1026,14 +985,13 @@ pub fn lpop<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Box<dyn
     };
 
     Ok(resp)
-  }))
 }
 
-pub fn sadd<K: Into<RedisKey>, V: Into<MultipleValues>>(inner: &Arc<RedisClientInner>, key: K, values: V) -> Box<dyn Future<Output=Result<usize, RedisError>>> {
+pub async fn sadd<K: Into<RedisKey>, V: Into<MultipleValues>>(inner: &Arc<RedisClientInner>, key: K, values: V) -> Result<usize, RedisError>  {
   let key = key.into();
   let value = values.into();
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     let mut args = Vec::with_capacity(1 + value.len());
     args.push(key.into());
 
@@ -1042,7 +1000,7 @@ pub fn sadd<K: Into<RedisKey>, V: Into<MultipleValues>>(inner: &Arc<RedisClientI
     }
 
     Ok((RedisCommandKind::Sadd, args))
-  }).and_then(|frame| {
+  }).await?;
     let resp = protocol_utils::frame_to_single_result(frame)?;
 
     match resp {
@@ -1051,14 +1009,13 @@ pub fn sadd<K: Into<RedisKey>, V: Into<MultipleValues>>(inner: &Arc<RedisClientI
         RedisErrorKind::Unknown , "Invalid SADD response."
       ))
     }
-  }))
 }
 
-pub fn srem<K: Into<RedisKey>, V: Into<MultipleValues>>(inner: &Arc<RedisClientInner>, key: K, values: V) -> Box<dyn Future<Output=Result<usize, RedisError>>> {
+pub async fn srem<K: Into<RedisKey>, V: Into<MultipleValues>>(inner: &Arc<RedisClientInner>, key: K, values: V) -> Result<usize, RedisError>  {
   let key = key.into();
   let value = values.into();
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     let mut args = Vec::with_capacity(1 + value.len());
     args.push(key.into());
 
@@ -1067,7 +1024,7 @@ pub fn srem<K: Into<RedisKey>, V: Into<MultipleValues>>(inner: &Arc<RedisClientI
     }
 
     Ok((RedisCommandKind::Srem, args))
-  }).and_then(|frame| {
+  }).await?;
     let resp = protocol_utils::frame_to_single_result(frame)?;
 
     match resp {
@@ -1076,23 +1033,21 @@ pub fn srem<K: Into<RedisKey>, V: Into<MultipleValues>>(inner: &Arc<RedisClientI
         RedisErrorKind::Unknown , "Invalid SREM response."
       ))
     }
-  }))
 }
 
-pub fn smembers<K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K) -> Box<dyn Future<Output=Result<Vec<RedisValue>, RedisError>>> {
+pub async fn smembers<K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, key: K) -> Result<Vec<RedisValue>, RedisError>  {
   let key = key.into();
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     Ok((RedisCommandKind::Smembers, vec![key.into()]))
-  }).and_then(|frame| {
+  }).await?;
     Ok(protocol_utils::frame_to_results(frame)?)
-  }))
 }
 
-pub fn psubscribe<K: Into<MultipleKeys>>(inner: &Arc<RedisClientInner>, patterns: K) -> Box<dyn Future<Output=Result<Vec<usize>, RedisError>>> {
+pub async fn psubscribe<K: Into<MultipleKeys>>(inner: &Arc<RedisClientInner>, patterns: K) -> Result<Vec<usize>, RedisError>  {
   let patterns = patterns.into().inner();
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     let mut keys = Vec::with_capacity(patterns.len());
 
     for pattern in patterns.into_iter() {
@@ -1105,16 +1060,15 @@ pub fn psubscribe<K: Into<MultipleKeys>>(inner: &Arc<RedisClientInner>, patterns
     });
 
     Ok((kind, keys))
-  }).and_then(|frame| {
+  }).await?;
     let result = protocol_utils::frame_to_results(frame)?;
     utils::pattern_pubsub_counts(result)
-  }))
 }
 
-pub fn punsubscribe<K: Into<MultipleKeys>>(inner: &Arc<RedisClientInner>, patterns: K) -> Box<dyn Future<Output=Result<Vec<usize>, RedisError>>> {
+pub async fn punsubscribe<K: Into<MultipleKeys>>(inner: &Arc<RedisClientInner>, patterns: K) -> Result<Vec<usize>, RedisError>  {
   let patterns = patterns.into().inner();
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     let mut keys = Vec::with_capacity(patterns.len());
 
     for pattern in patterns.into_iter() {
@@ -1127,10 +1081,9 @@ pub fn punsubscribe<K: Into<MultipleKeys>>(inner: &Arc<RedisClientInner>, patter
     });
 
     Ok((kind, keys))
-  }).and_then(|frame| {
+  }).await?;
     let result = protocol_utils::frame_to_results(frame)?;
     utils::pattern_pubsub_counts(result)
-  }))
 }
 
 pub fn scan<P: Into<String>>(inner: &Arc<RedisClientInner>, pattern: Option<P>, count: Option<usize>, _type: Option<ScanType>) -> Box<dyn Stream<Item=Result<ScanResult, RedisError>>> {
@@ -1175,7 +1128,8 @@ pub fn scan<P: Into<String>>(inner: &Arc<RedisClientInner>, pattern: Option<P>, 
     return Box::new(future::err(e).into_stream());
   }
 
-  Box::new(rx.from_err::<RedisError>().and_then(|res| res.into_future()))
+  //Box::new(rx.from_err::<RedisError>().and_then(|res| res.into_future()))
+  Box::new(rx)
 }
 
 pub fn hscan<K: Into<RedisKey>, P: Into<String>>(inner: &Arc<RedisClientInner>, key: K, pattern: Option<P>, count: Option<usize>) -> Box<dyn Stream<Item=Result<HScanResult, RedisError>>> {
@@ -1218,14 +1172,18 @@ pub fn hscan<K: Into<RedisKey>, P: Into<String>>(inner: &Arc<RedisClientInner>, 
     return Box::new(future::err(e).into_stream());
   }
 
-  Box::new(rx.from_err::<RedisError>().and_then(|res| res.into_future()).filter_map(|result| {
-    match result {
-      ValueScanResult::HScan(res) => Some(res),
-      _ => {
+  //Box::new(rx.from_err::<RedisError>().and_then(|res| res.into_future()).filter_map(|result| {
+  Box::new(rx.filter_map(|result| {
+    let result = match result {
+      //ValueScanResult::HScan(res) => Some(res),
+      Ok(ValueScanResult::HScan(res)) => Some(Ok(res)), // FIXME: check semantics of error handling here, need to bail on first error?
+      Ok(_) => {
         warn!("Invalid scan result for hscan");
         None
-      }
-    }
+      },
+      Err(e) => Some(Err(e)),
+    };
+    futures::future::ready(result)
   }))
 }
 
@@ -1269,14 +1227,17 @@ pub fn sscan<K: Into<RedisKey>, P: Into<String>>(inner: &Arc<RedisClientInner>, 
     return Box::new(future::err(e).into_stream());
   }
 
-  Box::new(rx.from_err::<RedisError>().and_then(|res| res.into_future()).filter_map(|result| {
-    match result {
-      ValueScanResult::SScan(res) => Some(res),
-      _ => {
+  //Box::new(rx.from_err::<RedisError>().and_then(|res| res.into_future()).filter_map(|result| {
+  Box::new(rx.filter_map(|result| {
+    let result = match result {
+      Ok(ValueScanResult::SScan(res)) => Some(Ok(res)),
+      Ok(_) => {
         warn!("Invalid scan result for sscan");
         None
-      }
-    }
+      },
+      Err(e) => Some(Err(e)),
+    };
+    futures::future::ready(result)
   }))
 }
 
@@ -1320,21 +1281,24 @@ pub fn zscan<K: Into<RedisKey>, P: Into<String>>(inner: &Arc<RedisClientInner>, 
     return Box::new(future::err(e).into_stream());
   }
 
-  Box::new(rx.from_err::<RedisError>().and_then(|res| res.into_future()).filter_map(|result| {
-    match result {
-      ValueScanResult::ZScan(res) => Some(res),
-      _ => {
+  //Box::new(rx.from_err::<RedisError>().and_then(|res| res.into_future()).filter_map(|result| {
+  Box::new(rx.filter_map(|result| {
+    let result = match result {
+      Ok(ValueScanResult::ZScan(res)) => Some(Ok(res)),
+      Ok(_) => {
         warn!("Invalid scan result for zscan");
         None
-      }
-    }
+      },
+      Err(e) => Some(Err(e))
+    };
+    futures::future::ready(result)
   }))
 }
 
-pub fn mget<K: Into<MultipleKeys>>(inner: &Arc<RedisClientInner>, keys: K) -> Box<dyn Future<Output=Result<Vec<RedisValue>, RedisError>>> {
+pub async fn mget<K: Into<MultipleKeys>>(inner: &Arc<RedisClientInner>, keys: K) -> Result<Vec<RedisValue>, RedisError>  {
   let keys = keys.into();
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     let mut args = Vec::with_capacity(keys.len());
 
     for key in keys.inner().into_iter() {
@@ -1342,16 +1306,15 @@ pub fn mget<K: Into<MultipleKeys>>(inner: &Arc<RedisClientInner>, keys: K) -> Bo
     }
 
     Ok((RedisCommandKind::Mget, args))
-  }).and_then(|frame| {
+  }).await?;
     protocol_utils::frame_to_results(frame)
-  }))
 }
 
-pub fn zadd<K: Into<RedisKey>, V: Into<MultipleZaddValues>>(inner: &Arc<RedisClientInner>, key: K, options: Option<SetOptions>, changed: bool, incr: bool, values: V) -> Box<dyn Future<Output=Result<RedisValue, RedisError>>> {
+pub async fn zadd<K: Into<RedisKey>, V: Into<MultipleZaddValues>>(inner: &Arc<RedisClientInner>, key: K, options: Option<SetOptions>, changed: bool, incr: bool, values: V) -> Result<RedisValue, RedisError>  {
   let key = key.into();
   let values = values.into().inner();
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     let mut args = Vec::with_capacity(4 + (values.len() * 2));
     args.push(key.into());
 
@@ -1371,17 +1334,16 @@ pub fn zadd<K: Into<RedisKey>, V: Into<MultipleZaddValues>>(inner: &Arc<RedisCli
     }
 
     Ok((RedisCommandKind::Zadd, args))
-  }).and_then(|frame| {
+  }).await?;
     protocol_utils::frame_to_single_result(frame)
-  }))
 }
 
-pub fn zcard<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Box<dyn Future<Output=Result<usize, RedisError>>> {
+pub async fn zcard<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Result<usize, RedisError>  {
   let key = key.into();
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     Ok((RedisCommandKind::Zcard, vec![key.into()]))
-  }).and_then(|frame| {
+  }).await?;
     match protocol_utils::frame_to_single_result(frame)? {
       RedisValue::Integer(i) => if i < 0 {
         Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid negative ZCARD response."))
@@ -1390,18 +1352,17 @@ pub fn zcard<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Box<dy
       },
       _ => Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid ZCARD response."))
     }
-  }))
 }
 
-pub fn zcount<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, min: f64, max: f64) -> Box<dyn Future<Output=Result<usize, RedisError>>> {
+pub async fn zcount<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, min: f64, max: f64) -> Result<usize, RedisError>  {
   let key = key.into();
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     let min = utils::f64_to_redis_string(min)?;
     let max = utils::f64_to_redis_string(max)?;
 
     Ok((RedisCommandKind::Zcount, vec![key.into(), min, max]))
-  }).and_then(|frame| {
+  }).await?;
     match protocol_utils::frame_to_single_result(frame)? {
       RedisValue::Integer(i) => if i < 0 {
         Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid negative ZCOUNT response."))
@@ -1410,17 +1371,16 @@ pub fn zcount<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, min: f64
       },
       _ => Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid ZCOUNT response."))
     }
-  }))
 }
 
-pub fn zlexcount<K: Into<RedisKey>, M: Into<String>, N: Into<String>>(inner: &Arc<RedisClientInner>, key: K, min: M, max: N) -> Box<dyn Future<Output=Result<usize, RedisError>>> {
+pub async fn zlexcount<K: Into<RedisKey>, M: Into<String>, N: Into<String>>(inner: &Arc<RedisClientInner>, key: K, min: M, max: N) -> Result<usize, RedisError>  {
   let key = key.into();
   let min = min.into();
   let max = max.into();
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     Ok((RedisCommandKind::Zlexcount, vec![key.into(), min.into(), max.into()]))
-  }).and_then(|frame| {
+  }).await?;
     match protocol_utils::frame_to_single_result(frame)? {
       RedisValue::Integer(i) => if i < 0 {
         Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid negative ZLEXCOUNT response."))
@@ -1429,29 +1389,27 @@ pub fn zlexcount<K: Into<RedisKey>, M: Into<String>, N: Into<String>>(inner: &Ar
       },
       _ => Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid ZLEXCOUNT response."))
     }
-  }))
 }
 
-pub fn zincrby<K: Into<RedisKey>, V: Into<RedisValue>>(inner: &Arc<RedisClientInner>, key: K, incr: f64, value: V) -> Box<dyn Future<Output=Result<f64, RedisError>>> {
+pub async fn zincrby<K: Into<RedisKey>, V: Into<RedisValue>>(inner: &Arc<RedisClientInner>, key: K, incr: f64, value: V) -> Result<f64, RedisError>  {
   let key = key.into();
   let value = value.into();
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     let incr = utils::f64_to_redis_string(incr)?;
 
     Ok((RedisCommandKind::Zincrby, vec![key.into(), incr, value]))
-  }).and_then(|frame| {
+  }).await?;
     match protocol_utils::frame_to_single_result(frame)? {
       RedisValue::String(s) => utils::redis_string_to_f64(&s),
       _ => Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid ZINCRBY response."))
     }
-  }))
 }
 
-pub fn zrange<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, start: i64, stop: i64, with_scores: bool) -> Box<dyn Future<Output=Result<Vec<RedisValue>, RedisError>>> {
+pub async fn zrange<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, start: i64, stop: i64, with_scores: bool) -> Result<Vec<RedisValue>, RedisError>  {
   let key = key.into();
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     let mut args = vec![key.into(), start.into(), stop.into()];
 
     if with_scores {
@@ -1459,17 +1417,16 @@ pub fn zrange<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, start: i
     }
 
     Ok((RedisCommandKind::Zrange, args))
-  }).and_then(|frame| {
+  }).await?;
     protocol_utils::frame_to_results(frame)
-  }))
 }
 
-pub fn zrangebylex<K: Into<RedisKey>, M: Into<String>, N: Into<String>>(inner: &Arc<RedisClientInner>, key: K, min: M, max: N, limit: Option<(usize, usize)>) -> Box<dyn Future<Output=Result<Vec<RedisValue>, RedisError>>> {
+pub async fn zrangebylex<K: Into<RedisKey>, M: Into<String>, N: Into<String>>(inner: &Arc<RedisClientInner>, key: K, min: M, max: N, limit: Option<(usize, usize)>) -> Result<Vec<RedisValue>, RedisError>  {
   let key = key.into();
   let min = min.into();
   let max = max.into();
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     let mut args = vec![key.into(), min.into(), max.into()];
 
     if let Some((offset, count)) = limit {
@@ -1479,15 +1436,14 @@ pub fn zrangebylex<K: Into<RedisKey>, M: Into<String>, N: Into<String>>(inner: &
     }
 
     Ok((RedisCommandKind::Zrangebylex, args))
-  }).and_then(|frame| {
+  }).await?;
     protocol_utils::frame_to_results(frame)
-  }))
 }
 
-pub fn zrangebyscore<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, min: f64, max: f64, with_scores: bool, limit: Option<(usize, usize)>) -> Box<dyn Future<Output=Result<Vec<RedisValue>, RedisError>>> {
+pub async fn zrangebyscore<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, min: f64, max: f64, with_scores: bool, limit: Option<(usize, usize)>) -> Result<Vec<RedisValue>, RedisError>  {
   let key = key.into();
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     let mut args = Vec::with_capacity(7);
     args.push(key.into());
 
@@ -1507,15 +1463,14 @@ pub fn zrangebyscore<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, m
     }
 
     Ok((RedisCommandKind::Zrangebyscore, args))
-  }).and_then(|frame| {
+  }).await?;
     protocol_utils::frame_to_results(frame)
-  }))
 }
 
-pub fn zpopmax<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, count: Option<usize>) -> Box<dyn Future<Output=Result<Vec<RedisValue>, RedisError>>> {
+pub async fn zpopmax<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, count: Option<usize>) -> Result<Vec<RedisValue>, RedisError>  {
   let key = key.into();
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     let mut args = Vec::with_capacity(2);
     args.push(key.into());
 
@@ -1524,15 +1479,14 @@ pub fn zpopmax<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, count: 
     }
 
     Ok((RedisCommandKind::Zpopmax, args))
-  }).and_then(|frame| {
+  }).await?;
     protocol_utils::frame_to_results(frame)
-  }))
 }
 
-pub fn zpopmin<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, count: Option<usize>) -> Box<dyn Future<Output=Result<Vec<RedisValue>, RedisError>>> {
+pub async fn zpopmin<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, count: Option<usize>) -> Result<Vec<RedisValue>, RedisError>  {
   let key = key.into();
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     let mut args = Vec::with_capacity(2);
     args.push(key.into());
 
@@ -1541,27 +1495,25 @@ pub fn zpopmin<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, count: 
     }
 
     Ok((RedisCommandKind::Zpopmin, args))
-  }).and_then(|frame| {
+  }).await?;
     protocol_utils::frame_to_results(frame)
-  }))
 }
 
-pub fn zrank<K: Into<RedisKey>, V: Into<RedisValue>>(inner: &Arc<RedisClientInner>, key: K, value: V) -> Box<dyn Future<Output=Result<RedisValue, RedisError>>> {
+pub async fn zrank<K: Into<RedisKey>, V: Into<RedisValue>>(inner: &Arc<RedisClientInner>, key: K, value: V) -> Result<RedisValue, RedisError>  {
   let key = key.into();
   let value = value.into();
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     Ok((RedisCommandKind::Zrank, vec![key.into(), value.into()]))
-  }).and_then(|frame| {
+  }).await?;
     protocol_utils::frame_to_single_result(frame)
-  }))
 }
 
-pub fn zrem<K: Into<RedisKey>, V: Into<MultipleValues>>(inner: &Arc<RedisClientInner>, key: K, values: V) -> Box<dyn Future<Output=Result<usize, RedisError>>> {
+pub async fn zrem<K: Into<RedisKey>, V: Into<MultipleValues>>(inner: &Arc<RedisClientInner>, key: K, values: V) -> Result<usize, RedisError>  {
   let key = key.into();
   let values = values.into();
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     let mut args = Vec::with_capacity(1 + values.len());
     args.push(key.into());
 
@@ -1570,7 +1522,7 @@ pub fn zrem<K: Into<RedisKey>, V: Into<MultipleValues>>(inner: &Arc<RedisClientI
     }
 
     Ok((RedisCommandKind::Zrem, args))
-  }).and_then(|frame| {
+  }).await?;
     match protocol_utils::frame_to_single_result(frame)? {
       RedisValue::Integer(i) => if i < 0 {
         Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid ZREM response. Expected non-negative integer."))
@@ -1579,17 +1531,16 @@ pub fn zrem<K: Into<RedisKey>, V: Into<MultipleValues>>(inner: &Arc<RedisClientI
       },
       _ => Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid ZREM response. Expected integer."))
     }
-  }))
 }
 
-pub fn zremrangebylex<K: Into<RedisKey>, M: Into<String>, N: Into<String>>(inner: &Arc<RedisClientInner>, key: K, min: M, max: N) -> Box<dyn Future<Output=Result<usize, RedisError>>> {
+pub async fn zremrangebylex<K: Into<RedisKey>, M: Into<String>, N: Into<String>>(inner: &Arc<RedisClientInner>, key: K, min: M, max: N) -> Result<usize, RedisError>  {
   let key = key.into();
   let min = min.into();
   let max = max.into();
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     Ok((RedisCommandKind::Zremrangebylex, vec![key.into(), min.into(), max.into()]))
-  }).and_then(|frame| {
+  }).await?;
     match protocol_utils::frame_to_single_result(frame)? {
       RedisValue::Integer(i) => if i < 0 {
         Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid ZREMRANGEBYLEX response. Expected non-negative integer."))
@@ -1598,15 +1549,14 @@ pub fn zremrangebylex<K: Into<RedisKey>, M: Into<String>, N: Into<String>>(inner
       },
       _ => Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid ZREMRANGEBYLEX response. Expected integer."))
     }
-  }))
 }
 
-pub fn zremrangebyrank<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, start: i64, stop: i64) -> Box<dyn Future<Output=Result<usize, RedisError>>> {
+pub async fn zremrangebyrank<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, start: i64, stop: i64) -> Result<usize, RedisError>  {
   let key = key.into();
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     Ok((RedisCommandKind::Zremrangebyrank, vec![key.into(), start.into(), stop.into()]))
-  }).and_then(|frame| {
+  }).await?;
     match protocol_utils::frame_to_single_result(frame)? {
       RedisValue::Integer(i) => if i < 0 {
         Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid ZREMRANGEBYRANK response. Expected non-negative integer."))
@@ -1615,21 +1565,20 @@ pub fn zremrangebyrank<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K,
       },
       _ => Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid ZREMRANGEBYRANK response. Expected integer."))
     }
-  }))
 }
 
-pub fn zremrangebyscore<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, min: f64, max: f64) -> Box<dyn Future<Output=Result<usize, RedisError>>> {
+pub async fn zremrangebyscore<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, min: f64, max: f64) -> Result<usize, RedisError>  {
   let key = key.into();
 
-  Box::new(utils::request_response(inner, move || {
-    let mut args = vec![
+  let frame = utils::request_response(inner, move || {
+    let args = vec![
       key.into(),
       utils::f64_to_redis_string(min)?,
       utils::f64_to_redis_string(max)?
     ];
 
     Ok((RedisCommandKind::Zremrangebyscore, args))
-  }).and_then(|frame| {
+  }).await?;
     match protocol_utils::frame_to_single_result(frame)? {
       RedisValue::Integer(i) => if i < 0 {
         Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid ZREMRANGEBYSCORE response. Expected non-negative integer."))
@@ -1638,13 +1587,12 @@ pub fn zremrangebyscore<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K
       },
       _ => Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid ZREMRANGEBYSCORE response. Expected integer."))
     }
-  }))
 }
 
-pub fn zrevrange<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, start: i64, stop: i64, with_scores: bool) -> Box<dyn Future<Output=Result<Vec<RedisValue>, RedisError>>> {
+pub async fn zrevrange<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, start: i64, stop: i64, with_scores: bool) -> Result<Vec<RedisValue>, RedisError>  {
   let key = key.into();
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     let mut args = Vec::with_capacity(4);
     args.push(key.into());
     args.push(start.into());
@@ -1655,17 +1603,16 @@ pub fn zrevrange<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, start
     }
 
     Ok((RedisCommandKind::Zrevrange, args))
-  }).and_then(|frame| {
+  }).await?;
     protocol_utils::frame_to_results(frame)
-  }))
 }
 
-pub fn zrevrangebylex<K: Into<RedisKey>, M: Into<String>, N: Into<String>>(inner: &Arc<RedisClientInner>, key: K, max: M, min: N, limit: Option<(usize, usize)>) -> Box<dyn Future<Output=Result<Vec<RedisValue>, RedisError>>> {
+pub async fn zrevrangebylex<K: Into<RedisKey>, M: Into<String>, N: Into<String>>(inner: &Arc<RedisClientInner>, key: K, max: M, min: N, limit: Option<(usize, usize)>) -> Result<Vec<RedisValue>, RedisError>  {
   let key = key.into();
   let max = max.into();
   let min = min.into();
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     let mut args = Vec::with_capacity(6);
     args.push(key.into());
     args.push(max.into());
@@ -1678,15 +1625,14 @@ pub fn zrevrangebylex<K: Into<RedisKey>, M: Into<String>, N: Into<String>>(inner
     }
 
     Ok((RedisCommandKind::Zrevrangebylex, args))
-  }).and_then(|frame| {
+  }).await?;
     protocol_utils::frame_to_results(frame)
-  }))
 }
 
-pub fn zrevrangebyscore<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, max: f64, min: f64, with_scores: bool, limit: Option<(usize, usize)>) -> Box<dyn Future<Output=Result<Vec<RedisValue>, RedisError>>> {
+pub async fn zrevrangebyscore<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, max: f64, min: f64, with_scores: bool, limit: Option<(usize, usize)>) -> Result<Vec<RedisValue>, RedisError>  {
   let key = key.into();
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     let mut args = Vec::with_capacity(7);
     args.push(key.into());
 
@@ -1704,45 +1650,42 @@ pub fn zrevrangebyscore<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K
     }
 
     Ok((RedisCommandKind::Zrevrangebyscore, args))
-  }).and_then(|frame| {
+  }).await?;
     protocol_utils::frame_to_results(frame)
-  }))
 }
 
-pub fn zrevrank<K: Into<RedisKey>, V: Into<RedisValue>>(inner: &Arc<RedisClientInner>, key: K, value: V) -> Box<dyn Future<Output=Result<RedisValue, RedisError>>> {
+pub async fn zrevrank<K: Into<RedisKey>, V: Into<RedisValue>>(inner: &Arc<RedisClientInner>, key: K, value: V) -> Result<RedisValue, RedisError>  {
   let key = key.into();
   let value = value.into();
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     Ok((RedisCommandKind::Zrevrank, vec![key.into(), value.into()]))
-  }).and_then(|frame| {
+  }).await?;
     protocol_utils::frame_to_single_result(frame)
-  }))
 }
 
-pub fn zscore<K: Into<RedisKey>, V: Into<RedisValue>>(inner: &Arc<RedisClientInner>, key: K, value: V) -> Box<dyn Future<Output=Result<RedisValue, RedisError>>> {
+pub async fn zscore<K: Into<RedisKey>, V: Into<RedisValue>>(inner: &Arc<RedisClientInner>, key: K, value: V) -> Result<RedisValue, RedisError>  {
   let key = key.into();
   let value = value.into();
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     Ok((RedisCommandKind::Zscore, vec![key.into(), value.into()]))
-  }).and_then(|frame| {
+  }).await?;
     protocol_utils::frame_to_single_result(frame)
-  }))
 }
 
-pub fn zinterstore<D: Into<RedisKey>, K: Into<MultipleKeys>, W: Into<MultipleWeights>>(inner: &Arc<RedisClientInner>,
+pub async fn zinterstore<D: Into<RedisKey>, K: Into<MultipleKeys>, W: Into<MultipleWeights>>(inner: &Arc<RedisClientInner>,
                                                                                        destination: D,
                                                                                        keys: K,
                                                                                        weights: W,
                                                                                        aggregate: Option<AggregateOptions>)
-  -> Box<dyn Future<Output=Result<usize, RedisError>>>
+  -> Result<usize, RedisError>
 {
   let destination = destination.into();
   let keys = keys.into();
   let weights = weights.into();
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     if keys.len() == 0 {
       return Err(RedisError::new(RedisErrorKind::InvalidArgument, "ZINTERSTORE numkeys cannot be 0."));
     }
@@ -1768,7 +1711,7 @@ pub fn zinterstore<D: Into<RedisKey>, K: Into<MultipleKeys>, W: Into<MultipleWei
     }
 
     Ok((RedisCommandKind::Zinterstore, args))
-  }).and_then(|frame| {
+  }).await?;
     match protocol_utils::frame_to_single_result(frame)? {
       RedisValue::Integer(i) => if i < 0 {
         Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid ZINTERSTORE response. Expected non-negative integer."))
@@ -1777,21 +1720,20 @@ pub fn zinterstore<D: Into<RedisKey>, K: Into<MultipleKeys>, W: Into<MultipleWei
       },
       _ => Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid ZINTERSTORE response. Expected integer."))
     }
-  }))
 }
 
-pub fn zunionstore<D: Into<RedisKey>, K: Into<MultipleKeys>, W: Into<MultipleWeights>>(inner: &Arc<RedisClientInner>,
+pub async fn zunionstore<D: Into<RedisKey>, K: Into<MultipleKeys>, W: Into<MultipleWeights>>(inner: &Arc<RedisClientInner>,
                                                                                        destination: D,
                                                                                        keys: K,
                                                                                        weights: W,
                                                                                        aggregate: Option<AggregateOptions>)
-  -> Box<dyn Future<Output=Result<usize, RedisError>>>
+  -> Result<usize, RedisError>
 {
   let destination = destination.into();
   let keys = keys.into();
   let weights = weights.into();
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     if keys.len() == 0 {
       return Err(RedisError::new(RedisErrorKind::InvalidArgument, "ZUNIONSTORE numkeys cannot be 0."));
     }
@@ -1817,7 +1759,7 @@ pub fn zunionstore<D: Into<RedisKey>, K: Into<MultipleKeys>, W: Into<MultipleWei
     }
 
     Ok((RedisCommandKind::Zunionstore, args))
-  }).and_then(|frame| {
+  }).await?;
     match protocol_utils::frame_to_single_result(frame)? {
       RedisValue::Integer(i) => if i < 0 {
         Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid ZUNIONSTORE response. Expected non-negative integer."))
@@ -1826,32 +1768,28 @@ pub fn zunionstore<D: Into<RedisKey>, K: Into<MultipleKeys>, W: Into<MultipleWei
       },
       _ => Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid ZUNIONSTORE response. Expected integer."))
     }
-  }))
 }
 
-pub fn ttl<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Box<dyn Future<Output=Result<i64, RedisError>>> {
+pub async fn ttl<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Result<i64, RedisError>  {
   let key = key.into();
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     Ok((RedisCommandKind::Ttl, vec![key.into()]))
-  }).and_then(|frame| {
+  }).await?;
     match protocol_utils::frame_to_single_result(frame)? {
       RedisValue::Integer(i) => Ok(i),
       _ => Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid TTL response. Expected integer."))
     }
-  }))
 }
 
-pub fn pttl<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Box<dyn Future<Output=Result<i64, RedisError>>> {
+pub async fn pttl<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Result<i64, RedisError>  {
   let key = key.into();
 
-  Box::new(utils::request_response(inner, move || {
+  let frame = utils::request_response(inner, move || {
     Ok((RedisCommandKind::Pttl, vec![key.into()]))
-  }).and_then(|frame| {
+  }).await?;
     match protocol_utils::frame_to_single_result(frame)? {
       RedisValue::Integer(i) => Ok(i),
       _ => Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid PTTL response. Expected integer."))
     }
-  }))
 }
-

@@ -69,7 +69,7 @@ use crate::protocol::utils as protocol_utils;
 use crate::async_ng::*;
 
 //use tokio_timer::Timer;
-
+/*
 macro_rules! fry {
   ($expr:expr) => (match $expr {
     Ok(val) => val,
@@ -77,6 +77,7 @@ macro_rules! fry {
     Err(err) => return crate::utils::future_error(err.into())
   })
 }
+*/
 
 macro_rules! n(
   ($inner:expr) => {
