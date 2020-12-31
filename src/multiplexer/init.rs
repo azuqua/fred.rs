@@ -883,7 +883,7 @@ async fn create_commands_ft(spawner: Spawner, inner: Arc<RedisClientInner>) -> R
   }
 
   // FIXME: the original logic would have allowed rebuild_connection to succesfully
-  // sett an error code which would have been propagated through the fold to the end
+  // set an error code which would have been propagated through the fold to the end
   // Check whether that was just a side-effect of maintaining the tuple for the
   // fold, or if that's something we still need to handle.
   Ok(None)

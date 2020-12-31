@@ -230,7 +230,7 @@ impl RedisClient {
   ///
   /// The `on_connect` function can be used to be notified when the client first successfully connects.
   // pub fn connect(&self, spawner: &Spawner) -> ConnectionFuture {
-  // FIXME: this interface can probably be cleaned up now that we don't have to be returning a Result
+  // FIXME: does it make sense to rework this interface to eliminate the second Error?
   pub async fn connect(&self, spawner: &Spawner) -> Result<Option<RedisError>, RedisError> {
     utils::check_client_state(&self.inner.state, ClientState::Disconnected)?;
     utils::check_and_set_closed_flag(&self.inner.closed, false)?;

@@ -16,7 +16,8 @@ use futures::future::{
 use futures::select;
 use futures::stream::{
   self,
-  Stream
+  Stream,
+  StreamExt
 };
 
 use rand;
@@ -265,6 +266,21 @@ pub fn request_response<F>(inner: &Arc<RedisClientInner>, func: F) -> Pin<Box<dy
 }
 */
 
+pub async fn request_response_ft(inner: &Arc<RedisClientInner>, kind: RedisCommandKind, args: Vec<RedisValue>) -> Result<ProtocolFrame, RedisError> {
+  check_client_state(&inner.state, ClientState::Connected)?;
+
+  let (tx, rx) = oneshot_channel();
+  let command = RedisCommand::new(kind, args, Some(tx));
+
+   match send_command(&inner, command) {
+     Ok(_) => match rx.await {
+       Ok(result) => result,
+       Err(e) => Err(e.into())
+     }
+     Err(e) => Err(e)
+   }
+}
+
 pub async fn request_response<F>(inner: &Arc<RedisClientInner>, func: F) -> Result<ProtocolFrame, RedisError>
   where F: FnOnce() -> Result<(RedisCommandKind, Vec<RedisValue>), RedisError>
 {
@@ -272,7 +288,7 @@ pub async fn request_response<F>(inner: &Arc<RedisClientInner>, func: F) -> Resu
     Ok(_) => (),
     Err(e) => return Err(e.into())
   };
-  let (kind, args) = match func() { // FIXME: get fry back
+  let (kind, args) = match func() { // FIXME:  replace fry with ?
     Ok(t) => t,
     Err(e) => return Err(e)
   };
@@ -289,6 +305,21 @@ pub async fn request_response<F>(inner: &Arc<RedisClientInner>, func: F) -> Resu
    }
 }
 
+pub async fn request_response_async(inner: &Arc<RedisClientInner>, kind: RedisCommandKind, args: Vec<RedisValue>) -> Result<ProtocolFrame, RedisError>
+{
+  check_client_state(&inner.state, ClientState::Connected)?;
+
+  let (tx, rx) = oneshot_channel();
+  let command = RedisCommand::new(kind, args, Some(tx));
+
+   match send_command(&inner, command) {
+     Ok(_) => match rx.await {
+       Ok(result) => result,
+       Err(e) => Err(e.into())
+     }
+     Err(e) => Err(e)
+   }
+}
 
 pub fn is_clustered(config: &RwLock<RedisConfig>) -> bool {
   config.read().deref().is_clustered()
@@ -300,11 +331,11 @@ pub fn set_reconnect_policy(policy: &RwLock<Option<ReconnectPolicy>>, new_policy
   *guard_ref = Some(new_policy);
 }
 
-pub fn split(inner: &Arc<RedisClientInner>, spawner: &Spawner, timeout: u64) -> Box<dyn Future<Output=Result<Vec<(RedisClient, RedisConfig)>, RedisError>>> {
-  unimplemented!(); // FIXME: just a little problem
-  /*
+//pub fn split(inner: &Arc<RedisClientInner>, spawner: &Spawner, timeout: u64) -> Box<dyn Future<Output=Result<Vec<(RedisClient, RedisConfig)>, RedisError>>> {
+pub fn split(inner: &Arc<RedisClientInner>, spawner: &Spawner, timeout: u64) -> Pin<Box<dyn Future<Output=Result<Vec<(RedisClient, RedisConfig)>, RedisError>> + Send >> {
 //pub async fn split(inner: &Arc<RedisClientInner>, spawner: &Spawner, timeout: u64) -> Result<Vec<(RedisClient, RedisConfig)>, RedisError> {
   //use crate::owned::RedisClientOwned;
+  // unimplemented!(); // FIXME: just a little problem
 
   let timeout = Duration::from_millis(timeout);
   let (tx, rx) = oneshot_channel();
@@ -316,8 +347,9 @@ pub fn split(inner: &Arc<RedisClientInner>, spawner: &Spawner, timeout: u64) -> 
 
   //send_command(inner, command)?;
   if let Err(e) = send_command(inner, command) {
-    //return Err(e);
-    return future_error(e);
+    // return Err(e);
+    // return future_error(e);
+    return Box::pin(futures::future::err(e))
   }
 
   let uses_tls = inner.config.read().deref().tls();
@@ -329,18 +361,14 @@ pub fn split(inner: &Arc<RedisClientInner>, spawner: &Spawner, timeout: u64) -> 
   let timeout_ft = tokio_02::time::delay_for(timeout);
 
   //let () = rx;
-  let rx2: futures::channel::oneshot::Receiver<std::result::Result<std::vec::Vec<RedisConfig>, RedisError>> = rx;
+  let rx: futures::channel::oneshot::Receiver<std::result::Result<std::vec::Vec<RedisConfig>, RedisError>> = rx;
   //let () = rx.flatten();
   //let rxf: Box<dyn Future<Output=std::result::Result<std::vec::Vec<RedisConfig>, RedisError>>> = Box::new(&mut rx);
-  let connect_ft = rx2.flatten().and_then(move |configs| {
+  let connect_ft = rx.err_into::<RedisError>()
+    .and_then(|result| futures::future::ready(result)) // FIXME: should be a better way to flatten
+    .map_ok(move |configs| {
+    //let () = configs;
   //let connect_ft = rx.and_then(move |configs| {
-
-    // FIXME: we should have been able to get around this with the flatten() above
-    let configs = match configs {
-      err@Err(_) => return err,
-      Ok(c) => c
-    };
-
     let all_len = configs.len();
 
     stream::iter(configs.into_iter()).map(move |mut config| {
@@ -349,17 +377,16 @@ pub fn split(inner: &Arc<RedisClientInner>, spawner: &Spawner, timeout: u64) -> 
 
       let client = RedisClient::new(config.clone(), Some(timer.clone()));
       let err_client = client.clone();
-      let client_ft = client.connect(&spawner).map(|_| ()).map_err(|_| ());
+      let client_ft = client.connect(&spawner).map(|_| ()); // FIXME: still need to pass spanwer here?
 
       trace!("Creating split clustered client...");
-      spawner.spawn_remote(client_ft);
+      spawner.spawn_std(client_ft);
 
       client.on_connect()
-        .map(move |client| (client, config))
         .then(move |result| {
           match result {
-            Ok(out) => future_ok(out),
-            Err(e) => Box::new(err_client.quit().then(move |_| Err(e)))
+            Ok(client) => future_ok((client, config)),
+            Err(e) => Box::pin(err_client.quit().then(move |_| Err(e)))
           }
         })
     })
@@ -369,6 +396,7 @@ pub fn split(inner: &Arc<RedisClientInner>, spawner: &Spawner, timeout: u64) -> 
       Ok::<_, RedisError>(memo)
     })
   });
+  unimplemented!();
 
   /*
   select! {
@@ -415,7 +443,6 @@ pub fn split(inner: &Arc<RedisClientInner>, spawner: &Spawner, timeout: u64) -> 
       }
     }
   }))
-  */
   */
 }
 

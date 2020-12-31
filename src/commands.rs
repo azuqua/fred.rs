@@ -2,7 +2,7 @@ use crate::types::*;
 use crate::protocol::types::{RedisCommandKind, ResponseKind, RedisCommand, ValueScanInner, KeyScanInner};
 
 // use futures::{Future, Stream, IntoFuture};
-use futures::{Future, Stream, FutureExt, StreamExt};
+use futures::{Future, Stream, FutureExt, TryFutureExt, StreamExt};
 use futures::future::IntoFuture;
 use crate::error::{
   RedisError,
@@ -16,6 +16,7 @@ use crate::client::{RedisClientInner};
 use crate::client::RedisClient;
 use crate::multiplexer::utils as multiplexer_utils;
 
+use std::pin::Pin;
 use std::sync::Arc;
 use std::ops::{
   Deref,
@@ -100,10 +101,8 @@ pub async fn flushall(inner: &Arc<RedisClientInner>, _async: bool) -> Result<Str
   }
 }
 
-
-pub async fn get<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Result<Option<RedisValue>, RedisError> {
-  let key = key.into();
-
+/*
+pub fn get(inner: &Arc<RedisClientInner>, key: RedisKey) -> Pin<Box<dyn Future<Output=Result<Option<RedisValue>, RedisError>> + Send>> {
   let frame = utils::request_response(inner, move || {
     Ok((RedisCommandKind::Get, vec![key.into()]))
   }).await?;
@@ -115,6 +114,17 @@ pub async fn get<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Re
   } else {
     Some(resp)
   })
+}*/
+
+pub fn get<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Pin<Box<dyn Future<Output=Result<Option<RedisValue>, RedisError>> + Send>> {
+  Box::pin(utils::request_response_ft(inner, RedisCommandKind::Get, vec![key.into()])
+    .and_then(|frame| {
+      futures::future::ready(protocol_utils::frame_to_single_result(frame))
+    })
+    .map_ok(|resp| {
+      if resp.kind() == RedisValueKind::Null { None } else { Some(resp) }
+    })
+  )
 }
 
 pub async fn set<K: Into<RedisKey>, V: Into<RedisValue>>(inner: &Arc<RedisClientInner>, key: K, value: V, expire: Option<Expiration>, options: Option<SetOptions>) ->Result<bool, RedisError> {
