@@ -23,6 +23,7 @@ use std::collections::HashMap;
 
 use futures::{
   Future,
+  FutureExt,
   Stream
 };
 //use tokio_core::reactor::Handle;
@@ -339,11 +340,11 @@ pub fn frame_to_error(frame: ProtocolFrame) -> Option<RedisError> {
 /// Reconnect to the server based on the result of the previous connection.
 #[allow(unused_variables)]
 //pub async fn reconnect(spawner: Spawner, inner: Arc<RedisClientInner>, mut result: Result<Option<RedisError>, RedisError>, force_no_delay: bool)
-pub async fn reconnect(spawner: Spawner, inner: Arc<RedisClientInner>, result: Result<Option<RedisError>, RedisError>, force_no_delay: bool)
+pub async fn reconnect(spawner: Spawner, inner: Arc<RedisClientInner>, mut result: Result<Option<RedisError>, RedisError>, force_no_delay: bool)
   -> Result<(), RedisError>
 //  -> Result<(Handle, Arc<RedisClientInner>), RedisError>
 {
-  /*
+  
   // since framed sockets don't give an error when closed abruptly the client's state is
   // used to determine whether or not the socket was closed intentionally or not
   if client_utils::read_client_state(&inner.state) == ClientState::Disconnecting {
@@ -355,9 +356,10 @@ pub async fn reconnect(spawner: Spawner, inner: Arc<RedisClientInner>, result: R
   debug!("{} Starting reconnect logic from error {:?}...", n!(inner), result);
 
   loop {
+    let inner = inner.clone();
 
   match result {
-    Ok(err) => {
+    Ok(ref err) => {
       if let Some(err) = err {
         // socket was closed unintentionally
         debug!("{} Redis client closed abruptly.", n!(inner));
@@ -371,15 +373,16 @@ pub async fn reconnect(spawner: Spawner, inner: Arc<RedisClientInner>, result: R
         debug!("{} Waiting for {} ms before attempting to reconnect...", n!(inner), delay);
 
         // Box::new(inner.timer.sleep(Duration::from_millis(delay as u64)).from_err::<RedisError>().and_then(move |_| {
-        tokio_02::time::delay_for(Duration::from_millis(delay as u64)).err_into::<RedisError>().and_then(move |_| {
+        tokio_02::time::delay_for(Duration::from_millis(delay as u64)).then(move |_| {
           if client_utils::read_closed_flag(&inner.closed) {
             client_utils::set_closed_flag(&inner.closed, false);
 
-            return Err(RedisError::new(
+            return futures::future::err(RedisError::new(
               RedisErrorKind::Canceled, "Client closed while waiting to reconnect."
             ));
           }
-        }).await;
+          futures::future::ok(())
+        }).await?;
 
         continue;
         // Ok(Loop::Continue((handle, inner)))
@@ -398,26 +401,28 @@ pub async fn reconnect(spawner: Spawner, inner: Arc<RedisClientInner>, result: R
         return Ok(());
       }
     },
-    Err(e) => {
+    Err(ref e) => {
       multiplexer_utils::emit_error(&inner.error_tx, &e);
 
       let delay = match multiplexer_utils::next_reconnect_delay(&inner.policy) {
         Some(delay) => delay,
-        None => return Ok(()) // client_utils::future_ok(Loop::Break(()))
+        None => return Ok(()) // client_utils::future_ok(Loop::Break(())) // FIXME: this looks wrong, should continue to reconnect?
       };
 
       debug!("{} Waiting for {} ms before attempting to reconnect...", n!(inner), delay);
 
       // Box::new(inner.timer.sleep(Duration::from_millis(delay as u64)).from_err::<RedisError>().and_then(move |_| {
-      tokio_02::time::delay_for(Duration::from_millis(delay as u64)).err_into::<RedisError>().and_then(move |_| {
+      tokio_02::time::delay_for(Duration::from_millis(delay as u64)).then(move |_| {
         if client_utils::read_closed_flag(&inner.closed) {
           client_utils::set_closed_flag(&inner.closed, false);
 
-          return Err(RedisError::new(
+          return futures::future::err(RedisError::new(
             RedisErrorKind::Canceled, "Client closed while waiting to reconnect."
           ));
         }
-      }).await;
+
+        futures::future::ok(())
+      }).await?;
 
       // Ok(Loop::Continue((handle, inner)))
       continue;
@@ -425,8 +430,6 @@ pub async fn reconnect(spawner: Spawner, inner: Arc<RedisClientInner>, result: R
   }
 
   } // loop
-   */
-  unimplemented!()
 }
 
 

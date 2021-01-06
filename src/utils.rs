@@ -341,7 +341,6 @@ pub fn set_reconnect_policy(policy: &RwLock<Option<ReconnectPolicy>>, new_policy
 pub fn split(inner: &Arc<RedisClientInner>, spawner: &Spawner, timeout: u64) -> Pin<Box<dyn Future<Output=Result<Vec<(RedisClient, RedisConfig)>, RedisError>> + Send>> {
 //pub async fn split(inner: &Arc<RedisClientInner>, spawner: &Spawner, timeout: u64) -> Result<Vec<(RedisClient, RedisConfig)>, RedisError> {
   //use crate::owned::RedisClientOwned;
-  // unimplemented!(); // FIXME: just a little problem
 
   let timeout = Duration::from_millis(timeout);
   let (tx, rx) = oneshot_channel();

@@ -1000,13 +1000,12 @@ async fn create_commands_ft(spawner: Spawner, inner: Arc<RedisClientInner>) -> R
 
 /// Initialize a connection to the Redis server.
 #[cfg(not(feature="mocks"))]
-pub fn connect(spanwer: &Spawner, inner: Arc<RedisClientInner>) -> Pin<Box<dyn Future<Output=Result<Option<RedisError>, RedisError>> + Send>> {
-  unimplemented!()
-/*
-pub async fn connect(spawner: &Spawner, inner: Arc<RedisClientInner>) -> Result<Option<RedisError>, RedisError> {
+pub fn connect(spawner: &Spawner, inner: Arc<RedisClientInner>) -> Pin<Box<dyn Future<Output=Result<Option<RedisError>, RedisError>> + Send>> {
+//pub async fn connect(spawner: &Spawner, inner: Arc<RedisClientInner>) -> Result<Option<RedisError>, RedisError> {
   //Box<Future<Item=Option<RedisError>, Error=RedisError>> {
   client_utils::set_client_state(&inner.state, ClientState::Connecting);
 
+  /*
   let result = create_commands_ft(spawner.clone(), inner.clone()).await;
   if let Err(ref e) = result {
     if e.is_canceled() {
@@ -1019,23 +1018,19 @@ pub async fn connect(spawner: &Spawner, inner: Arc<RedisClientInner>) -> Result<
   }else{
     result
   }
-*/
-  
-  /*
+  */
   create_commands_ft(spawner.clone(), inner.clone()).then(move |result| {
     if let Err(ref e) = result {
       if e.is_canceled() {
         debug!("{} Suppressing canceled redis error: {:?}", n!(inner), e);
-
-        Ok(None)
+        futures::future::ok(None)
       }else{
-        result
+        futures::future::ready(result)
       }
     }else{
-      result
+      futures::future::ready(result)
     }
-  })
-  */
+  }).boxed()
 }
 
 #[cfg(feature="mocks")]

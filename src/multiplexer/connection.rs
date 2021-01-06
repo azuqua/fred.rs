@@ -204,7 +204,7 @@ pub async fn create_transport(addr: &SocketAddr, spawner: &Spawner, inner: &Arc<
 
 //pub async fn request_response<T>(transport: Framed<T, RedisCodec>, request: &RedisCommand) -> Result<(Frame, Framed<T, RedisCodec>), RedisError>
 pub async fn request_response<T>(mut transport: Framed<T, RedisCodec>, request: &RedisCommand) -> Result<(Frame, Framed<T, RedisCodec>), RedisError>
-  where T: AsyncRead + AsyncWrite + Unpin + 'static
+  where T: AsyncRead + AsyncWrite + Unpin + Send + 'static
 {
   //let frame = fry!(request.to_frame());
   let frame = match request.to_frame() {
@@ -242,21 +242,64 @@ pub async fn request_response<T>(mut transport: Framed<T, RedisCodec>, request: 
 }
 
 pub async fn authenticate<T>(transport: Framed<T, RedisCodec>, name: String, key: Option<String>) -> Result<Framed<T, RedisCodec>, RedisError>
-  where T: AsyncRead + AsyncWrite + 'static
+  where T: AsyncRead + AsyncWrite + Unpin + Send + 'static
 {
+  let transport = if let Some(key) = key {
+    let command = RedisCommand::new(RedisCommandKind::Auth, vec![key.into()], None);
 
-  unimplemented!();
-  /*
+    debug!("{} Authenticating Redis client...", name);
+
+    let (frame, transport) = request_response(transport, &command).await?;
+    match frame {
+      Frame::SimpleString(s) => {
+        if s == OK {
+          debug!("{} Successfully authenticated Redis client.", name);
+        } else {
+          return Err(RedisError::new(RedisErrorKind::Auth, s))
+        }
+      },
+      _ => return Err(RedisError::new(
+        RedisErrorKind::ProtocolError, format!("Invalid auth response {:?}.", frame)
+      ))
+    };
+
+    transport
+  } else {
+    transport
+  };
+
+  debug!("{} Changing client name to {}", name, name);
+
+  let command = RedisCommand::new(RedisCommandKind::ClientSetname, vec![name.clone().into()], None);
+
+  let (frame, transport) = request_response(transport, &command).await?;
+  match frame {
+    Frame::SimpleString(s) => {
+      if s == OK {
+        debug!("{} Successfully set Redis client name.", name);
+      } else {
+        warn!("{} Unexpected response to client-setname: {}", name, s);
+      }
+    },
+    _ => {
+      warn!("{} Error trying to set the client name: {:?}", name, frame);
+    }
+  };
+
+  Ok(transport)
+
+
+/*
   lazy(move |_| {
     if let Some(key) = key {
       let command = RedisCommand::new(RedisCommandKind::Auth, vec![key.into()], None);
 
       debug!("{} Authenticating Redis client...", name);
 
-      Box::new(request_response(transport, &command).and_then(|(frame, transport)| {
+      request_response(transport, &command).and_then(|(frame, transport)| {
         let inner = match frame {
           Frame::SimpleString(s) => s,
-          _ => return Err(RedisError::new(
+          _ => return futures::future::err(RedisError::new(
             RedisErrorKind::ProtocolError, format!("Invalid auth response {:?}.", frame)
           ))
         };
@@ -264,38 +307,37 @@ pub async fn authenticate<T>(transport: Framed<T, RedisCodec>, name: String, key
         if inner == OK {
           debug!("{} Successfully authenticated Redis client.", name);
 
-          Ok((name, transport))
+          futures::future::ok((name, transport))
         }else{
-          Err(RedisError::new(RedisErrorKind::Auth, inner))
+          futures::future::err(RedisError::new(RedisErrorKind::Auth, inner))
         }
-      }))
+      }).boxed()
     }else{
-      client_utils::future_ok((name, transport))
+      futures::future::ok((name, transport)).boxed()
     }
   })
+  .flatten()
   .and_then(move |(name, transport)| {
     debug!("{} Changing client name to {}", name, name);
 
     let command = RedisCommand::new(RedisCommandKind::ClientSetname, vec![name.clone().into()], None);
 
-    request_response(transport, &command).and_then(move |(frame, transport)| {
+    Box::pin(request_response(transport, &command).and_then(move |(frame, transport)| {
       let inner = match frame {
-        Frame::SimpleString(s) => s,
+        Frame::SimpleString(s) if s == OK => {
+          debug!("{} Successfully set Redis client name.", name);
+        },
+        Frame::SimpleString(s) => {
+          warn!("{} Unexpected response to client-setname: {}", name, s);
+        },
         _ => {
           warn!("{} Error trying to set the client name: {:?}", name, frame);
-          return Ok(transport);
         }
       };
 
-      if inner == OK {
-        debug!("{} Successfully set Redis client name.", name);
-      }else{
-        warn!("{} Unexpected response to client-setname: {}", name, inner);
-      }
-
-      Ok(transport)
-    })
-  })
+      futures::future::ok(transport)
+    }))
+  }).await
   */
 }
 

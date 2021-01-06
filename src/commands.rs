@@ -58,7 +58,6 @@ pub async fn quit(inner: &Arc<RedisClientInner>) -> Result<(), RedisError> {
       }else{
         *closed_ref = true;
 
-
         true
       }
     }else{
@@ -576,7 +575,7 @@ pub async fn expire_at<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K,
 pub async fn persist<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Result<bool, RedisError>  {
   let key = key.into();
 
-  let frame = utils::request_response(inner, move ||{
+  let frame = utils::request_response(inner, move || {
     Ok((RedisCommandKind::Persist,vec![key.into()]))
   }).await?;
     let resp = protocol_utils::frame_to_single_result(frame)?;
