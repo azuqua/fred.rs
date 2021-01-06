@@ -70,15 +70,14 @@ use crate::protocol::utils as protocol_utils;
 use crate::async_ng::*;
 
 //use tokio_timer::Timer;
-/*
+
 macro_rules! fry {
   ($expr:expr) => (match $expr {
     Ok(val) => val,
-    //Err(err) => return Err(err.into())
-    Err(err) => return crate::utils::future_error(err.into())
+    Err(err) => return crate::utils::pin_future_error(err.into())
   })
 }
-*/
+
 
 macro_rules! n(
   ($inner:expr) => {
@@ -133,6 +132,12 @@ pub fn set_client_state(state: &RwLock<ClientState>, new_state: ClientState) {
 pub fn read_client_state(state: &RwLock<ClientState>) -> ClientState {
   state.read().deref().clone()
 }
+
+// FIXME: replace future_error when the dust settles
+pub fn pin_future_error<T: 'static + Send>(err: RedisError) -> Pin<Box<dyn Future<Output=Result<T, RedisError>> + Send>> {
+  Box::pin(future::err(err))
+}
+
 
 pub fn future_error<T: 'static>(err: RedisError) -> Box<dyn Future<Output=Result<T, RedisError>>> {
   Box::new(future::err(err))
@@ -331,8 +336,9 @@ pub fn set_reconnect_policy(policy: &RwLock<Option<ReconnectPolicy>>, new_policy
   *guard_ref = Some(new_policy);
 }
 
+
 //pub fn split(inner: &Arc<RedisClientInner>, spawner: &Spawner, timeout: u64) -> Box<dyn Future<Output=Result<Vec<(RedisClient, RedisConfig)>, RedisError>>> {
-pub fn split(inner: &Arc<RedisClientInner>, spawner: &Spawner, timeout: u64) -> Pin<Box<dyn Future<Output=Result<Vec<(RedisClient, RedisConfig)>, RedisError>> + Send >> {
+pub fn split(inner: &Arc<RedisClientInner>, spawner: &Spawner, timeout: u64) -> Pin<Box<dyn Future<Output=Result<Vec<(RedisClient, RedisConfig)>, RedisError>> + Send>> {
 //pub async fn split(inner: &Arc<RedisClientInner>, spawner: &Spawner, timeout: u64) -> Result<Vec<(RedisClient, RedisConfig)>, RedisError> {
   //use crate::owned::RedisClientOwned;
   // unimplemented!(); // FIXME: just a little problem
@@ -354,73 +360,95 @@ pub fn split(inner: &Arc<RedisClientInner>, spawner: &Spawner, timeout: u64) -> 
 
   let uses_tls = inner.config.read().deref().tls();
   let spawner = spawner.clone();
+
   let timer = inner.timer.clone(); // FIXME: can use global now?
 
-  // FIXME: do we want to use the original timer? for some reason err_into fails on it right now
+
+  // FIXME: do we want to use the original timer? for some reason err_into fails on it right now 
   // let timeout_ft = timer.sleep(timeout).err_into::<RedisError>();
-  let timeout_ft = tokio_02::time::delay_for(timeout);
+  let mut timeout_ft = Box::pin(tokio_02::time::delay_for(timeout).fuse());
 
   //let () = rx;
   let rx: futures::channel::oneshot::Receiver<std::result::Result<std::vec::Vec<RedisConfig>, RedisError>> = rx;
   //let () = rx.flatten();
   //let rxf: Box<dyn Future<Output=std::result::Result<std::vec::Vec<RedisConfig>, RedisError>>> = Box::new(&mut rx);
   let connect_ft = rx.err_into::<RedisError>()
-    .and_then(|result| futures::future::ready(result)) // FIXME: should be a better way to flatten
-    .map_ok(move |configs| {
+    .and_then(|result| futures::future::ready(result)) // FIXME: should be a better way to flatten (try_flatten?)
+    .and_then(move |configs| {
     //let () = configs;
   //let connect_ft = rx.and_then(move |configs| {
     let all_len = configs.len();
 
     stream::iter(configs.into_iter()).map(move |mut config| {
+      let spawner = spawner.clone();
+     
       // the underlying split() logic doesn't have the original tls flag, so it's copied above and restored here
       config.set_tls(uses_tls);
 
       let client = RedisClient::new(config.clone(), Some(timer.clone()));
-      let err_client = client.clone();
+      // let err_client = client.clone();
       let client_ft = client.connect(&spawner).map(|_| ()); // FIXME: still need to pass spanwer here?
 
       trace!("Creating split clustered client...");
       spawner.spawn_std(client_ft);
 
-      client.on_connect()
+      let ft = client.on_connect()
         .then(move |result| {
-          match result {
-            Ok(client) => future_ok((client, config)),
-            Err(e) => Box::pin(err_client.quit().then(move |_| Err(e)))
-          }
-        })
+          let result: RedisFuture<(RedisClient, RedisConfig)> = match result {
+            Ok(client) => Box::pin(futures::future::ok::<_, RedisError>((client, config))),
+            // Err(e) => Box::pin(crate::commands::quit(&inner).then(move |_| futures::future::err::<(RedisClient,RedisConfig),RedisError>(e))) FIXME: unimplemented! need to quit here
+            Err(e) => Box::pin(futures::future::err(e))
+          };
+          result
+        });
+      Box::pin(ft)
     })
     .buffer_unordered(all_len)
-    .fold(Vec::with_capacity(all_len), |mut memo, (client, config)| {
-      memo.push((client, config));
-      Ok::<_, RedisError>(memo)
+    .fold(Vec::with_capacity(all_len), |mut memo, next| {
+      // FIXME: we now siliently drop errors... double check that was the original behavior
+      if let Ok(t) = next {
+        memo.push(t)
+      };
+      //Ok::<_, RedisError>(memo)
+      futures::future::ready(memo)
     })
+    .map(move |result| Ok(result)) // FIXME: probably something standard?
   });
-  unimplemented!();
+  let connect_ft = Box::pin(connect_ft);
+  //let () = connect_ft;
+  //let connect_ft: RedisFuture<Vec<(RedisClient, RedisConfig)>> = Box::pin(connect_ft);
+  let mut connect_ft = connect_ft.fuse();
 
-  /*
+  let ft = async move {
+
   select! {
     timeout = timeout_ft => match timeout {
-      Ok((_, init_ft)) => {
+      () => {
         // timer_ft finished first (timeout)
         return Err(RedisError::new_timeout())
       },
-      Err((timer_err, init_ft)) => {
-        // timer had an error, try again without backoff
-        warn!("Timer error splitting redis connections: {:?}", timer_err);
-        return Err(timer_err)
-      }
     },
     connect_done = connect_ft => match connect_done {
-      Ok((clients, _)) => {
+      Ok(clients) => {
         return Ok(clients)
       },
-      Err((init_err, _)) => {
+      Err(e) => return Err(e) // FIXME: just erturn connect_done
+    }
+    /*
+    connect_done = connect_ft => match connect_done {
+      Ok(clients) => {
+        return Ok(clients)
+      },
+      Err(init_err) => {
         return Err(init_err)
       }
     }
+    */
   }
-  */
+  };
+
+  Box::pin(ft)
+ 
   /*
   Box::new(timout_ft.select2(connect_ft).then(move |result| {
     match result {

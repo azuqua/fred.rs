@@ -6,6 +6,7 @@ use parking_lot::RwLock;
 use futures::{
   Future,
   Stream,
+  TryFutureExt,
 //  lazy
 };
 use futures::channel::mpsc::{
@@ -58,7 +59,7 @@ pub use utils::f64_to_redis_string;
 pub use tokio_timer::Timer; // FIXME: look into patched timer vs current
 
 /// A future representing the connection to a Redis server.
-pub type ConnectionFuture = Pin<Box<dyn Future<Output=Result<Option<RedisError>, RedisError>>>>;
+pub type ConnectionFuture = Pin<Box<dyn Future<Output=Result<Option<RedisError>, RedisError>> + Send>>;
 
 #[doc(hidden)]
 pub struct RedisClientInner {
@@ -231,6 +232,8 @@ impl RedisClient {
   /// The `on_connect` function can be used to be notified when the client first successfully connects.
   // pub fn connect(&self, spawner: &Spawner) -> ConnectionFuture {
   // FIXME: does it make sense to rework this interface to eliminate the second Error?
+  // FIXME: can't do this sort of interface async due to needing to hold the reference to self?
+  /*
   pub async fn connect(&self, spawner: &Spawner) -> Result<Option<RedisError>, RedisError> {
     utils::check_client_state(&self.inner.state, ClientState::Disconnected)?;
     utils::check_and_set_closed_flag(&self.inner.closed, false)?;
@@ -238,6 +241,15 @@ impl RedisClient {
     debug!("{} Connecting to Redis server.", n!(self.inner));
 
     init::connect(spawner, self.inner.clone()).await
+  }
+   */
+  pub fn connect(&self, spawner: &Spawner) -> ConnectionFuture {
+    fry!(utils::check_client_state(&self.inner.state, ClientState::Disconnected));
+    fry!(utils::check_and_set_closed_flag(&self.inner.closed, false));
+
+    debug!("{} Connecting to Redis server.", n!(self.inner));
+
+    init::connect(spawner, self.inner.clone())
   }
 
   /// Connect to the Redis server with a `ReconnectPolicy` to apply if the connection closes due to an error.
@@ -249,7 +261,17 @@ impl RedisClient {
   ///
   /// Additionally, `on_connect` can be used to be notified when the client first successfully connects, since sometimes
   /// some special initialization is needed upon first connecting.
-  // pub fn connect_with_policy(&self, spawner: &Spawner, mut policy: ReconnectPolicy) -> ConnectionFuture {
+  pub fn connect_with_policy(&self, spawner: &Spawner, mut policy: ReconnectPolicy) -> ConnectionFuture {
+    fry!(utils::check_client_state(&self.inner.state, ClientState::Disconnected));
+    fry!(utils::check_and_set_closed_flag(&self.inner.closed, false));
+
+    policy.reset_attempts();
+    utils::set_reconnect_policy(&self.inner.policy, policy);
+
+    debug!("{} Connecting to Redis server with reconnect policy.", n!(self.inner));
+    init::connect(spawner, self.inner.clone())
+  }
+  /*
   pub async fn connect_with_policy(&self, spawner: &Spawner, mut policy: ReconnectPolicy) -> Result<Option<RedisError>, RedisError> {
     utils::check_client_state(&self.inner.state, ClientState::Disconnected)?;
     utils::check_and_set_closed_flag(&self.inner.closed, false)?;
@@ -259,7 +281,7 @@ impl RedisClient {
 
     debug!("{} Connecting to Redis server with reconnect policy.", n!(self.inner));
     init::connect(spawner, self.inner.clone()).await
-  }
+  }*/
 
   /// Listen for successful reconnection notifications. When using a config with a `ReconnectPolicy` the future
   /// returned by `connect_with_policy` will not resolve until `max_attempts` is reached, potentially running forever
@@ -283,6 +305,18 @@ impl RedisClient {
   /// to occur only on the first connection vs subsequent connections.
   //pub fn on_connect(&self) -> Box<Future<Item=Self, Error=RedisError>> {
   //pub fn on_connect(&self) -> Box<dyn Future<Output=Result<Self, RedisError>>> {
+  // FIXME: can't async this because then &self has to be held by caller? (see usage in split())
+  pub fn on_connect(&self) -> Pin<Box<dyn Future<Output=Result<Self, RedisError>> + Send>> {
+    if utils::read_client_state(&self.inner.state) == ClientState::Connected {
+      return Box::pin(futures::future::ok(self.clone()));
+    }
+
+    let (tx, rx) = oneshot_channel();
+    self.inner.connect_tx.write().deref_mut().push_back(tx);
+
+    Box::pin(rx.err_into::<RedisError>().and_then(|result| futures::future::ready(result) )) // FIXME: should be a better way to flatten
+  }
+  /*
   pub async fn on_connect(&self) -> Result<Self, RedisError> {
     if utils::read_client_state(&self.inner.state) == ClientState::Connected {
       return Ok(self.clone());
@@ -294,13 +328,14 @@ impl RedisClient {
     // Box::new(rx.from_err::<RedisError>().flatten())
     rx.await? // FIXME: check result type
   }
+  */
 
   /// Listen for protocol and connection errors. This stream can be used to more intelligently handle errors that may
   /// not appear in the request-response cycle, and so cannot be handled by response futures.
   ///
   /// Similar to `on_message`, this function does not need to be called again if the connection goes down.
   /// FIXME: this interface could probably be smarter now that it only delivers errors...
-  pub fn on_error(&self) -> Box<dyn Stream<Item=RedisError>> {
+  pub fn on_error(&self) -> Box<dyn Stream<Item=RedisError>> { // FIXME: do we want to pre-pin all these? seems like no downside since they're already Boxed
     let (tx, rx) = unbounded();
     self.inner.error_tx.write().deref_mut().push_back(tx);
 
@@ -329,13 +364,13 @@ impl RedisClient {
   /// Split a clustered redis client into a list of centralized clients for each master node in the cluster.
   ///
   /// This is an expensive operation and should not be used frequently.
-  pub fn split_cluster(&self, spawner: &Spawner) -> Box<dyn Future<Output=Result<Vec<(RedisClient, RedisConfig)>, RedisError>>> {
+  pub fn split_cluster(&self, spawner: &Spawner) -> Pin<Box<dyn Future<Output=Result<Vec<(RedisClient, RedisConfig)>, RedisError>> + Send + '_>> {
     if utils::is_clustered(&self.inner.config) {
       utils::split(&self.inner, spawner, SPLIT_TIMEOUT_MS)
     }else{
-      utils::future_error(RedisError::new(
+      Box::pin(futures::future::err(RedisError::new(
         RedisErrorKind::Unknown, "Client is not using a clustered deployment."
-      ))
+      )))
     }
   }
 

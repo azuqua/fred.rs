@@ -86,7 +86,7 @@ impl RedisPool {
     }
     let timer = timer.unwrap_or(Timer::default());
 
-    type PinnedConnection = Pin<Box<dyn Future<Output=Result<Option<RedisError>, RedisError>>>>;
+    type PinnedConnection = Pin<Box<dyn Future<Output=Result<Option<RedisError>, RedisError>> + Send>>;
     
     let clients = Vec::with_capacity(size);
     let init_ft: PinnedConnection = Box::pin(futures::future::ok::<Option<RedisError>,RedisError>(None));
@@ -94,8 +94,8 @@ impl RedisPool {
 
     let (_, _, _, clients, connections) = (0..size).fold(memo, |(spawner, config, timer, mut clients, connections), _| {
       let client = RedisClient::new(config.clone(), Some(timer.clone()));
-      let connections: Pin<Box<dyn Future<Output=Result<Option<RedisError>, RedisError>>>> = connections;
-      let next_connection: Pin<Box<dyn Future<Output=Result<Option<RedisError>, RedisError>>>> = Box::pin(client.connect(&spawner));
+      let connections: Pin<Box<dyn Future<Output=Result<Option<RedisError>, RedisError>> + Send>> = connections;
+      let next_connection: Pin<Box<dyn Future<Output=Result<Option<RedisError>, RedisError>> + Send>> = client.connect(&spawner);
       //let connections = Box::new(client.connect(&spawner).join(connections).map(|error| {
       let connections: PinnedConnection = Box::pin(futures::future::join(next_connection, connections).map(|error| {
         // errors are given priority in the same order that clients are initialized
@@ -141,7 +141,7 @@ impl RedisPool {
     }
     let timer = timer.unwrap_or(Timer::default());
 
-    type PinnedConnection = Pin<Box<dyn Future<Output=Result<Option<RedisError>, RedisError>>>>;
+    type PinnedConnection = Pin<Box<dyn Future<Output=Result<Option<RedisError>, RedisError>> + Send>>;
 
     let clients = Vec::with_capacity(size);
     //let memo = (spawner.clone(), config, policy, timer, clients, utils::future_ok(None));

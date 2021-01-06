@@ -58,6 +58,7 @@ pub async fn quit(inner: &Arc<RedisClientInner>) -> Result<(), RedisError> {
       }else{
         *closed_ref = true;
 
+
         true
       }
     }else{
@@ -116,7 +117,8 @@ pub fn get(inner: &Arc<RedisClientInner>, key: RedisKey) -> Pin<Box<dyn Future<O
   })
 }*/
 
-pub fn get<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Pin<Box<dyn Future<Output=Result<Option<RedisValue>, RedisError>> + Send>> {
+pub fn get<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Pin<Box<dyn Future<Output=Result<Option<RedisValue>, RedisError>> + Send + '_>> {
+  let key = key.into();
   Box::pin(utils::request_response_ft(inner, RedisCommandKind::Get, vec![key.into()])
     .and_then(|frame| {
       futures::future::ready(protocol_utils::frame_to_single_result(frame))

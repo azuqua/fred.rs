@@ -1,10 +1,10 @@
 
 
 use std::rc::Rc;
-use std::cell::{RefCell, Ref};
+use std::cell::{Ref};
 
 use std::sync::Arc;
-use parking_lot::RwLock;
+use parking_lot::{Mutex,RwLock};
 
 use std::ops::{
   DerefMut,
@@ -45,13 +45,17 @@ use futures::channel::mpsc::UnboundedSender;
 use crate::protocol::utils::frame_to_single_result;
 use crate::utils::send_command;
 
-pub fn set_option<T>(opt: &Rc<RefCell<Option<T>>>, val: Option<T>)  {
-  let mut _ref = opt.borrow_mut();
-  *_ref = val;
+pub fn set_option<T>(opt: &Arc<Mutex<Option<T>>>, val: Option<T>)  {
+  let mut guard = opt.lock();
+  *guard = val;
 }
 
-pub fn take_option<T>(opt: &Rc<RefCell<Option<T>>>) -> Option<T> {
-  opt.borrow_mut().take()
+pub fn take_option<T>(opt: &Arc<Mutex<Option<T>>>) -> Option<T> {
+  opt.lock().take()
+}
+
+pub fn take_option_arc<T>(opt: &Arc<Mutex<Option<T>>>) -> Option<T> {
+  opt.lock().take()
 }
 
 pub fn set_command_tx(inner: &Arc<RedisClientInner>, tx: UnboundedSender<RedisCommand>) {
@@ -60,8 +64,8 @@ pub fn set_command_tx(inner: &Arc<RedisClientInner>, tx: UnboundedSender<RedisCo
   *guard_ref = Some(tx);
 }
 
-pub fn sample_latency(sent: &Rc<RefCell<Option<Instant>>>, tracker: &RwLock<LatencyStats>) {
-  let sent = match take_option(sent) {
+pub fn sample_latency(sent: &Arc<Mutex<Option<Instant>>>, tracker: &RwLock<LatencyStats>) {
+  let sent = match take_option_arc(sent) {
     Some(i) => i,
     None => return
   };
@@ -71,11 +75,11 @@ pub fn sample_latency(sent: &Rc<RefCell<Option<Instant>>>, tracker: &RwLock<Late
   tracker.write().deref_mut().sample(dur_ms);
 }
 
-pub fn take_last_command_callback(cmd: &Rc<RefCell<Option<LastCommandCaller>>>) -> Option<LastCommandCaller> {
+pub fn take_last_command_callback(cmd: &Arc<Mutex<Option<LastCommandCaller>>>) -> Option<LastCommandCaller> {
   take_option(cmd)
 }
 
-pub fn take_last_request(time: &Rc<RefCell<Option<Instant>>>, inner: &Arc<RedisClientInner>, req: &Rc<RefCell<Option<RedisCommand>>>) -> Option<RedisCommand> {
+pub fn take_last_request(time: &Arc<Mutex<Option<Instant>>>, inner: &Arc<RedisClientInner>, req: &Arc<Mutex<Option<RedisCommand>>>) -> Option<RedisCommand> {
   sample_latency(time, &inner.latency_stats);
   take_option(req)
 }
@@ -232,16 +236,16 @@ pub fn emit_connect_error(connect_tx: &RwLock<VecDeque<OneshotSender<Result<Redi
   }
 }
 
-pub fn last_command_has_multiple_response(last_request: &Rc<RefCell<Option<RedisCommand>>>) -> bool {
-  last_request.borrow()
+pub fn last_command_has_multiple_response(last_request: &Arc<Mutex<Option<RedisCommand>>>) -> bool {
+  last_request.lock()
     .deref()
     .as_ref()
     .map(|c| c.kind.has_multiple_response_kind())
     .unwrap_or(false)
 }
 
-pub fn last_command_has_blocking_response(last_request: &Rc<RefCell<Option<RedisCommand>>>) -> bool {
-  last_request.borrow()
+pub fn last_command_has_blocking_response(last_request: &Arc<Mutex<Option<RedisCommand>>>) -> bool {
+  last_request.lock()
     .deref()
     .as_ref()
     .map(|c| c.kind.has_blocking_response_kind())
@@ -272,16 +276,16 @@ pub fn merge_multiple_frames(frames: &mut VecDeque<Frame>) -> Frame {
   Frame::Array(out)
 }
 
-pub fn last_command_is_key_scan(last_request: &Rc<RefCell<Option<RedisCommand>>>) -> bool {
-  last_request.borrow()
+pub fn last_command_is_key_scan(last_request: &Arc<Mutex<Option<RedisCommand>>>) -> bool {
+  last_request.lock()
     .deref()
     .as_ref()
     .map(|c| c.kind.is_scan())
     .unwrap_or(false)
 }
 
-pub fn last_command_is_value_scan(last_request: &Rc<RefCell<Option<RedisCommand>>>) -> bool {
-  last_request.borrow()
+pub fn last_command_is_value_scan(last_request: &Arc<Mutex<Option<RedisCommand>>>) -> bool {
+  last_request.lock()
     .deref()
     .as_ref()
     .map(|c| c.kind.is_value_scan())
@@ -463,9 +467,9 @@ pub fn send_value_scan_error(cmd: &RedisCommand, e: RedisError) -> Result<(), Re
 }
 
 pub fn process_frame(inner: &Arc<RedisClientInner>,
-                     last_request: &Rc<RefCell<Option<RedisCommand>>>,
-                     last_request_sent: &Rc<RefCell<Option<Instant>>>,
-                     last_command_callback: &Rc<RefCell<Option<LastCommandCaller>>>,
+                     last_request: &Arc<Mutex<Option<RedisCommand>>>,
+                     last_request_sent: &Arc<Mutex<Option<Instant>>>,
+                     last_command_callback: &Arc<Mutex<Option<LastCommandCaller>>>,
                      frame: Frame)
 {
   if frame.is_pubsub_message() {
@@ -519,11 +523,11 @@ pub fn process_frame(inner: &Arc<RedisClientInner>,
 
       mem::replace(message_tx_ref, new_listeners);
     }
-  }else if last_command_has_multiple_response(last_request) {
+  }else if last_command_has_multiple_response(last_request) { // FIXME: need to lock over this entire operation now
     let frames = {
-      let mut last_request_ref = last_request.borrow_mut();
+      let mut guard = last_request.lock();
 
-      if let Some(ref mut last_request) = last_request_ref.deref_mut() {
+      if let Some(ref mut last_request) = guard.deref_mut() {
         let mut response_kind = match last_request.kind.response_kind_mut() {
           Some(k) => k,
           None => {
@@ -651,9 +655,9 @@ pub fn process_frame(inner: &Arc<RedisClientInner>,
 
 #[cfg(not(feature = "reconnect-on-auth-error"))]
 fn process_simple_frame(inner: &Arc<RedisClientInner>,
-           last_request: &Rc<RefCell<Option<RedisCommand>>>,
-           last_request_sent: &Rc<RefCell<Option<Instant>>>,
-           last_command_callback: &Rc<RefCell<Option<LastCommandCaller>>>,
+           last_request: &Arc<Mutex<Option<RedisCommand>>>,
+           last_request_sent: &Arc<Mutex<Option<Instant>>>,
+           last_command_callback: &Arc<Mutex<Option<LastCommandCaller>>>,
            frame: Frame) {
 
   // if command channel found send success
@@ -686,9 +690,9 @@ fn process_simple_frame(inner: &Arc<RedisClientInner>,
 
 #[cfg(feature = "reconnect-on-auth-error")]
 fn process_simple_frame(inner: &Arc<RedisClientInner>,
-           last_request: &Rc<RefCell<Option<RedisCommand>>>,
-           last_request_sent: &Rc<RefCell<Option<Instant>>>,
-           last_command_callback: &Rc<RefCell<Option<LastCommandCaller>>>,
+           last_request: &Rc<Mutex<Option<RedisCommand>>>,
+           last_request_sent: &Rc<Mutex<Option<Instant>>>,
+           last_command_callback: &Rc<Mutex<Option<LastCommandCaller>>>,
            frame: Frame) {
 
   match parse_redis_auth_error(&frame) {
@@ -700,9 +704,9 @@ fn process_simple_frame(inner: &Arc<RedisClientInner>,
 // sends Ok to command channel and frame to caller channel
 #[cfg(feature = "reconnect-on-auth-error")]
 fn send_to_channels(inner: &Arc<RedisClientInner>,
-           last_request: &Rc<RefCell<Option<RedisCommand>>>,
-           last_request_sent: &Rc<RefCell<Option<Instant>>>,
-           last_command_callback: &Rc<RefCell<Option<LastCommandCaller>>>,
+           last_request: &Rc<Mutex<Option<RedisCommand>>>,
+           last_request_sent: &Rc<Mutex<Option<Instant>>>,
+           last_command_callback: &Rc<Mutex<Option<LastCommandCaller>>>,
            frame: Frame) {
 
   // if command channel found send success
@@ -736,9 +740,9 @@ fn send_to_channels(inner: &Arc<RedisClientInner>,
 // sends error to command channel, unless we are quitting
 #[cfg(feature = "reconnect-on-auth-error")]
 fn send_to_channels_error(inner: &Arc<RedisClientInner>,
-              last_request: &Rc<RefCell<Option<RedisCommand>>>,
-              last_request_sent: &Rc<RefCell<Option<Instant>>>,
-              last_command_callback: &Rc<RefCell<Option<LastCommandCaller>>>,
+              last_request: &Rc<Mutex<Option<RedisCommand>>>,
+              last_request_sent: &Rc<Mutex<Option<Instant>>>,
+              last_command_callback: &Rc<Mutex<Option<LastCommandCaller>>>,
               frame: Frame,
               redis_error: RedisError) {
 

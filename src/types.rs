@@ -33,11 +33,14 @@ use std::cmp::Ordering;
 use crate::utils::send_command;
 use crate::client::RedisClientInner;
 
+use std::pin::Pin;
 use std::sync::Arc;
 use crate::protocol::types::{RedisCommand, KeyScanInner, RedisCommandKind, ValueScanInner};
 
 #[doc(hidden)]
 pub static ASYNC: &'static str = "ASYNC";
+
+pub type RedisFuture<T> = Pin<Box<dyn Future<Output=Result<T, RedisError>> + Send>>;
 
 /// Aggregate options for the [zinterstore](https://redis.io/commands/zinterstore) (and related) commands.
 pub enum AggregateOptions {

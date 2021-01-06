@@ -9,7 +9,8 @@ use futures::{
   Stream,
   Sink,
   FutureExt,
-  StreamExt
+  StreamExt,
+  TryStreamExt
 };
 use futures::channel::mpsc::UnboundedSender;
 use futures::channel::oneshot::{
@@ -38,6 +39,7 @@ use std::pin::Pin;
 use std::fmt;
 use std::rc::Rc;
 use std::cell::RefCell;
+use std::borrow::BorrowMut;
 
 use std::collections::{
   BTreeMap,
@@ -52,10 +54,11 @@ use crate::multiplexer::types::{
 };
 
 use std::sync::Arc;
-use parking_lot::RwLock;
+use parking_lot::{Mutex,RwLock};
 use std::time::Instant;
 
 pub type LastCommandCaller = OneshotSender<Option<(RedisCommand, RedisError)>>;
+
 
 /// A struct for multiplexing frames in and out of the TCP socket based on the semantics supported by the Redis API.
 ///
@@ -72,14 +75,14 @@ pub struct Multiplexer {
   /// The inner client state.
   pub inner: Arc<RedisClientInner>,
   /// A reference to the last request sent to the server, including a reference to the oneshot channel used to notify the caller of the response.
-  pub last_request: Rc<RefCell<Option<RedisCommand>>>,
+  pub last_request: Arc<Mutex<Option<RedisCommand>>>,
   /// The timestamp of the last request sent.
-  pub last_request_sent: Rc<RefCell<Option<Instant>>>,
+  pub last_request_sent: Arc<Mutex<Option<Instant>>>,
   /// A oneshot sender for the command stream to be notified when it can start processing the next request.
   ///
   /// In the event of a connection reset the listener stream will send the last request and error to the caller to decide whether or not
   /// to replay the last request and/or to backoff and reconnect based on the kind of error surfaced by the network layer.
-  pub last_command_callback: Rc<RefCell<Option<LastCommandCaller>>>,
+  pub last_command_callback: Arc<Mutex<Option<LastCommandCaller>>>,
   /// The incoming stream of frames from the Redis server.
   pub streams: Streams,
   /// Outgoing sinks to the Redis server.
@@ -104,12 +107,12 @@ impl Multiplexer {
       let mut clustered = false;
 
       let streams = match *config_ref {
-        RedisConfig::Centralized { .. } => Streams::Centralized(Rc::new(RefCell::new(None))),
-        RedisConfig::Clustered { .. } => Streams::Clustered(Rc::new(RefCell::new(Vec::new())))
+        RedisConfig::Centralized { .. } => Streams::Centralized(Arc::new(Mutex::new(None))),
+        RedisConfig::Clustered { .. } => Streams::Clustered(Arc::new(Mutex::new(Vec::new())))
       };
       let sinks = match *config_ref {
         RedisConfig::Centralized { .. } => {
-          Sinks::Centralized(Rc::new(RefCell::new(None)))
+          Sinks::Centralized(Arc::new(Mutex::new(None)))
         },
         RedisConfig::Clustered { .. } => {
           clustered = true;
@@ -117,17 +120,17 @@ impl Multiplexer {
           Sinks::Clustered {
             // safe b/c when the first arg is None nothing runs that could return an error.
             // see the `ClusterKeyCache::new()` definition
-            cluster_cache: Rc::new(RefCell::new(ClusterKeyCache::new(None).unwrap())),
-            sinks: Rc::new(RefCell::new(BTreeMap::new()))
+            cluster_cache: Arc::new(Mutex::new(ClusterKeyCache::new(None).unwrap())),
+            sinks: Arc::new(Mutex::new(BTreeMap::new()))
           }
         }
       };
 
       (streams, sinks, clustered)
     };
-    let last_request = Rc::new(RefCell::new(None));
-    let last_request_sent = Rc::new(RefCell::new(None));
-    let last_command_callback = Rc::new(RefCell::new(None));
+    let last_request = Arc::new(Mutex::new(None));
+    let last_request_sent = Arc::new(Mutex::new(None));
+    let last_command_callback = Arc::new(Mutex::new(None));
 
     Multiplexer {
       inner,
@@ -224,8 +227,7 @@ impl Multiplexer {
   /// Listen on the TCP socket(s) for incoming frames.
   ///
   /// The future returned here resolves when the socket is closed.
-  pub async fn listen(&self) -> Result<(),()> { // FIXME: make async
-  // pub fn listen(&self) -> Pin<Box<dyn Future<Output=Result<(),()>> + Send>> { // FIXME: make async
+  pub fn listen(&self) -> Pin<Box<dyn Future<Output=Result<(),()>> + Send>> { // FIXME: replace Result<(),()> with ()
     let inner = self.inner.clone();
     let last_request = self.last_request.clone();
     let last_request_sent = self.last_request_sent.clone();
@@ -239,49 +241,52 @@ impl Multiplexer {
         // notify the last caller on the command stream that the new stream couldn't be initialized
         error!("{} Could not listen for protocol frames: {:?}", ne!(inner), e);
 
-        let last_command_callback = match self.last_command_callback.borrow_mut().take() {
-          Some(tx) => tx,
-          None => return Err(())
+
+        let last_command_callback = {
+          let mut guard = self.last_command_callback.lock();
+          match guard.take() {
+            Some(tx) => tx,
+            None => return futures::future::err(()).boxed()
+          }
         };
-        let last_command = match self.last_request.borrow_mut().take() {
-          Some(cmd) => cmd,
-          None => {
-            warn!("{} Couldn't find last command on error in multiplexer frame stream.", nw!(inner));
-            RedisCommand::new(RedisCommandKind::Ping, vec![], None)
+        let last_command = {
+          let mut guard = self.last_request.lock().take();
+          match guard.take() {
+            Some(cmd) => cmd,
+            None => {
+              warn!("{} Couldn't find last command on error in multiplexer frame stream.", nw!(inner));
+              RedisCommand::new(RedisCommandKind::Ping, vec![], None)
+            }
           }
         };
 
-        if let Err(e) = last_command_callback.send(Some((last_command, e))) {
+        if let Err(_) = last_command_callback.send(Some((last_command, e))) {
           warn!("{} Error notifying last command callback of the incoming message stream ending.", nw!(inner));
         }
 
-        return Err(())
+        return futures::future::err(()).boxed()
       }
     };
-    let final_self = self.clone();
+    // let final_self = self.clone();
     let final_inner = self.inner.clone();
 
     let final_last_request = last_request.clone();
     let final_last_command_callback = last_command_callback.clone();
 
-    // FIXME: loop
-    unimplemented!()
-
-    /*
-    Box::new(frame_stream.fold((inner, last_request, last_request_sent, last_command_callback), |memo, frame: Frame| {
+    Box::pin(frame_stream.try_fold((inner, last_request, last_request_sent, last_command_callback), |memo, frame: Frame| {
       let (inner, last_request, last_request_sent, last_command_callback) = memo;
       trace!("{} Multiplexer stream recv frame.", n!(inner));
 
       if frame.kind() == FrameKind::Moved || frame.kind() == FrameKind::Ask {
         // pause commands to refresh the cached cluster state
         warn!("{} Recv MOVED or ASK error.", nw!(inner));
-        Err(RedisError::new(RedisErrorKind::Cluster, ""))
+        futures::future::err(RedisError::new(RedisErrorKind::Cluster, ""))
       }else{
         utils::process_frame(&inner, &last_request, &last_request_sent, &last_command_callback, frame);
-        Ok((inner, last_request, last_request_sent, last_command_callback))
+        futures::future::ok((inner, last_request, last_request_sent, last_command_callback))
       }
     })
-    .then(move |mut result| {
+    .map(move |mut result| {
       if let Err(ref e) = result {
         warn!("{} Multiplexer frame stream closed with error? {:?}", nw!(final_inner), e);
       }else{
@@ -302,12 +307,14 @@ impl Multiplexer {
       match result {
         Ok(_) => {
           // notify the caller that this future has finished via the last callback
-          let last_command_callback = match final_last_command_callback.borrow_mut().take() {
-            Some(tx) => tx,
-            None => return Ok(())
+          let last_command_callback = {
+            match final_last_command_callback.lock().take() {
+              Some(tx) => tx,
+              None => return Ok(())
+            }
           };
 
-          if let Err(e) = last_command_callback.send(None) {
+          if let Err(_) = last_command_callback.send(None) {
             warn!("{} Error notifying last command callback of the incoming message stream ending.", nw!(final_inner));
           }
           Ok(())
@@ -316,7 +323,10 @@ impl Multiplexer {
           debug!("{} Handling error on multiplexer frame stream: {:?}", n!(final_inner), e);
 
           // send a message to the command stream processing loop with the last message and the error when the stream closed
-          let last_command_callback = match final_last_command_callback.borrow_mut().take() {
+          let last_command_callback_opt = {
+            final_last_command_callback.lock().take()
+          };
+          let last_command_callback = match last_command_callback_opt {
             Some(tx) => tx,
             None => {
               debug!("{} Couldn't find last command callback on error in multiplexer frame stream.", n!(final_inner));
@@ -329,7 +339,10 @@ impl Multiplexer {
               return Ok(());
             }
           };
-          let last_command = match final_last_request.borrow_mut().take() {
+          let last_command_opt = {
+            final_last_request.lock().take()
+          };
+          let last_command = match last_command_opt {
             Some(cmd) => cmd,
             None => {
               warn!("{} Couldn't find last command on error in multiplexer frame stream.", nw!(final_inner));
@@ -337,16 +350,12 @@ impl Multiplexer {
             }
           };
 
-          if let Err(e) = last_command_callback.send(Some((last_command, e))) {
+          if let Err(_) = last_command_callback.send(Some((last_command, e))) {
             error!("{} Error notifying the last command callback of the incoming message stream ending with an error.", ne!(final_inner));
           }
           Ok(())
         }
       }
     }))
-     */
   }
-
-
 }
-
