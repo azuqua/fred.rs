@@ -341,6 +341,8 @@ pub fn set_reconnect_policy(policy: &RwLock<Option<ReconnectPolicy>>, new_policy
 pub fn split(inner: &Arc<RedisClientInner>, spawner: &Spawner, timeout: u64) -> Pin<Box<dyn Future<Output=Result<Vec<(RedisClient, RedisConfig)>, RedisError>> + Send>> {
 //pub async fn split(inner: &Arc<RedisClientInner>, spawner: &Spawner, timeout: u64) -> Result<Vec<(RedisClient, RedisConfig)>, RedisError> {
   //use crate::owned::RedisClientOwned;
+  use crate::borrowed::RedisClientBorrowed;
+
 
   let timeout = Duration::from_millis(timeout);
   let (tx, rx) = oneshot_channel();
@@ -380,12 +382,12 @@ pub fn split(inner: &Arc<RedisClientInner>, spawner: &Spawner, timeout: u64) -> 
 
     stream::iter(configs.into_iter()).map(move |mut config| {
       let spawner = spawner.clone();
-     
+
       // the underlying split() logic doesn't have the original tls flag, so it's copied above and restored here
       config.set_tls(uses_tls);
 
       let client = RedisClient::new(config.clone(), Some(timer.clone()));
-      // let err_client = client.clone();
+      let err_client = client.clone();
       let client_ft = client.connect(&spawner).map(|_| ()); // FIXME: still need to pass spanwer here?
 
       trace!("Creating split clustered client...");
@@ -395,8 +397,8 @@ pub fn split(inner: &Arc<RedisClientInner>, spawner: &Spawner, timeout: u64) -> 
         .then(move |result| {
           let result: RedisFuture<(RedisClient, RedisConfig)> = match result {
             Ok(client) => Box::pin(futures::future::ok::<_, RedisError>((client, config))),
-            // Err(e) => Box::pin(crate::commands::quit(&inner).then(move |_| futures::future::err::<(RedisClient,RedisConfig),RedisError>(e))) FIXME: unimplemented! need to quit here
-            Err(e) => Box::pin(futures::future::err(e))
+            // FIXME: this needs major cleanup
+            Err(e) => Box::pin(crate::commands::quit_owned(err_client.inner).then(move |_| futures::future::err::<(RedisClient,RedisConfig),RedisError>(e)))
           };
           result
         });

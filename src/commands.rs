@@ -40,6 +40,11 @@ const LIMIT: &'static str = "LIMIT";
 const AGGREGATE: &'static str = "AGGREGATE";
 const WEIGHTS: &'static str = "WEIGHTS";
 
+// FIXME: can go away if we bring back the owned interface
+pub async fn quit_owned(inner: Arc<RedisClientInner>) -> (Arc<RedisClientInner>,Result<(), RedisError>) {
+  let result = quit(&inner).await;
+  (inner, result)
+}
 
 pub async fn quit(inner: &Arc<RedisClientInner>) -> Result<(), RedisError> {
   debug!("{} Closing Redis connection with Quit command.", n!(inner));
