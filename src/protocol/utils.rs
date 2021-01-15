@@ -73,7 +73,7 @@ pub fn binary_search(slots: &Vec<Arc<SlotRange>>, slot: u16) -> Option<Arc<SlotR
 pub fn parse_cluster_nodes(status: String) -> Result<HashMap<String, Vec<SlotRange>>, RedisError> {
   let mut out: HashMap<String, Vec<SlotRange>> = HashMap::new();
 
-  // build out the slot ranges for the master nodes
+  // build out the slot ranges for the primary nodes
   for line in status.lines() {
     let parts: Vec<&str> = line.split(" ").collect();
 
@@ -100,7 +100,7 @@ pub fn parse_cluster_nodes(status: String) -> Result<HashMap<String, Vec<SlotRan
             end: inner_parts[0].parse::<u16>()?,
             server: server.to_owned(),
             id: id.clone(),
-            slaves: None
+            replicas: None
           });
         }else if inner_parts.len() == 2 {
           // looking at a slot range
@@ -110,7 +110,7 @@ pub fn parse_cluster_nodes(status: String) -> Result<HashMap<String, Vec<SlotRan
             end: inner_parts[1].parse::<u16>()?,
             server: server.to_owned(),
             id: id.clone(),
-            slaves: None
+            replicas: None
           });
         }else{
           return Err(RedisError::new(
@@ -123,7 +123,7 @@ pub fn parse_cluster_nodes(status: String) -> Result<HashMap<String, Vec<SlotRan
     }
   }
 
-  // attach the slave nodes to the masters from the first loop
+  // attach the replica nodes to the primaries from the first loop
   for line in status.lines() {
     let parts: Vec<&str> = line.split(" ").collect();
 
@@ -134,36 +134,36 @@ pub fn parse_cluster_nodes(status: String) -> Result<HashMap<String, Vec<SlotRan
     }
 
     if parts[2].contains("slave") {
-      let master_id = parts[3].to_owned();
+      let primary_id = parts[3].to_owned();
 
       if parts[7] != "connected" {
         continue;
       }
 
-      let mut master: Option<&mut SlotRange> = None;
+      let mut primary: Option<&mut SlotRange> = None;
       for (_, mut slots) in out.iter_mut() {
         for mut slot in slots.iter_mut() {
-          if slot.id == master_id {
-            master = Some(slot);
+          if slot.id == primary_id {
+            primary = Some(slot);
           }
         }
       }
-      let master = match master {
+      let primary = match primary {
         Some(slot) => slot,
         None => return Err(RedisError::new(
-          RedisErrorKind::ProtocolError, format!("Invalid cluster node status line for slave node. (Missing master) {}.", line)
+          RedisErrorKind::ProtocolError, format!("Invalid cluster node status line for replica node. (Missing primary) {}.", line)
         ))
       };
 
       let server = remove_elasticache_suffix(parts[1].to_owned());
-      let has_slaves = master.slaves.is_some();
+      let has_replicas = primary.replicas.is_some();
 
-      if has_slaves {
-        if let Some(ref mut slaves) = master.slaves {
-          slaves.add(server);
+      if has_replicas {
+        if let Some(ref mut replicas) = primary.replicas {
+          replicas.add(server);
         }
       }else{
-        master.slaves = Some(SlaveNodes::new(vec![server]));
+        primary.replicas = Some(ReplicaNodes::new(vec![server]));
       }
     }
   }
@@ -445,28 +445,28 @@ b8553a4fae8ae99fca716d423b14875ebb10fefe quux.use2.cache.amazonaws.com:6379@1122
         end: 1696,
         server: "foo.use2.cache.amazonaws.com:6379".into(),
         id: "2edc9a62355eacff9376c4e09643e2c932b0356a".into(),
-        slaves: None,
+        replicas: None,
       },
       SlotRange {
         start: 8195,
         end: 8245,
         server: "foo.use2.cache.amazonaws.com:6379".into(),
         id: "2edc9a62355eacff9376c4e09643e2c932b0356a".into(),
-        slaves: None,
+        replicas: None,
       },
       SlotRange {
         start: 8247,
         end: 8423,
         server: "foo.use2.cache.amazonaws.com:6379".into(),
         id: "2edc9a62355eacff9376c4e09643e2c932b0356a".into(),
-        slaves: None,
+        replicas: None,
       },
       SlotRange {
         start: 10923,
         end: 12287,
         server: "foo.use2.cache.amazonaws.com:6379".into(),
         id: "2edc9a62355eacff9376c4e09643e2c932b0356a".into(),
-        slaves: None,
+        replicas: None,
       }
     ]);
     expected.insert("bar.use2.cache.amazonaws.com:6379".into(), vec![
@@ -475,42 +475,42 @@ b8553a4fae8ae99fca716d423b14875ebb10fefe quux.use2.cache.amazonaws.com:6379@1122
         end: 1241,
         server: "bar.use2.cache.amazonaws.com:6379".into(),
         id: "db2fd89f83daa5fe49110ef760794f9ccee07d06".into(),
-        slaves: None,
+        replicas: None,
       },
       SlotRange {
         start: 8152,
         end: 8194,
         server: "bar.use2.cache.amazonaws.com:6379".into(),
         id: "db2fd89f83daa5fe49110ef760794f9ccee07d06".into(),
-        slaves: None,
+        replicas: None,
       },
       SlotRange {
         start: 8424,
         end: 8439,
         server: "bar.use2.cache.amazonaws.com:6379".into(),
         id: "db2fd89f83daa5fe49110ef760794f9ccee07d06".into(),
-        slaves: None,
+        replicas: None,
       },
       SlotRange {
         start: 9203,
         end: 10112,
         server: "bar.use2.cache.amazonaws.com:6379".into(),
         id: "db2fd89f83daa5fe49110ef760794f9ccee07d06".into(),
-        slaves: None,
+        replicas: None,
       },
       SlotRange {
         start: 12288,
         end: 12346,
         server: "bar.use2.cache.amazonaws.com:6379".into(),
         id: "db2fd89f83daa5fe49110ef760794f9ccee07d06".into(),
-        slaves: None,
+        replicas: None,
       },
       SlotRange {
         start: 12576,
         end: 12685,
         server: "bar.use2.cache.amazonaws.com:6379".into(),
         id: "db2fd89f83daa5fe49110ef760794f9ccee07d06".into(),
-        slaves: None,
+        replicas: None,
       }
     ]);
     expected.insert("baz.use2.cache.amazonaws.com:6379".into(), vec![
@@ -519,42 +519,42 @@ b8553a4fae8ae99fca716d423b14875ebb10fefe quux.use2.cache.amazonaws.com:6379@1122
         end: 1697,
         server: "baz.use2.cache.amazonaws.com:6379".into(),
         id: "d9aeabb1525e5656c98545a0ed42c8c99bbacae1".into(),
-        slaves: None,
+        replicas: None,
       },
       SlotRange {
         start: 1815,
         end: 2291,
         server: "baz.use2.cache.amazonaws.com:6379".into(),
         id: "d9aeabb1525e5656c98545a0ed42c8c99bbacae1".into(),
-        slaves: None,
+        replicas: None,
       },
       SlotRange {
         start: 3657,
         end: 4089,
         server: "baz.use2.cache.amazonaws.com:6379".into(),
         id: "d9aeabb1525e5656c98545a0ed42c8c99bbacae1".into(),
-        slaves: None,
+        replicas: None,
       },
       SlotRange {
         start: 5861,
         end: 6770,
         server: "baz.use2.cache.amazonaws.com:6379".into(),
         id: "d9aeabb1525e5656c98545a0ed42c8c99bbacae1".into(),
-        slaves: None,
+        replicas: None,
       },
       SlotRange {
         start: 7531,
         end: 7713,
         server: "baz.use2.cache.amazonaws.com:6379".into(),
         id: "d9aeabb1525e5656c98545a0ed42c8c99bbacae1".into(),
-        slaves: None,
+        replicas: None,
       },
       SlotRange {
         start: 13154,
         end: 13197,
         server: "baz.use2.cache.amazonaws.com:6379".into(),
         id: "d9aeabb1525e5656c98545a0ed42c8c99bbacae1".into(),
-        slaves: None,
+        replicas: None,
       }
     ]);
     expected.insert("wibble.use2.cache.amazonaws.com:6379".into(), vec![
@@ -563,28 +563,28 @@ b8553a4fae8ae99fca716d423b14875ebb10fefe quux.use2.cache.amazonaws.com:6379@1122
         end: 8125,
         server: "wibble.use2.cache.amazonaws.com:6379".into(),
         id: "5671f02def98d0279224f717aba0f95874e5fb89".into(),
-        slaves: None,
+        replicas: None,
       },
       SlotRange {
         start: 12427,
         end: 12427,
         server: "wibble.use2.cache.amazonaws.com:6379".into(),
         id: "5671f02def98d0279224f717aba0f95874e5fb89".into(),
-        slaves: None,
+        replicas: None,
       },
       SlotRange {
         start: 13198,
         end: 13760,
         server: "wibble.use2.cache.amazonaws.com:6379".into(),
         id: "5671f02def98d0279224f717aba0f95874e5fb89".into(),
-        slaves: None,
+        replicas: None,
       },
       SlotRange {
         start: 15126,
         end: 16383,
         server: "wibble.use2.cache.amazonaws.com:6379".into(),
         id: "5671f02def98d0279224f717aba0f95874e5fb89".into(),
-        slaves: None,
+        replicas: None,
       }
     ]);
     expected.insert("wobble.use2.cache.amazonaws.com:6379".into(), vec![
@@ -593,35 +593,35 @@ b8553a4fae8ae99fca716d423b14875ebb10fefe quux.use2.cache.amazonaws.com:6379@1122
         end: 5860,
         server: "wobble.use2.cache.amazonaws.com:6379".into(),
         id: "0b1923e386f6f6f3adc1b6deb250ef08f937e9b5".into(),
-        slaves: None,
+        replicas: None,
       },
       SlotRange {
         start: 6771,
         end: 7382,
         server: "wobble.use2.cache.amazonaws.com:6379".into(),
         id: "0b1923e386f6f6f3adc1b6deb250ef08f937e9b5".into(),
-        slaves: None,
+        replicas: None,
       },
       SlotRange {
         start: 8133,
         end: 8151,
         server: "wobble.use2.cache.amazonaws.com:6379".into(),
         id: "0b1923e386f6f6f3adc1b6deb250ef08f937e9b5".into(),
-        slaves: None,
+        replicas: None,
       },
       SlotRange {
         start: 10113,
         end: 10922,
         server: "wobble.use2.cache.amazonaws.com:6379".into(),
         id: "0b1923e386f6f6f3adc1b6deb250ef08f937e9b5".into(),
-        slaves: None,
+        replicas: None,
       },
       SlotRange {
         start: 12686,
         end: 12893,
         server: "wobble.use2.cache.amazonaws.com:6379".into(),
         id: "0b1923e386f6f6f3adc1b6deb250ef08f937e9b5".into(),
-        slaves: None,
+        replicas: None,
       }
     ]);
     expected.insert("qux.use2.cache.amazonaws.com:6379".into(), vec![
@@ -630,35 +630,35 @@ b8553a4fae8ae99fca716d423b14875ebb10fefe quux.use2.cache.amazonaws.com:6379@1122
         end: 3656,
         server: "qux.use2.cache.amazonaws.com:6379".into(),
         id: "1c5d99e3d6fca2090d0903d61d4e51594f6dcc05".into(),
-        slaves: None,
+        replicas: None,
       },
       SlotRange {
         start: 7383,
         end: 7530,
         server: "qux.use2.cache.amazonaws.com:6379".into(),
         id: "1c5d99e3d6fca2090d0903d61d4e51594f6dcc05".into(),
-        slaves: None,
+        replicas: None,
       },
       SlotRange {
         start: 8896,
         end: 9202,
         server: "qux.use2.cache.amazonaws.com:6379".into(),
         id: "1c5d99e3d6fca2090d0903d61d4e51594f6dcc05".into(),
-        slaves: None,
+        replicas: None,
       },
       SlotRange {
         start: 12347,
         end: 12426,
         server: "qux.use2.cache.amazonaws.com:6379".into(),
         id: "1c5d99e3d6fca2090d0903d61d4e51594f6dcc05".into(),
-        slaves: None,
+        replicas: None,
       },
       SlotRange {
         start: 12428,
         end: 12575,
         server: "qux.use2.cache.amazonaws.com:6379".into(),
         id: "1c5d99e3d6fca2090d0903d61d4e51594f6dcc05".into(),
-        slaves: None,
+        replicas: None,
       }
     ]);
     expected.insert("quux.use2.cache.amazonaws.com:6379".into(), vec![
@@ -667,28 +667,28 @@ b8553a4fae8ae99fca716d423b14875ebb10fefe quux.use2.cache.amazonaws.com:6379@1122
         end: 8246,
         server: "quux.use2.cache.amazonaws.com:6379".into(),
         id: "b8553a4fae8ae99fca716d423b14875ebb10fefe".into(),
-        slaves: None,
+        replicas: None,
       },
       SlotRange {
         start: 8440,
         end: 8895,
         server: "quux.use2.cache.amazonaws.com:6379".into(),
         id: "b8553a4fae8ae99fca716d423b14875ebb10fefe".into(),
-        slaves: None,
+        replicas: None,
       },
       SlotRange {
         start: 12919,
         end: 13144,
         server: "quux.use2.cache.amazonaws.com:6379".into(),
         id: "b8553a4fae8ae99fca716d423b14875ebb10fefe".into(),
-        slaves: None,
+        replicas: None,
       },
       SlotRange {
         start: 13761,
         end: 15125,
         server: "quux.use2.cache.amazonaws.com:6379".into(),
         id: "b8553a4fae8ae99fca716d423b14875ebb10fefe".into(),
-        slaves: None,
+        replicas: None,
       }
     ]);
     expected.insert("quuz.use2.cache.amazonaws.com:6379".into(), vec![
@@ -697,49 +697,49 @@ b8553a4fae8ae99fca716d423b14875ebb10fefe quux.use2.cache.amazonaws.com:6379@1122
         end: 331,
         server: "quuz.use2.cache.amazonaws.com:6379".into(),
         id: "4a58ba550f37208c9a9909986ce808cdb058e31f".into(),
-        slaves: None,
+        replicas: None,
       },
       SlotRange {
         start: 1698,
         end: 1814,
         server: "quuz.use2.cache.amazonaws.com:6379".into(),
         id: "4a58ba550f37208c9a9909986ce808cdb058e31f".into(),
-        slaves: None,
+        replicas: None,
       },
       SlotRange {
         start: 4090,
         end: 5461,
         server: "quuz.use2.cache.amazonaws.com:6379".into(),
         id: "4a58ba550f37208c9a9909986ce808cdb058e31f".into(),
-        slaves: None,
+        replicas: None,
       },
       SlotRange {
         start: 7714,
         end: 7899,
         server: "quuz.use2.cache.amazonaws.com:6379".into(),
         id: "4a58ba550f37208c9a9909986ce808cdb058e31f".into(),
-        slaves: None,
+        replicas: None,
       },
       SlotRange {
         start: 8126,
         end: 8132,
         server: "quuz.use2.cache.amazonaws.com:6379".into(),
         id: "4a58ba550f37208c9a9909986ce808cdb058e31f".into(),
-        slaves: None,
+        replicas: None,
       },
       SlotRange {
         start: 12894,
         end: 12918,
         server: "quuz.use2.cache.amazonaws.com:6379".into(),
         id: "4a58ba550f37208c9a9909986ce808cdb058e31f".into(),
-        slaves: None,
+        replicas: None,
       },
       SlotRange {
         start: 13145,
         end: 13153,
         server: "quuz.use2.cache.amazonaws.com:6379".into(),
         id: "4a58ba550f37208c9a9909986ce808cdb058e31f".into(),
-        slaves: None,
+        replicas: None,
       }
     ]);
 
@@ -775,7 +775,7 @@ e7d1eecce10fd6bb5eb35b9f99a514335d9ba9ca 127.0.0.1:30001 myself,master - 0 0 1 c
       end: 10922,
       server: "127.0.0.1:30002".to_owned(),
       id: "67ed2db8d677e59ec4a4cefb06858cf2a1a89fa1".to_owned(),
-      slaves: Some(SlaveNodes::new(vec![
+      replicas: Some(ReplicaNodes::new(vec![
         "127.0.0.1:30005".to_owned()
       ]))
     }]);
@@ -784,7 +784,7 @@ e7d1eecce10fd6bb5eb35b9f99a514335d9ba9ca 127.0.0.1:30001 myself,master - 0 0 1 c
       end: 16383,
       server: "127.0.0.1:30003".to_owned(),
       id: "292f8b365bb7edb5e285caf0b7e6ddc7265d2f4f".to_owned(),
-      slaves: Some(SlaveNodes::new(vec![
+      replicas: Some(ReplicaNodes::new(vec![
         "127.0.0.1:30006".to_owned()
       ]))
     }]);
@@ -793,7 +793,7 @@ e7d1eecce10fd6bb5eb35b9f99a514335d9ba9ca 127.0.0.1:30001 myself,master - 0 0 1 c
       end: 5460,
       server: "127.0.0.1:30001".to_owned(),
       id: "e7d1eecce10fd6bb5eb35b9f99a514335d9ba9ca".to_owned(),
-      slaves: Some(SlaveNodes::new(vec![
+      replicas: Some(ReplicaNodes::new(vec![
         "127.0.0.1:30004".to_owned()
       ]))
     }]);
@@ -817,21 +817,21 @@ b4fa5337b58e02673f961e22c9557e81dda4b559 bar.cache.amazonaws.com:6379@1122 mysel
       end: 10922,
       server: "foo.cache.amazonaws.com:6379".to_owned(),
       id: "eec2b077ee95c590279115aac13e7eefdce61dba".to_owned(),
-      slaves: None
+      replicas: None
     }]);
     expected.insert("bar.cache.amazonaws.com:6379".to_owned(), vec![SlotRange {
       start: 0,
       end: 5461,
       server: "bar.cache.amazonaws.com:6379".to_owned(),
       id: "b4fa5337b58e02673f961e22c9557e81dda4b559".to_owned(),
-      slaves: None
+      replicas: None
     }]);
     expected.insert("baz.cache.amazonaws.com:6379".to_owned(), vec![SlotRange {
       start: 10923,
       end: 16383,
       server: "baz.cache.amazonaws.com:6379".to_owned(),
       id: "29d37b842d1bb097ba491be8f1cb00648620d4bd".to_owned(),
-      slaves: None
+      replicas: None
     }]);
 
     let actual = match parse_cluster_nodes(status.to_owned()) {

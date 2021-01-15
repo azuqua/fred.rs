@@ -214,7 +214,7 @@ pub enum RedisCommandKind {
   ClusterSaveConfig,
   ClusterSetConfigEpoch,
   ClusterSetSlot,
-  ClusterSlaves,
+  ClusterReplicas,
   ClusterSlots,
   ConfigGet,
   ConfigRewrite,
@@ -323,7 +323,7 @@ pub enum RedisCommandKind {
   Sinter,
   Sinterstore,
   Sismember,
-  Slaveof,
+  Replicaof,
   Slowlog,
   Smembers,
   Smove,
@@ -543,7 +543,7 @@ impl RedisCommandKind {
       RedisCommandKind::ClusterSaveConfig               => "CLUSTER",
       RedisCommandKind::ClusterSetConfigEpoch           => "CLUSTER",
       RedisCommandKind::ClusterSetSlot                  => "CLUSTER",
-      RedisCommandKind::ClusterSlaves                   => "CLUSTER",
+      RedisCommandKind::ClusterReplicas                 => "CLUSTER",
       RedisCommandKind::ClusterSlots                    => "CLUSTER",
       RedisCommandKind::ConfigGet                       => "CONFIG",
       RedisCommandKind::ConfigRewrite                   => "CONFIG",
@@ -652,7 +652,7 @@ impl RedisCommandKind {
       RedisCommandKind::Sinter                          => "SINTER",
       RedisCommandKind::Sinterstore                     => "SINTERSTORE",
       RedisCommandKind::Sismember                       => "SISMEMBER",
-      RedisCommandKind::Slaveof                         => "SLAVEOF",
+      RedisCommandKind::Replicaof                       => "REPLICAOF",
       RedisCommandKind::Slowlog                         => "SLOWLOG",
       RedisCommandKind::Smembers                        => "SMEMBERS",
       RedisCommandKind::Smove                           => "SMOVE",
@@ -741,7 +741,7 @@ impl RedisCommandKind {
       RedisCommandKind::ClusterSaveConfig               => "CLUSTER",
       RedisCommandKind::ClusterSetConfigEpoch           => "CLUSTER",
       RedisCommandKind::ClusterSetSlot                  => "CLUSTER",
-      RedisCommandKind::ClusterSlaves                   => "CLUSTER",
+      RedisCommandKind::ClusterReplicas                 => "CLUSTER",
       RedisCommandKind::ClusterSlots                    => "CLUSTER",
       RedisCommandKind::ConfigGet                       => "CONFIG",
       RedisCommandKind::ConfigRewrite                   => "CONFIG",
@@ -850,7 +850,7 @@ impl RedisCommandKind {
       RedisCommandKind::Sinter                          => "SINTER",
       RedisCommandKind::Sinterstore                     => "SINTERSTORE",
       RedisCommandKind::Sismember                       => "SISMEMBER",
-      RedisCommandKind::Slaveof                         => "SLAVEOF",
+      RedisCommandKind::Replicaof                       => "REPLICAOF",
       RedisCommandKind::Slowlog                         => "SLOWLOG",
       RedisCommandKind::Smembers                        => "SMEMBERS",
       RedisCommandKind::Smove                           => "SMOVE",
@@ -922,7 +922,7 @@ impl RedisCommandKind {
       | RedisCommandKind::ClusterSaveConfig
       | RedisCommandKind::ClusterSetConfigEpoch
       | RedisCommandKind::ClusterSetSlot
-      | RedisCommandKind::ClusterSlaves
+      | RedisCommandKind::ClusterReplicas
       | RedisCommandKind::ClusterSlots                 => true,
       _ => false
     }
@@ -946,7 +946,7 @@ impl RedisCommandKind {
       RedisCommandKind::ClusterSaveConfig               => "SAVECONFIG",
       RedisCommandKind::ClusterSetConfigEpoch           => "SET-CONFIG-EPOCH",
       RedisCommandKind::ClusterSetSlot                  => "SETSLOT",
-      RedisCommandKind::ClusterSlaves                   => "SLAVES",
+      RedisCommandKind::ClusterReplicas                 => "REPLICAS",
       RedisCommandKind::ClusterSlots                    => "SLOTS",
       _ => return None
     };
@@ -1014,7 +1014,7 @@ impl RedisCommandKind {
   pub fn is_read(&self) -> bool {
     use RedisCommandKind::*;
 
-    // TODO finish this and use for sending reads to slaves
+    // TODO finish this and use for sending reads to replicas
     match *self {
       _ => false
     }
@@ -1122,15 +1122,15 @@ impl RedisCommand {
 
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SlaveNodes {
+pub struct ReplicaNodes {
   servers: Vec<String>,
   next: usize
 }
 
-impl SlaveNodes {
+impl ReplicaNodes {
 
-  pub fn new(servers: Vec<String>) -> SlaveNodes {
-    SlaveNodes {
+  pub fn new(servers: Vec<String>) -> ReplicaNodes {
+    ReplicaNodes {
       servers,
       next: 0
     }
@@ -1164,8 +1164,8 @@ pub struct SlotRange {
   pub server: String,
   pub id: String,
   // TODO
-  // cache slaves for each master and round-robin reads to the slaves + master, and only send writes to the master
-  pub slaves: Option<SlaveNodes>
+  // cache replicas for each primary and round-robin reads to the replicas + primary, and only send writes to the primary
+  pub replicas: Option<ReplicaNodes>
 }
 
 #[derive(Debug, Clone)]

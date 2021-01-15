@@ -313,7 +313,7 @@ impl RedisClient {
     utils::is_clustered(&self.inner.config)
   }
 
-  /// Split a clustered redis client into a list of centralized clients for each master node in the cluster.
+  /// Split a clustered redis client into a list of centralized clients for each primary node in the cluster.
   ///
   /// This is an expensive operation and should not be used frequently.
   pub fn split_cluster(&self, handle: &Handle) -> Box<Future<Item=Vec<(RedisClient, RedisConfig)>, Error=RedisError>> {
