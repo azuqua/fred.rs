@@ -90,6 +90,7 @@ impl PartialEq for ResponseKind {
 impl Eq for ResponseKind {}
 
 pub struct KeyScanInner {
+  pub key_slot: Option<u16>,
   pub cursor: String,
   pub tx: UnboundedSender<Result<ScanResult, RedisError>>
 }

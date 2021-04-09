@@ -25,6 +25,7 @@ use std::collections::{HashMap, VecDeque};
 use futures::sync::mpsc::unbounded;
 
 use futures::future;
+use crate::utils::redis_string_to_f64;
 
 const ASYNC: &'static str = "ASYNC";
 const MATCH: &'static str = "MATCH";
@@ -1146,6 +1147,16 @@ pub fn scan<P: Into<String>>(inner: &Arc<RedisClientInner>, pattern: Option<P>, 
     None
   };
 
+  let key_slot = if let Some(ref pattern) = pattern {
+    if multiplexer_utils::clustered_scan_pattern_has_hash_tag(pattern) {
+      Some(redis_protocol::redis_keyslot(pattern))
+    }else{
+      None
+    }
+  }else{
+    None
+  };
+
   let mut args = Vec::with_capacity(7);
   args.push(cursor.clone().into());
 
@@ -1161,7 +1172,7 @@ pub fn scan<P: Into<String>>(inner: &Arc<RedisClientInner>, pattern: Option<P>, 
     args.push(TYPE.into());
     args.push(_type.to_str().into());
   }
-  let scan = KeyScanInner { cursor, tx };
+  let scan = KeyScanInner { key_slot, cursor, tx };
 
   let cmd = RedisCommand {
     kind: RedisCommandKind::Scan(scan),
