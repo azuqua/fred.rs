@@ -799,3 +799,52 @@ fn parse_redis_auth_error(frame: &Frame) -> Option<RedisError> {
   }
 }
 
+/// Check for a scan pattern without a hash tag, or with a wildcard in the hash tag.
+///
+/// These patterns will result in scanning a random node if used against a clustered redis.
+pub fn clustered_scan_pattern_has_hash_tag(pattern: &str) -> bool {
+  let (mut i, mut j, mut has_wildcard) = (None, None, false);
+  for (idx, c) in pattern.chars().enumerate() {
+    if c == '{' && i.is_none() {
+      i = Some(idx);
+    }
+    if c == '}' && j.is_none() && i.is_some() {
+      j = Some(idx);
+      break;
+    }
+    if c == '*' && i.is_some() {
+      has_wildcard = true;
+    }
+  }
+
+  if i.is_none() || j.is_none() {
+    return false;
+  }
+
+  if has_wildcard {
+    warn!("Found wildcard in scan pattern hash tag. You're probably not scanning the correct node.");
+  }
+
+  true
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn it_should_check_for_scan_pattern_with_hash_tag() {
+    assert!(clustered_scan_pattern_has_hash_tag("abc{def}ghi"));
+    assert!(clustered_scan_pattern_has_hash_tag("{a}"));
+    assert!(clustered_scan_pattern_has_hash_tag("{a*b}"));
+    assert!(clustered_scan_pattern_has_hash_tag("abc{def}"));
+  }
+
+  #[test]
+  fn it_should_check_for_scan_pattern_without_hash_tag() {
+    assert!(!clustered_scan_pattern_has_hash_tag("abcdefghi"));
+    assert!(!clustered_scan_pattern_has_hash_tag("*"));
+  }
+
+}
+

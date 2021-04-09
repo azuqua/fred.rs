@@ -173,6 +173,10 @@ impl Multiplexer {
     }else{
       None
     };
+    let key_slot = match request.kind {
+      RedisCommandKind::Scan(ref s) => s.key_slot.clone(),
+      _ => None
+    };
 
     let frame = match request.to_frame() {
       Ok(f) => f,
@@ -182,7 +186,7 @@ impl Multiplexer {
     if request.kind == RedisCommandKind::Quit {
       self.sinks.quit(frame)
     }else{
-      self.sinks.write_command(key, frame, no_cluster)
+      self.sinks.write_command(key, frame, no_cluster, key_slot)
     }
   }
 

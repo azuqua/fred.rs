@@ -291,7 +291,7 @@ impl Sinks {
   pub fn quit(&self, frame: Frame) -> Box<Future<Item=(), Error=RedisError>> {
     match *self {
       Sinks::Centralized(_) => {
-        self.write_command(None, frame, false)
+        self.write_command(None, frame, false, None)
       },
       Sinks::Clustered { ref sinks, .. } => {
         // close all the cluster sockets in parallel
@@ -328,7 +328,7 @@ impl Sinks {
     }
   }
 
-  pub fn write_command(&self, key: Option<String>, frame: Frame, no_cluster: bool) -> Box<Future<Item=(), Error=RedisError>> {
+  pub fn write_command(&self, key: Option<String>, frame: Frame, no_cluster: bool, key_slot: Option<u16>) -> Box<Future<Item=(), Error=RedisError>> {
 
     match *self {
       Sinks::Centralized(ref sink) => {
@@ -357,7 +357,7 @@ impl Sinks {
           }))
       },
       Sinks::Clustered { ref sinks, ref cluster_cache } => {
-        let node = if no_cluster {
+        let node = if no_cluster && key_slot.is_none() {
           let cluster_cache_ref = cluster_cache.borrow();
 
           match cluster_cache_ref.random_slot() {
@@ -371,18 +371,24 @@ impl Sinks {
         }else{
           let cluster_cache_ref = cluster_cache.borrow();
 
-          // hash the key to find the right redis node
-          let key = match key {
-            Some(k) => k,
-            None => {
-              return client_utils::future_error(RedisError::new(
-                RedisErrorKind::Unknown, "Invalid command. (Missing key)."
-              ))
+          let slot = match key_slot {
+            Some(key_slot) => {
+              trace!("Using custom key slot {:?}", key_slot);
+              key_slot
+            },
+            None => match key {
+              Some(ref k) => {
+                let key_slot = redis_keyslot(k);
+                trace!("Mapped key to slot: {:?} -> {:?}", key, key_slot);
+                key_slot
+              },
+              None => {
+                return client_utils::future_error(RedisError::new(
+                  RedisErrorKind::Unknown, "Invalid command. (Missing key)."
+                ))
+              }
             }
           };
-
-          let slot = redis_keyslot(&key);
-          trace!("Mapped key to slot: {:?} -> {:?}", key, slot);
 
           match cluster_cache_ref.get_server(slot) {
             Some(s) => s,
