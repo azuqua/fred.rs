@@ -54,6 +54,7 @@ use futures::sync::mpsc::UnboundedSender;
 use std::collections::{VecDeque, HashMap};
 use std::rc::Rc;
 use std::cell::RefCell;
+use std::cmp::Ordering;
 
 #[derive(Clone)]
 pub enum ResponseKind {
@@ -1167,6 +1168,18 @@ pub struct SlotRange {
   // TODO
   // cache replicas for each primary and round-robin reads to the replicas + primary, and only send writes to the primary
   pub replicas: Option<ReplicaNodes>
+}
+
+impl PartialOrd for SlotRange {
+  fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+    Some(self.cmp(other))
+  }
+}
+
+impl Ord for SlotRange {
+  fn cmp(&self, other: &Self) -> Ordering {
+    self.start.cmp(&other.start)
+  }
 }
 
 #[derive(Debug, Clone)]

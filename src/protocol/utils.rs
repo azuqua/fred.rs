@@ -18,7 +18,7 @@ use redis_protocol::types::{
   FrameKind as ProtocolFrameKind
 };
 
-use std::collections::HashMap;
+use std::collections::{HashMap, BTreeMap, BTreeSet};
 
 use futures::{
   Future,
@@ -70,8 +70,10 @@ pub fn binary_search(slots: &Vec<Arc<SlotRange>>, slot: u16) -> Option<Arc<SlotR
   None
 }
 
-pub fn parse_cluster_nodes(status: String) -> Result<HashMap<String, Vec<SlotRange>>, RedisError> {
-  let mut out: HashMap<String, Vec<SlotRange>> = HashMap::new();
+pub fn parse_cluster_nodes(status: String) -> Result<HashMap<String, BTreeSet<SlotRange>>, RedisError> {
+  let mut out: HashMap<String, BTreeSet<SlotRange>> = HashMap::new();
+  let mut server_ids: BTreeMap<String, String> = BTreeMap::new();
+  let mut migrating: BTreeMap<u16, String> = BTreeMap::new();
 
   // build out the slot ranges for the primary nodes
   for line in status.lines() {
@@ -86,16 +88,18 @@ pub fn parse_cluster_nodes(status: String) -> Result<HashMap<String, Vec<SlotRan
     let id = parts[0].to_owned();
 
     if parts[2].contains("master") {
-      let mut slots: Vec<SlotRange> = Vec::new();
+      let mut slots: BTreeSet<SlotRange> = BTreeSet::new();
 
       let server = remove_elasticache_suffix(parts[1].to_owned());
+      server_ids.insert(id.clone(), server.clone());
+
       for slot in parts[8..].iter() {
         let inner_parts: Vec<&str> = slot.split("-").collect();
 
         if inner_parts.len() == 1 {
           // looking at an individual slot
 
-          slots.push(SlotRange {
+          slots.insert(SlotRange {
             start: inner_parts[0].parse::<u16>()?,
             end: inner_parts[0].parse::<u16>()?,
             server: server.to_owned(),
@@ -105,13 +109,45 @@ pub fn parse_cluster_nodes(status: String) -> Result<HashMap<String, Vec<SlotRan
         }else if inner_parts.len() == 2 {
           // looking at a slot range
 
-          slots.push(SlotRange {
+          slots.insert(SlotRange {
             start: inner_parts[0].parse::<u16>()?,
             end: inner_parts[1].parse::<u16>()?,
             server: server.to_owned(),
             id: id.clone(),
             replicas: None
           });
+        }else if inner_parts.len() == 3 {
+          // looking at a migrating slot
+          if inner_parts[0].is_empty() {
+            return Err(RedisError::new(
+              RedisErrorKind::ProtocolError, format!("Invalid starting hash slot: {}", inner_parts[0])
+            ));
+          }
+          let start_slot = inner_parts[0][1..].parse::<u16>()?;
+
+          if inner_parts[1] == "<" {
+            slots.insert(SlotRange {
+              start: start_slot,
+              end: start_slot,
+              server: server.to_owned(),
+              id: id.clone(),
+              replicas: None
+            });
+          }else if inner_parts[1] == ">" {
+            let len = if inner_parts[2].len() < 2 {
+              return Err(RedisError::new(
+                RedisErrorKind::ProtocolError, format!("Invalid server ID: {}", inner_parts[2])
+              ));
+            }else{
+              inner_parts[2].len() - 2
+            };
+
+            migrating.insert(start_slot, inner_parts[2][..=len].to_owned());
+          }else{
+            return Err(RedisError::new(
+              RedisErrorKind::ProtocolError, format!("Invalid migrating hash slot range: {}", slot)
+            ))
+          };
         }else{
           return Err(RedisError::new(
             RedisErrorKind::ProtocolError, format!("Invalid redis hash slot range: {}", slot)
@@ -123,49 +159,27 @@ pub fn parse_cluster_nodes(status: String) -> Result<HashMap<String, Vec<SlotRan
     }
   }
 
-  // attach the replica nodes to the primaries from the first loop
-  for line in status.lines() {
-    let parts: Vec<&str> = line.split(" ").collect();
+  for (slot, server_id) in migrating.into_iter() {
+    let server_name = match server_ids.get(&server_id) {
+      Some(s) => s,
+      None => return Err(RedisError::new(
+        RedisErrorKind::ProtocolError, format!("Unknown server ID: {}", server_id)
+      ))
+    };
+    let mut ranges = match out.get_mut(server_name) {
+      Some(r) => r,
+      None => return Err(RedisError::new(
+        RedisErrorKind::ProtocolError, format!("Missing server with ID: {}", server_id)
+      ))
+    };
 
-    if parts.len() < 8 {
-      return Err(RedisError::new(
-        RedisErrorKind::ProtocolError, format!("Invalid cluster node status line {}.", line)
-      ));
-    }
-
-    if parts[2].contains("slave") {
-      let primary_id = parts[3].to_owned();
-
-      if parts[7] != "connected" {
-        continue;
-      }
-
-      let mut primary: Option<&mut SlotRange> = None;
-      for (_, mut slots) in out.iter_mut() {
-        for mut slot in slots.iter_mut() {
-          if slot.id == primary_id {
-            primary = Some(slot);
-          }
-        }
-      }
-      let primary = match primary {
-        Some(slot) => slot,
-        None => return Err(RedisError::new(
-          RedisErrorKind::ProtocolError, format!("Invalid cluster node status line for replica node. (Missing primary) {}.", line)
-        ))
-      };
-
-      let server = remove_elasticache_suffix(parts[1].to_owned());
-      let has_replicas = primary.replicas.is_some();
-
-      if has_replicas {
-        if let Some(ref mut replicas) = primary.replicas {
-          replicas.add(server);
-        }
-      }else{
-        primary.replicas = Some(ReplicaNodes::new(vec![server]));
-      }
-    }
+    ranges.insert(SlotRange {
+      start: slot,
+      end: slot,
+      id: server_id,
+      server: server_name.to_owned(),
+      replicas: None
+    });
   }
 
   out.shrink_to_fit();
@@ -427,6 +441,13 @@ mod tests {
   use crate::protocol::types::*;
   use std::collections::HashMap;
 
+  fn to_btree(data: Vec<SlotRange>) -> BTreeSet<SlotRange> {
+    data.into_iter().fold(BTreeSet::new(), |mut acc, range| {
+      acc.insert(range);
+      acc
+    })
+  }
+
   #[test]
   fn should_parse_cluster_node_status_individual_slot() {
     let status = "2edc9a62355eacff9376c4e09643e2c932b0356a foo.use2.cache.amazonaws.com:6379@1122 master - 0 1565908731456 2950 connected 1242-1696 8195-8245 8247-8423 10923-12287
@@ -438,8 +459,8 @@ d9aeabb1525e5656c98545a0ed42c8c99bbacae1 baz.use2.cache.amazonaws.com:6379@1122 
 b8553a4fae8ae99fca716d423b14875ebb10fefe quux.use2.cache.amazonaws.com:6379@1122 master - 0 1565908730439 2951 connected 8246 8440-8895 12919-13144 13761-15125
 4a58ba550f37208c9a9909986ce808cdb058e31f quuz.use2.cache.amazonaws.com:6379@1122 myself,master - 0 1565908730000 2955 connected 0-331 1698-1814 4090-5461 7714-7899 8126-8132 12894-12918 13145-13153";
 
-    let mut expected: HashMap<String, Vec<SlotRange>> = HashMap::new();
-    expected.insert("foo.use2.cache.amazonaws.com:6379".into(), vec![
+    let mut expected: HashMap<String, BTreeSet<SlotRange>> = HashMap::new();
+    expected.insert("foo.use2.cache.amazonaws.com:6379".into(), to_btree(vec![
       SlotRange {
         start: 1242,
         end: 1696,
@@ -468,8 +489,8 @@ b8553a4fae8ae99fca716d423b14875ebb10fefe quux.use2.cache.amazonaws.com:6379@1122
         id: "2edc9a62355eacff9376c4e09643e2c932b0356a".into(),
         replicas: None,
       }
-    ]);
-    expected.insert("bar.use2.cache.amazonaws.com:6379".into(), vec![
+    ]));
+    expected.insert("bar.use2.cache.amazonaws.com:6379".into(), to_btree(vec![
       SlotRange {
         start: 332,
         end: 1241,
@@ -512,8 +533,8 @@ b8553a4fae8ae99fca716d423b14875ebb10fefe quux.use2.cache.amazonaws.com:6379@1122
         id: "db2fd89f83daa5fe49110ef760794f9ccee07d06".into(),
         replicas: None,
       }
-    ]);
-    expected.insert("baz.use2.cache.amazonaws.com:6379".into(), vec![
+    ]));
+    expected.insert("baz.use2.cache.amazonaws.com:6379".into(), to_btree(vec![
       SlotRange {
         start: 1697,
         end: 1697,
@@ -556,8 +577,8 @@ b8553a4fae8ae99fca716d423b14875ebb10fefe quux.use2.cache.amazonaws.com:6379@1122
         id: "d9aeabb1525e5656c98545a0ed42c8c99bbacae1".into(),
         replicas: None,
       }
-    ]);
-    expected.insert("wibble.use2.cache.amazonaws.com:6379".into(), vec![
+    ]));
+    expected.insert("wibble.use2.cache.amazonaws.com:6379".into(), to_btree(vec![
       SlotRange {
         start: 7900,
         end: 8125,
@@ -586,8 +607,8 @@ b8553a4fae8ae99fca716d423b14875ebb10fefe quux.use2.cache.amazonaws.com:6379@1122
         id: "5671f02def98d0279224f717aba0f95874e5fb89".into(),
         replicas: None,
       }
-    ]);
-    expected.insert("wobble.use2.cache.amazonaws.com:6379".into(), vec![
+    ]));
+    expected.insert("wobble.use2.cache.amazonaws.com:6379".into(), to_btree(vec![
       SlotRange {
         start: 5462,
         end: 5860,
@@ -623,8 +644,8 @@ b8553a4fae8ae99fca716d423b14875ebb10fefe quux.use2.cache.amazonaws.com:6379@1122
         id: "0b1923e386f6f6f3adc1b6deb250ef08f937e9b5".into(),
         replicas: None,
       }
-    ]);
-    expected.insert("qux.use2.cache.amazonaws.com:6379".into(), vec![
+    ]));
+    expected.insert("qux.use2.cache.amazonaws.com:6379".into(), to_btree(vec![
       SlotRange {
         start: 2292,
         end: 3656,
@@ -660,8 +681,8 @@ b8553a4fae8ae99fca716d423b14875ebb10fefe quux.use2.cache.amazonaws.com:6379@1122
         id: "1c5d99e3d6fca2090d0903d61d4e51594f6dcc05".into(),
         replicas: None,
       }
-    ]);
-    expected.insert("quux.use2.cache.amazonaws.com:6379".into(), vec![
+    ]));
+    expected.insert("quux.use2.cache.amazonaws.com:6379".into(), to_btree(vec![
       SlotRange {
         start: 8246,
         end: 8246,
@@ -690,8 +711,8 @@ b8553a4fae8ae99fca716d423b14875ebb10fefe quux.use2.cache.amazonaws.com:6379@1122
         id: "b8553a4fae8ae99fca716d423b14875ebb10fefe".into(),
         replicas: None,
       }
-    ]);
-    expected.insert("quuz.use2.cache.amazonaws.com:6379".into(), vec![
+    ]));
+    expected.insert("quuz.use2.cache.amazonaws.com:6379".into(), to_btree(vec![
       SlotRange {
         start: 0,
         end: 331,
@@ -741,7 +762,7 @@ b8553a4fae8ae99fca716d423b14875ebb10fefe quux.use2.cache.amazonaws.com:6379@1122
         id: "4a58ba550f37208c9a9909986ce808cdb058e31f".into(),
         replicas: None,
       }
-    ]);
+    ]));
 
     let actual = match parse_cluster_nodes(status.to_owned()) {
       Ok(h) => h,
@@ -762,41 +783,32 @@ b8553a4fae8ae99fca716d423b14875ebb10fefe quux.use2.cache.amazonaws.com:6379@1122
 
   #[test]
   fn should_parse_cluster_node_status() {
-    let status = "07c37dfeb235213a872192d90877d0cd55635b91 127.0.0.1:30004 slave e7d1eecce10fd6bb5eb35b9f99a514335d9ba9ca 0 1426238317239 4 connected
-67ed2db8d677e59ec4a4cefb06858cf2a1a89fa1 127.0.0.1:30002 master - 0 1426238316232 2 connected 5461-10922
+    let status = "67ed2db8d677e59ec4a4cefb06858cf2a1a89fa1 127.0.0.1:30002 master - 0 1426238316232 2 connected 5461-10922
 292f8b365bb7edb5e285caf0b7e6ddc7265d2f4f 127.0.0.1:30003 master - 0 1426238318243 3 connected 10923-16383
-6ec23923021cf3ffec47632106199cb7f496ce01 127.0.0.1:30005 slave 67ed2db8d677e59ec4a4cefb06858cf2a1a89fa1 0 1426238316232 5 connected
-824fe116063bc5fcf9f4ffd895bc17aee7731ac3 127.0.0.1:30006 slave 292f8b365bb7edb5e285caf0b7e6ddc7265d2f4f 0 1426238317741 6 connected
 e7d1eecce10fd6bb5eb35b9f99a514335d9ba9ca 127.0.0.1:30001 myself,master - 0 0 1 connected 0-5460";
 
-    let mut expected: HashMap<String, Vec<SlotRange>> = HashMap::new();
-    expected.insert("127.0.0.1:30002".to_owned(), vec![SlotRange {
+    let mut expected: HashMap<String, BTreeSet<SlotRange>> = HashMap::new();
+    expected.insert("127.0.0.1:30002".to_owned(), to_btree(vec![SlotRange {
       start: 5461,
       end: 10922,
       server: "127.0.0.1:30002".to_owned(),
       id: "67ed2db8d677e59ec4a4cefb06858cf2a1a89fa1".to_owned(),
-      replicas: Some(ReplicaNodes::new(vec![
-        "127.0.0.1:30005".to_owned()
-      ]))
-    }]);
-    expected.insert("127.0.0.1:30003".to_owned(), vec![SlotRange {
+      replicas: None
+    }]));
+    expected.insert("127.0.0.1:30003".to_owned(), to_btree(vec![SlotRange {
       start: 10923,
       end: 16383,
       server: "127.0.0.1:30003".to_owned(),
       id: "292f8b365bb7edb5e285caf0b7e6ddc7265d2f4f".to_owned(),
-      replicas: Some(ReplicaNodes::new(vec![
-        "127.0.0.1:30006".to_owned()
-      ]))
-    }]);
-    expected.insert("127.0.0.1:30001".to_owned(), vec![SlotRange {
+      replicas: None
+    }]));
+    expected.insert("127.0.0.1:30001".to_owned(), to_btree(vec![SlotRange {
       start: 0,
       end: 5460,
       server: "127.0.0.1:30001".to_owned(),
       id: "e7d1eecce10fd6bb5eb35b9f99a514335d9ba9ca".to_owned(),
-      replicas: Some(ReplicaNodes::new(vec![
-        "127.0.0.1:30004".to_owned()
-      ]))
-    }]);
+      replicas: None
+    }]));
 
     let actual = match parse_cluster_nodes(status.to_owned()) {
       Ok(h) => h,
@@ -811,28 +823,73 @@ e7d1eecce10fd6bb5eb35b9f99a514335d9ba9ca 127.0.0.1:30001 myself,master - 0 0 1 c
 b4fa5337b58e02673f961e22c9557e81dda4b559 bar.cache.amazonaws.com:6379@1122 myself,master - 0 1530900240000 1 connected 0-5461
 29d37b842d1bb097ba491be8f1cb00648620d4bd baz.cache.amazonaws.com:6379@1122 master - 0 1530900242042 2 connected 10923-16383";
 
-    let mut expected: HashMap<String, Vec<SlotRange>> = HashMap::new();
-    expected.insert("foo.cache.amazonaws.com:6379".to_owned(), vec![SlotRange {
+    let mut expected: HashMap<String, BTreeSet<SlotRange>> = HashMap::new();
+    expected.insert("foo.cache.amazonaws.com:6379".to_owned(), to_btree(vec![SlotRange {
       start: 5462,
       end: 10922,
       server: "foo.cache.amazonaws.com:6379".to_owned(),
       id: "eec2b077ee95c590279115aac13e7eefdce61dba".to_owned(),
       replicas: None
-    }]);
-    expected.insert("bar.cache.amazonaws.com:6379".to_owned(), vec![SlotRange {
+    }]));
+    expected.insert("bar.cache.amazonaws.com:6379".to_owned(), to_btree(vec![SlotRange {
       start: 0,
       end: 5461,
       server: "bar.cache.amazonaws.com:6379".to_owned(),
       id: "b4fa5337b58e02673f961e22c9557e81dda4b559".to_owned(),
       replicas: None
-    }]);
-    expected.insert("baz.cache.amazonaws.com:6379".to_owned(), vec![SlotRange {
+    }]));
+    expected.insert("baz.cache.amazonaws.com:6379".to_owned(), to_btree(vec![SlotRange {
       start: 10923,
       end: 16383,
       server: "baz.cache.amazonaws.com:6379".to_owned(),
       id: "29d37b842d1bb097ba491be8f1cb00648620d4bd".to_owned(),
       replicas: None
-    }]);
+    }]));
+
+    let actual = match parse_cluster_nodes(status.to_owned()) {
+      Ok(h) => h,
+      Err(e) => panic!("{}", e)
+    };
+    assert_eq!(actual, expected);
+  }
+
+  #[test]
+  fn should_parse_migrating_cluster_nodes() {
+    let status = "eec2b077ee95c590279115aac13e7eefdce61dba foo.cache.amazonaws.com:6379@1122 master - 0 1530900241038 0 connected 5462-10921 [10922->-b4fa5337b58e02673f961e22c9557e81dda4b559]
+b4fa5337b58e02673f961e22c9557e81dda4b559 bar.cache.amazonaws.com:6379@1122 myself,master - 0 1530900240000 1 connected 0-5461 [10922-<-eec2b077ee95c590279115aac13e7eefdce61dba]
+29d37b842d1bb097ba491be8f1cb00648620d4bd baz.cache.amazonaws.com:6379@1122 master - 0 1530900242042 2 connected 10923-16383";
+
+    let mut expected: HashMap<String, BTreeSet<SlotRange>> = HashMap::new();
+    expected.insert("foo.cache.amazonaws.com:6379".to_owned(), to_btree(vec![SlotRange {
+      start: 5462,
+      end: 10921,
+      server: "foo.cache.amazonaws.com:6379".to_owned(),
+      id: "eec2b077ee95c590279115aac13e7eefdce61dba".to_owned(),
+      replicas: None
+    }]));
+    expected.insert("bar.cache.amazonaws.com:6379".to_owned(), to_btree(vec![
+      SlotRange {
+        start: 0,
+        end: 5461,
+        server: "bar.cache.amazonaws.com:6379".to_owned(),
+        id: "b4fa5337b58e02673f961e22c9557e81dda4b559".to_owned(),
+        replicas: None
+      },
+      SlotRange {
+        start: 10922,
+        end: 10922,
+        server: "bar.cache.amazonaws.com:6379".to_owned(),
+        id: "b4fa5337b58e02673f961e22c9557e81dda4b559".to_owned(),
+        replicas: None
+      }
+    ]));
+    expected.insert("baz.cache.amazonaws.com:6379".to_owned(), to_btree(vec![SlotRange {
+      start: 10923,
+      end: 16383,
+      server: "baz.cache.amazonaws.com:6379".to_owned(),
+      id: "29d37b842d1bb097ba491be8f1cb00648620d4bd".to_owned(),
+      replicas: None
+    }]));
 
     let actual = match parse_cluster_nodes(status.to_owned()) {
       Ok(h) => h,
