@@ -139,6 +139,8 @@ pub trait RedisClientBorrowed {
 
   fn lpop<K: Into<RedisKey>>(&self, key: K) -> Box<Future<Item=Option<RedisValue>, Error=RedisError>>;
 
+  fn memoryusage<K: Into<RedisKey>>(&self, key: K, samples: Option<i64>) -> Box<Future<Item=usize, Error=RedisError>>;
+
   fn sadd<K: Into<RedisKey>, V: Into<MultipleValues>>(&self, key: K, values: V) -> Box<Future<Item=usize, Error=RedisError>>;
 
   fn srem<K: Into<RedisKey>, V: Into<MultipleValues>>(&self, key: K, values: V) -> Box<Future<Item=usize, Error=RedisError>>;
@@ -592,6 +594,15 @@ impl RedisClientBorrowed for RedisClient {
   /// <https://redis.io/commands/lpop>
   fn lpop<K: Into<RedisKey>>(&self, key: K) -> Box<Future<Item=Option<RedisValue>, Error=RedisError>> {
     commands::lpop(&self.inner, key)
+  }
+
+  /// Report the number of bytes that a key and its value require to be stored in RAM.
+  /// The reported usage is the total of memory allocations for data and administrative overheads that a key its value require.
+  /// For nested data types, the optional SAMPLES option can be provided, where count is the number of sampled nested values. By default, this option is set to 5. To sample the all of the nested values, use SAMPLES 0.
+  ///
+  /// <https://redis.io/commands/memory-usage>
+  fn memoryusage<K: Into<RedisKey>>(&self, key: K, samples: Option<i64>) -> Box<Future<Item=usize, Error=RedisError>> {
+    commands::memoryusage(&self.inner, key, samples)
   }
 
   /// Add the specified value to the set stored at key. Values that are already a member of this set are ignored.

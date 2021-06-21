@@ -48,6 +48,7 @@ use super::sets as sets_tests;
 use super::hashes as hashes_tests;
 use super::lists as lists_tests;
 use super::pubsub as pubsub_tests;
+use super::other as other_tests;
 use super::sorted_sets as sorted_sets_tests;
 
 lazy_static! {
@@ -263,6 +264,28 @@ pub mod pubsub {
     utils::setup_two_test_clients(config, TIMER.clone(),|client_1, client_2| {
       pubsub_tests::should_punsubscribe_on_multiple_channels(client_1, client_2)
     });
+  }
+
+}
+
+
+pub mod other {
+  use super::*;
+
+  #[test]
+  fn it_should_memory_usage_simple_db() {
+    let config = RedisConfig::default_clustered();
+    utils::setup_test_client(config, TIMER.clone(), |client| {
+      other_tests::memoryusage::should_memory_usage_simple(client)
+    })
+  }
+
+  #[test]
+  fn it_should_memory_usage_hset_db() {
+    let config = RedisConfig::default_clustered();
+    utils::setup_test_client(config, TIMER.clone(), |client| {
+      other_tests::memoryusage::should_memory_usage_hset(client)
+    })
   }
 
 }

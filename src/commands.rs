@@ -1029,6 +1029,29 @@ pub fn lpop<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Box<Fut
   }))
 }
 
+pub fn memoryusage<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, samples: Option<i64>) -> Box<Future<Item=usize, Error=RedisError>> {
+  let key = key.into();
+
+  Box::new(utils::request_response(inner, move || {
+    let mut args = vec!["USAGE".into(), key.into()];
+    if let Some(num_samples) = samples {
+      let mut samples_vec = vec!["SAMPLES".into(), num_samples.into()];
+      args.append(&mut samples_vec);
+    };
+
+    Ok((RedisCommandKind::MemoryUsage, args))
+  }).and_then(|frame| {
+    let resp = protocol_utils::frame_to_single_result(frame)?;
+
+    match resp {
+      RedisValue::Integer(num) => Ok(num as usize),
+      _ => Err(RedisError::new(
+        RedisErrorKind::Unknown , "Invalid MEMORY USAGE response."
+      ))
+    }
+  }))
+}
+
 pub fn sadd<K: Into<RedisKey>, V: Into<MultipleValues>>(inner: &Arc<RedisClientInner>, key: K, values: V) -> Box<Future<Item=usize, Error=RedisError>> {
   let key = key.into();
   let value = values.into();
