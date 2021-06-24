@@ -307,6 +307,22 @@ pub mod other {
     })
   }
 
+  #[test]
+  fn it_should_memory_usage_simple_db() {
+    let config = RedisConfig::default_centralized();
+    utils::setup_test_client(config, TIMER.clone(), |client| {
+      other_tests::memoryusage::should_memory_usage_simple(client)
+    })
+  }
+
+  #[test]
+  fn it_should_memory_usage_hset_db() {
+    let config = RedisConfig::default_centralized();
+    utils::setup_test_client(config, TIMER.clone(), |client| {
+      other_tests::memoryusage::should_memory_usage_hset(client)
+    })
+  }
+
 }
 
 pub mod sorted_sets {
