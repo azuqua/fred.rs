@@ -1251,3 +1251,55 @@ impl ClusterKeyCache {
   }
 
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn should_find_only_slot() {
+    let status = "56f9119000def39ad5ec370beb840ac855865311 fl10-eng-rs-0001-003.fl10-eng-rs.jpi5qa.use2.cache.amazonaws.com:6379@1122 slave 3fc561bfdad4b344a60eb805a31287dd201aedd5 0 1624635691927 7 connected
+3fc561bfdad4b344a60eb805a31287dd201aedd5 fl10-eng-rs-0001-002.fl10-eng-rs.jpi5qa.use2.cache.amazonaws.com:6379@1122 master - 0 1624635691000 7 connected 0-16383
+6d4ea1be7bb45f0b59fd18c232c641b8fb3c144b fl10-eng-rs-0001-001.fl10-eng-rs.jpi5qa.use2.cache.amazonaws.com:6379@1122 myself,slave 3fc561bfdad4b344a60eb805a31287dd201aedd5 0 1624635689000 7 connected";
+    let cache = ClusterKeyCache::new(Some(status.to_owned())).expect("could not construct cache");
+    // only one exists
+    let first_slot = cache.data.iter().next().expect("Could not get first slot");
+    for slot in 0..16383 {
+      let server = cache.get_server(slot);
+      match server {
+        None => panic!("Should have gotten a server"),
+        Some(s) => assert_eq!(s, *first_slot, "Slot returned did not equal the first slot")
+      }
+    }
+  }
+
+  #[test]
+  fn should_find_correct_slot_from_two() {
+    let status = "d13d0340d9d4a3d9d2ea80b2752eaca5db53d18e azq-prod-eng-rs-0002-001.azq-prod-eng-rs.zfkldu.use1.cache.amazonaws.com:6379@1122 master - 0 1624635993258 6 connected 8192-16383
+0e605eed06ed6423c28cfad5974f74b9ad078dc6 azq-prod-eng-rs-0001-001.azq-prod-eng-rs.zfkldu.use1.cache.amazonaws.com:6379@1122 myself,master - 0 1624598474000 7 connected 0-8191";
+    let cache = ClusterKeyCache::new(Some(status.to_owned())).expect("could not construct cache");
+    let slots = {
+      let mut iter = cache.data.iter();
+      vec![iter.next().expect("Could not get first slot"), iter.next().expect("Could not get second slot")]
+    };
+    for slot in 0..16383 {
+      let server = cache.get_server(slot);
+      let which = if slot <= 8191 { 0 } else { 1 };
+      match server {
+        None => panic!("Should have gotten a server"),
+        Some(s) => assert_eq!(s, *slots[which], "Slot returned did not equal the correct slot for {}; did not equal {}", slot, which)
+      }
+    }
+  }
+
+  #[test]
+  fn should_find_none_from_empty_slots() {
+    // Previously this would underflow the usize (on release builds--debug builds check underflows) and panic if there were no slots, which is bad
+    let cache = ClusterKeyCache::new(None).expect("could not construct cache");
+    for slot in 0..16383 {
+      let server = cache.get_server(slot);
+      assert!(server.is_none());
+    }
+  }
+
+}

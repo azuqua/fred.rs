@@ -51,8 +51,13 @@ pub fn binary_search(slots: &Vec<Arc<SlotRange>>, slot: u16) -> Option<Arc<SlotR
   if slot > REDIS_CLUSTER_SLOTS {
     return None;
   }
-
-  let (mut low, mut high) = (0, slots.len() - 1);
+  
+  let mut low = 0;
+  // an empty vec will cause underflow if we do `slots.len() - 1` and subsequent panic, so stop early
+  let mut high = match usize::checked_sub(slots.len(), 1) {
+    Some(h) => h,
+    None => return None
+  };
 
   while low <= high {
     let mid = (low + high) / 2;
