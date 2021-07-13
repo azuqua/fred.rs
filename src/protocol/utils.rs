@@ -244,6 +244,12 @@ pub fn command_args(kind: &RedisCommandKind) -> Option<ProtocolFrame> {
     }else{
       return None;
     }
+  }else if kind.is_memory_command() {
+    if let Some(arg) = kind.memory_args() {
+      ProtocolFrame::BulkString(arg.into_bytes())
+    }else{
+      return None;
+    }
   }else{
     return None;
   };
