@@ -1033,7 +1033,7 @@ pub fn memoryusage<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, sam
   let key = key.into();
 
   Box::new(utils::request_response(inner, move || {
-    let mut args = vec!["USAGE".into(), key.into()];
+    let mut args = vec![key.into()];
     if let Some(num_samples) = samples {
       let mut samples_vec = vec!["SAMPLES".into(), num_samples.into()];
       args.append(&mut samples_vec);

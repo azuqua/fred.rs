@@ -1007,6 +1007,22 @@ impl RedisCommandKind {
     Some(s.to_owned())
   }
 
+  pub fn is_memory_command(&self) -> bool {
+    match *self {
+      RedisCommandKind::MemoryUsage => true,
+      _ => false
+    }
+  }
+
+  pub fn memory_args(&self) -> Option<String> {
+    let s = match *self {
+      RedisCommandKind::MemoryUsage => "USAGE",
+      _ => return None
+    };
+
+    Some(s.to_owned())
+  }
+
   pub fn is_blocking(&self) -> bool {
     match *self {
       RedisCommandKind::BlPop(_)
