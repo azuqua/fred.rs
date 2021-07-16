@@ -162,7 +162,6 @@ pub fn handle_command(inner: &Arc<RedisClientInner>, data_ref: &Arc<RwLock<DataS
       RedisCommandKind::Info        => commands::info(data, command.args),
       RedisCommandKind::Persist     => commands::persist(data, command.args),
       RedisCommandKind::Sadd        => commands::sadd(data, command.args),
-      RedisCommandKind::MemoryUsage => commands::memoryusage(data, command.args),
       RedisCommandKind::Smembers    => commands::smembers(data, command.args),
       RedisCommandKind::Publish     => commands::publish(data, command.args),
       RedisCommandKind::Subscribe   => commands::subscribe(data, command.args),
