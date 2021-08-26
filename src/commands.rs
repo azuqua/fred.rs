@@ -1043,6 +1043,8 @@ pub fn memoryusage<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, sam
   }).and_then(|frame| {
     let resp = protocol_utils::frame_to_single_result(frame)?;
 
+    println!("GSERATE response is {:?}", resp);
+
     match resp {
       RedisValue::Integer(num) => Ok(num as usize),
       _ => Err(RedisError::new(
