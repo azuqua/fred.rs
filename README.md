@@ -1,3 +1,11 @@
+# Notice
+
+This repository has moved to a [new location](https://github.com/aembke/fred.rs). The crates.io location will not change, so nothing needs to change in your toml if you're using that.
+
+The [newest version](https://crates.io/crates/fred/3.0.0) is a complete rewrite on async/await, new tokio, etc. It also includes a number of new features and breaking changes to the API. See the new repository for more information. 
+
+Changes to the 2.x major version will be made here, if necessary, but all other development will happen in the new repository. When the 2.x major version is fully deprecated this repository will be archived. 
+
 Fred
 ====
 
