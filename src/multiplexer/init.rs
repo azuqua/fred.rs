@@ -182,7 +182,7 @@ fn backoff_and_retry(inner: Arc<RedisClientInner>, handle: Handle, multiplexer: 
     if let Some(delay) = utils::next_reconnect_delay(&inner.policy) {
       Some(delay)
     }else{
-      return client_utils::future_error(RedisError::new_canceled());
+      return client_utils::future_error(RedisError::new(RedisErrorKind::Timeout, "Cannot connect to redis, retry timeout."));
     }
   };
 
@@ -306,7 +306,7 @@ fn build_centralized_multiplexer(handle: Handle, inner: Arc<RedisClientInner>, m
 
 fn build_clustered_multiplexer(handle: Handle, inner: Arc<RedisClientInner>, multiplexer: Multiplexer, force_no_backoff: bool) -> Box<Future<Item=InitState, Error=RedisError>> {
   Box::new(loop_fn((handle, inner, multiplexer), move |(handle, inner, multiplexer)| {
-    debug!("{} Attempting to rebuild centralized connection.", n!(inner));
+    debug!("{} Attempting to rebuild clustered connection.", n!(inner));
     if client_utils::read_closed_flag(&inner.closed) {
       debug!("{} Emitting canceled error checking closed flag.", n!(inner));
       return client_utils::future_error(RedisError::new_canceled());
@@ -398,7 +398,7 @@ fn build_clustered_multiplexer(handle: Handle, inner: Arc<RedisClientInner>, mul
         },
         Err(Either::B((init_err, timer_ft))) => {
           // initialization had an error
-          debug!("{} Error initializing connection: {:?}", n!(final_inner), init_err);
+          error!("{} Error initializing connection: {:?}", n!(final_inner), init_err);
 
           utils::emit_connect_error(&final_inner.connect_tx, &init_err);
           utils::emit_error(&final_inner.error_tx, &init_err);
@@ -503,9 +503,9 @@ fn create_commands_ft(handle: Handle, inner: Arc<RedisClientInner>) -> Box<Futur
 
   Box::new(lazy(move || {
     if multiplexer.is_clustered() {
-      build_clustered_multiplexer(handle, inner, multiplexer, true)
+      build_clustered_multiplexer(handle, inner, multiplexer, false)
     }else{
-      build_centralized_multiplexer(handle, inner, multiplexer, true)
+      build_centralized_multiplexer(handle, inner, multiplexer, false)
     }
   })
   .and_then(move |(handle, inner, multiplexer)| {
