@@ -58,6 +58,7 @@ use std::sync::atomic::{
   Ordering,
   AtomicUsize
 };
+use rand::distributions::Alphanumeric;
 
 use crate::multiplexer::utils as multiplexer_utils;
 use crate::protocol::utils as protocol_utils;
@@ -334,8 +335,9 @@ pub fn split(inner: &Arc<RedisClientInner>, handle: &Handle, timeout: u64) -> Bo
 
 pub fn random_string(len: usize) -> String {
   rand::thread_rng()
-    .gen_ascii_chars()
+    .sample_iter(Alphanumeric)
     .take(len)
+    .map(char::from)
     .collect()
 }
 
