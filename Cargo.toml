@@ -33,10 +33,6 @@ tokio-proto = "0.1.1"
 tokio-io = "0.1.12"
 rand = "0.8.5"
 
-# https://oktainc.atlassian.net/browse/OKTA-558567
-# manually patch smallvec dependency
-smallvec = "=1.10.0"
-
 [dev-dependencies]
 hyper = "0.11"
 
