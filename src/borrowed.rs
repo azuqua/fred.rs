@@ -137,6 +137,8 @@ pub trait RedisClientBorrowed {
 
   fn lpush<K: Into<RedisKey>, V: Into<RedisValue>>(&self, key: K, value: V) -> Box<Future<Item=usize, Error=RedisError>>;
 
+  fn rpush<K: Into<RedisKey>, V: Into<RedisValue>>(&self, key: K, value: V) -> Box<Future<Item=usize, Error=RedisError>>;
+
   fn lpop<K: Into<RedisKey>>(&self, key: K) -> Box<Future<Item=Option<RedisValue>, Error=RedisError>>;
 
   fn memoryusage<K: Into<RedisKey>>(&self, key: K, samples: Option<i64>) -> Box<Future<Item=usize, Error=RedisError>>;
@@ -587,6 +589,15 @@ impl RedisClientBorrowed for RedisClient {
   /// <https://redis.io/commands/lpush>
   fn lpush<K: Into<RedisKey>, V: Into<RedisValue>>(&self, key: K, value: V) -> Box<Future<Item=usize, Error=RedisError>> {
     commands::lpush(&self.inner, key, value)
+  }
+
+  /// Insert the specified value at the tail of the list stored at key. If key does not exist,
+  /// it is created as empty list before performing the push operations. When key holds a value
+  /// that is not a list, an error is returned.
+  ///
+  /// <https://redis.io/commands/rpush>
+  fn rpush<K: Into<RedisKey>, V: Into<RedisValue>>(&self, key: K, value: V) -> Box<Future<Item=usize, Error=RedisError>> {
+    commands::rpush(&self.inner, key, value)
   }
 
   /// Removes and returns the first element of the list stored at key.

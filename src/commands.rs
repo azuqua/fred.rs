@@ -1009,6 +1009,25 @@ pub fn lpush<K: Into<RedisKey>, V: Into<RedisValue>> (inner: &Arc<RedisClientInn
   }))
 }
 
+pub fn rpush<K: Into<RedisKey>, V: Into<RedisValue>> (inner: &Arc<RedisClientInner>, key: K, value: V) -> Box<Future<Item=usize, Error=RedisError>> {
+  let key = key.into();
+  let value = value.into();
+
+  Box::new(utils::request_response(inner, move || {
+    let args: Vec<RedisValue> = vec![key.into(), value.into()];
+
+    Ok((RedisCommandKind::Rpush, args))
+  }).and_then(|frame| {
+    let resp = protocol_utils::frame_to_single_result(frame)?;
+
+    match resp {
+      RedisValue::Integer(num) => Ok(num as usize),
+      _ => Err(RedisError::new(
+        RedisErrorKind::Unknown , "Invalid RPUSH response."
+      ))
+    }
+  }))
+}
 pub fn lpop<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Box<Future<Item=Option<RedisValue>, Error=RedisError>> {
   let key = key.into();
 
@@ -1634,257 +1653,362 @@ pub fn zremrangebylex<K: Into<RedisKey>, M: Into<String>, N: Into<String>>(inner
   }))
 }
 
-pub fn zremrangebyrank<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, start: i64, stop: i64) -> Box<Future<Item=usize, Error=RedisError>> {
-  let key = key.into();
+pub fn zremrangebyrank<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, start: i64, stop: i64) -> Box<Future<Item= usize, Error = RedisError>> {
+    let key = key.into();
 
-  Box::new(utils::request_response(inner, move || {
-    Ok((RedisCommandKind::Zremrangebyrank, vec![key.into(), start.into(), stop.into()]))
-  }).and_then(|frame| {
-    match protocol_utils::frame_to_single_result(frame)? {
-      RedisValue::Integer(i) => if i < 0 {
-        Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid ZREMRANGEBYRANK response. Expected non-negative integer."))
-      }else{
-        Ok(i as usize)
-      },
-      _ => Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid ZREMRANGEBYRANK response. Expected integer."))
-    }
-  }))
+    Box::new(
+        utils::request_response(inner, move || {
+            Ok((
+                RedisCommandKind::Zremrangebyrank,
+                vec![key.into(), start.into(), stop.into()],
+            ))
+        })
+        .and_then(
+            |frame| match protocol_utils::frame_to_single_result(frame)? {
+                RedisValue::Integer(i) => {
+                    if i < 0 {
+                        Err(RedisError::new(
+                            RedisErrorKind::ProtocolError,
+                            "Invalid ZREMRANGEBYRANK response. Expected non-negative integer.",
+                        ))
+                    } else {
+                        Ok(i as usize)
+                    }
+                }
+                _ => Err(RedisError::new(
+                    RedisErrorKind::ProtocolError,
+                    "Invalid ZREMRANGEBYRANK response. Expected integer.",
+                )),
+            },
+        ),
+    )
 }
 
-pub fn zremrangebyscore<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, min: f64, max: f64) -> Box<Future<Item=usize, Error=RedisError>> {
-  let key = key.into();
+pub fn zremrangebyscore<K: Into<RedisKey>>(
+    inner: &Arc<RedisClientInner>,
+    key: K,
+    min: f64,
+    max: f64,
+) -> Box<Future<Item = usize, Error = RedisError>> {
+    let key = key.into();
 
-  Box::new(utils::request_response(inner, move || {
-    let mut args = vec![
-      key.into(),
-      utils::f64_to_redis_string(min)?,
-      utils::f64_to_redis_string(max)?
-    ];
+    Box::new(
+        utils::request_response(inner, move || {
+            let mut args = vec![
+                key.into(),
+                utils::f64_to_redis_string(min)?,
+                utils::f64_to_redis_string(max)?,
+            ];
 
-    Ok((RedisCommandKind::Zremrangebyscore, args))
-  }).and_then(|frame| {
-    match protocol_utils::frame_to_single_result(frame)? {
-      RedisValue::Integer(i) => if i < 0 {
-        Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid ZREMRANGEBYSCORE response. Expected non-negative integer."))
-      }else{
-        Ok(i as usize)
-      },
-      _ => Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid ZREMRANGEBYSCORE response. Expected integer."))
-    }
-  }))
+            Ok((RedisCommandKind::Zremrangebyscore, args))
+        })
+        .and_then(
+            |frame| match protocol_utils::frame_to_single_result(frame)? {
+                RedisValue::Integer(i) => {
+                    if i < 0 {
+                        Err(RedisError::new(
+                            RedisErrorKind::ProtocolError,
+                            "Invalid ZREMRANGEBYSCORE response. Expected non-negative integer.",
+                        ))
+                    } else {
+                        Ok(i as usize)
+                    }
+                }
+                _ => Err(RedisError::new(
+                    RedisErrorKind::ProtocolError,
+                    "Invalid ZREMRANGEBYSCORE response. Expected integer.",
+                )),
+            },
+        ),
+    )
 }
 
-pub fn zrevrange<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, start: i64, stop: i64, with_scores: bool) -> Box<Future<Item=Vec<RedisValue>, Error=RedisError>> {
-  let key = key.into();
+pub fn zrevrange<K: Into<RedisKey>>(
+    inner: &Arc<RedisClientInner>,
+    key: K,
+    start: i64,
+    stop: i64,
+    with_scores: bool,
+) -> Box<Future<Item = Vec<RedisValue>, Error = RedisError>> {
+    let key = key.into();
 
-  Box::new(utils::request_response(inner, move || {
-    let mut args = Vec::with_capacity(4);
-    args.push(key.into());
-    args.push(start.into());
-    args.push(stop.into());
+    Box::new(
+        utils::request_response(inner, move || {
+            let mut args = Vec::with_capacity(4);
+            args.push(key.into());
+            args.push(start.into());
+            args.push(stop.into());
 
-    if with_scores {
-      args.push(WITH_SCORES.into());
-    }
+            if with_scores {
+                args.push(WITH_SCORES.into());
+            }
 
-    Ok((RedisCommandKind::Zrevrange, args))
-  }).and_then(|frame| {
-    protocol_utils::frame_to_results(frame)
-  }))
+            Ok((RedisCommandKind::Zrevrange, args))
+        })
+        .and_then(|frame| protocol_utils::frame_to_results(frame)),
+    )
 }
 
-pub fn zrevrangebylex<K: Into<RedisKey>, M: Into<String>, N: Into<String>>(inner: &Arc<RedisClientInner>, key: K, max: M, min: N, limit: Option<(usize, usize)>) -> Box<Future<Item=Vec<RedisValue>, Error=RedisError>> {
-  let key = key.into();
-  let max = max.into();
-  let min = min.into();
+pub fn zrevrangebylex<K: Into<RedisKey>, M: Into<String>, N: Into<String>>(
+    inner: &Arc<RedisClientInner>,
+    key: K,
+    max: M,
+    min: N,
+    limit: Option<(usize, usize)>,
+) -> Box<Future<Item = Vec<RedisValue>, Error = RedisError>> {
+    let key = key.into();
+    let max = max.into();
+    let min = min.into();
 
-  Box::new(utils::request_response(inner, move || {
-    let mut args = Vec::with_capacity(6);
-    args.push(key.into());
-    args.push(max.into());
-    args.push(min.into());
+    Box::new(
+        utils::request_response(inner, move || {
+            let mut args = Vec::with_capacity(6);
+            args.push(key.into());
+            args.push(max.into());
+            args.push(min.into());
 
-    if let Some((offset, count)) = limit {
-      args.push(LIMIT.into());
-      args.push(RedisValue::from_usize(offset)?);
-      args.push(RedisValue::from_usize(count)?);
-    }
+            if let Some((offset, count)) = limit {
+                args.push(LIMIT.into());
+                args.push(RedisValue::from_usize(offset)?);
+                args.push(RedisValue::from_usize(count)?);
+            }
 
-    Ok((RedisCommandKind::Zrevrangebylex, args))
-  }).and_then(|frame| {
-    protocol_utils::frame_to_results(frame)
-  }))
+            Ok((RedisCommandKind::Zrevrangebylex, args))
+        })
+        .and_then(|frame| protocol_utils::frame_to_results(frame)),
+    )
 }
 
-pub fn zrevrangebyscore<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, max: f64, min: f64, with_scores: bool, limit: Option<(usize, usize)>) -> Box<Future<Item=Vec<RedisValue>, Error=RedisError>> {
-  let key = key.into();
+pub fn zrevrangebyscore<K: Into<RedisKey>>(
+    inner: &Arc<RedisClientInner>,
+    key: K,
+    max: f64,
+    min: f64,
+    with_scores: bool,
+    limit: Option<(usize, usize)>,
+) -> Box<Future<Item = Vec<RedisValue>, Error = RedisError>> {
+    let key = key.into();
 
-  Box::new(utils::request_response(inner, move || {
-    let mut args = Vec::with_capacity(7);
-    args.push(key.into());
+    Box::new(
+        utils::request_response(inner, move || {
+            let mut args = Vec::with_capacity(7);
+            args.push(key.into());
 
-    args.push(utils::f64_to_redis_string(max)?);
-    args.push(utils::f64_to_redis_string(min)?);
+            args.push(utils::f64_to_redis_string(max)?);
+            args.push(utils::f64_to_redis_string(min)?);
 
-    if with_scores {
-      args.push(WITH_SCORES.into());
-    }
+            if with_scores {
+                args.push(WITH_SCORES.into());
+            }
 
-    if let Some((offset, count)) = limit {
-      args.push(LIMIT.into());
-      args.push(RedisValue::from_usize(offset)?);
-      args.push(RedisValue::from_usize(count)?);
-    }
+            if let Some((offset, count)) = limit {
+                args.push(LIMIT.into());
+                args.push(RedisValue::from_usize(offset)?);
+                args.push(RedisValue::from_usize(count)?);
+            }
 
-    Ok((RedisCommandKind::Zrevrangebyscore, args))
-  }).and_then(|frame| {
-    protocol_utils::frame_to_results(frame)
-  }))
+            Ok((RedisCommandKind::Zrevrangebyscore, args))
+        })
+        .and_then(|frame| protocol_utils::frame_to_results(frame)),
+    )
 }
 
-pub fn zrevrank<K: Into<RedisKey>, V: Into<RedisValue>>(inner: &Arc<RedisClientInner>, key: K, value: V) -> Box<Future<Item=RedisValue, Error=RedisError>> {
-  let key = key.into();
-  let value = value.into();
+pub fn zrevrank<K: Into<RedisKey>, V: Into<RedisValue>>(
+    inner: &Arc<RedisClientInner>,
+    key: K,
+    value: V,
+) -> Box<Future<Item = RedisValue, Error = RedisError>> {
+    let key = key.into();
+    let value = value.into();
 
-  Box::new(utils::request_response(inner, move || {
-    Ok((RedisCommandKind::Zrevrank, vec![key.into(), value.into()]))
-  }).and_then(|frame| {
-    protocol_utils::frame_to_single_result(frame)
-  }))
+    Box::new(
+        utils::request_response(inner, move || {
+            Ok((RedisCommandKind::Zrevrank, vec![key.into(), value.into()]))
+        })
+        .and_then(|frame| protocol_utils::frame_to_single_result(frame)),
+    )
 }
 
-pub fn zscore<K: Into<RedisKey>, V: Into<RedisValue>>(inner: &Arc<RedisClientInner>, key: K, value: V) -> Box<Future<Item=RedisValue, Error=RedisError>> {
-  let key = key.into();
-  let value = value.into();
+pub fn zscore<K: Into<RedisKey>, V: Into<RedisValue>>(
+    inner: &Arc<RedisClientInner>,
+    key: K,
+    value: V,
+) -> Box<Future<Item = RedisValue, Error = RedisError>> {
+    let key = key.into();
+    let value = value.into();
 
-  Box::new(utils::request_response(inner, move || {
-    Ok((RedisCommandKind::Zscore, vec![key.into(), value.into()]))
-  }).and_then(|frame| {
-    protocol_utils::frame_to_single_result(frame)
-  }))
+    Box::new(
+        utils::request_response(inner, move || {
+            Ok((RedisCommandKind::Zscore, vec![key.into(), value.into()]))
+        })
+        .and_then(|frame| protocol_utils::frame_to_single_result(frame)),
+    )
 }
 
-pub fn zinterstore<D: Into<RedisKey>, K: Into<MultipleKeys>, W: Into<MultipleWeights>>(inner: &Arc<RedisClientInner>,
-                                                                                       destination: D,
-                                                                                       keys: K,
-                                                                                       weights: W,
-                                                                                       aggregate: Option<AggregateOptions>)
-  -> Box<Future<Item=usize, Error=RedisError>>
-{
-  let destination = destination.into();
-  let keys = keys.into();
-  let weights = weights.into();
+pub fn zinterstore<D: Into<RedisKey>, K: Into<MultipleKeys>, W: Into<MultipleWeights>>(
+    inner: &Arc<RedisClientInner>,
+    destination: D,
+    keys: K,
+    weights: W,
+    aggregate: Option<AggregateOptions>,
+) -> Box<Future<Item = usize, Error = RedisError>> {
+    let destination = destination.into();
+    let keys = keys.into();
+    let weights = weights.into();
 
-  Box::new(utils::request_response(inner, move || {
-    if keys.len() == 0 {
-      return Err(RedisError::new(RedisErrorKind::InvalidArgument, "ZINTERSTORE numkeys cannot be 0."));
-    }
+    Box::new(
+        utils::request_response(inner, move || {
+            if keys.len() == 0 {
+                return Err(RedisError::new(
+                    RedisErrorKind::InvalidArgument,
+                    "ZINTERSTORE numkeys cannot be 0.",
+                ));
+            }
 
-    let mut args = Vec::with_capacity(5 + keys.len() + weights.len());
-    args.push(destination.into());
-    args.push(RedisValue::from_usize(keys.len())?);
+            let mut args = Vec::with_capacity(5 + keys.len() + weights.len());
+            args.push(destination.into());
+            args.push(RedisValue::from_usize(keys.len())?);
 
-    for key in keys.inner().into_iter() {
-      args.push(key.into());
-    }
-    if weights.len() > 0 {
-      args.push(WEIGHTS.into());
+            for key in keys.inner().into_iter() {
+                args.push(key.into());
+            }
+            if weights.len() > 0 {
+                args.push(WEIGHTS.into());
 
-      for weight in weights.inner().into_iter() {
-        args.push(utils::f64_to_redis_string(weight)?);
-      }
-    }
+                for weight in weights.inner().into_iter() {
+                    args.push(utils::f64_to_redis_string(weight)?);
+                }
+            }
 
-    if let Some(aggregate) = aggregate {
-      args.push(AGGREGATE.into());
-      args.push(aggregate.to_str().into());
-    }
+            if let Some(aggregate) = aggregate {
+                args.push(AGGREGATE.into());
+                args.push(aggregate.to_str().into());
+            }
 
-    Ok((RedisCommandKind::Zinterstore, args))
-  }).and_then(|frame| {
-    match protocol_utils::frame_to_single_result(frame)? {
-      RedisValue::Integer(i) => if i < 0 {
-        Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid ZINTERSTORE response. Expected non-negative integer."))
-      }else{
-        Ok(i as usize)
-      },
-      _ => Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid ZINTERSTORE response. Expected integer."))
-    }
-  }))
+            Ok((RedisCommandKind::Zinterstore, args))
+        })
+        .and_then(
+            |frame| match protocol_utils::frame_to_single_result(frame)? {
+                RedisValue::Integer(i) => {
+                    if i < 0 {
+                        Err(RedisError::new(
+                            RedisErrorKind::ProtocolError,
+                            "Invalid ZINTERSTORE response. Expected non-negative integer.",
+                        ))
+                    } else {
+                        Ok(i as usize)
+                    }
+                }
+                _ => Err(RedisError::new(
+                    RedisErrorKind::ProtocolError,
+                    "Invalid ZINTERSTORE response. Expected integer.",
+                )),
+            },
+        ),
+    )
 }
 
-pub fn zunionstore<D: Into<RedisKey>, K: Into<MultipleKeys>, W: Into<MultipleWeights>>(inner: &Arc<RedisClientInner>,
-                                                                                       destination: D,
-                                                                                       keys: K,
-                                                                                       weights: W,
-                                                                                       aggregate: Option<AggregateOptions>)
-  -> Box<Future<Item=usize, Error=RedisError>>
-{
-  let destination = destination.into();
-  let keys = keys.into();
-  let weights = weights.into();
+pub fn zunionstore<D: Into<RedisKey>, K: Into<MultipleKeys>, W: Into<MultipleWeights>>(
+    inner: &Arc<RedisClientInner>,
+    destination: D,
+    keys: K,
+    weights: W,
+    aggregate: Option<AggregateOptions>,
+) -> Box<Future<Item = usize, Error = RedisError>> {
+    let destination = destination.into();
+    let keys = keys.into();
+    let weights = weights.into();
 
-  Box::new(utils::request_response(inner, move || {
-    if keys.len() == 0 {
-      return Err(RedisError::new(RedisErrorKind::InvalidArgument, "ZUNIONSTORE numkeys cannot be 0."));
-    }
+    Box::new(
+        utils::request_response(inner, move || {
+            if keys.len() == 0 {
+                return Err(RedisError::new(
+                    RedisErrorKind::InvalidArgument,
+                    "ZUNIONSTORE numkeys cannot be 0.",
+                ));
+            }
 
-    let mut args = Vec::with_capacity(5 + keys.len() + weights.len());
-    args.push(destination.into());
-    args.push(RedisValue::from_usize(keys.len())?);
+            let mut args = Vec::with_capacity(5 + keys.len() + weights.len());
+            args.push(destination.into());
+            args.push(RedisValue::from_usize(keys.len())?);
 
-    for key in keys.inner().into_iter() {
-      args.push(key.into());
-    }
-    if weights.len() > 0 {
-      args.push(WEIGHTS.into());
+            for key in keys.inner().into_iter() {
+                args.push(key.into());
+            }
+            if weights.len() > 0 {
+                args.push(WEIGHTS.into());
 
-      for weight in weights.inner().into_iter() {
-        args.push(utils::f64_to_redis_string(weight)?);
-      }
-    }
+                for weight in weights.inner().into_iter() {
+                    args.push(utils::f64_to_redis_string(weight)?);
+                }
+            }
 
-    if let Some(aggregate) = aggregate {
-      args.push(AGGREGATE.into());
-      args.push(aggregate.to_str().into());
-    }
+            if let Some(aggregate) = aggregate {
+                args.push(AGGREGATE.into());
+                args.push(aggregate.to_str().into());
+            }
 
-    Ok((RedisCommandKind::Zunionstore, args))
-  }).and_then(|frame| {
-    match protocol_utils::frame_to_single_result(frame)? {
-      RedisValue::Integer(i) => if i < 0 {
-        Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid ZUNIONSTORE response. Expected non-negative integer."))
-      }else{
-        Ok(i as usize)
-      },
-      _ => Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid ZUNIONSTORE response. Expected integer."))
-    }
-  }))
+            Ok((RedisCommandKind::Zunionstore, args))
+        })
+        .and_then(
+            |frame| match protocol_utils::frame_to_single_result(frame)? {
+                RedisValue::Integer(i) => {
+                    if i < 0 {
+                        Err(RedisError::new(
+                            RedisErrorKind::ProtocolError,
+                            "Invalid ZUNIONSTORE response. Expected non-negative integer.",
+                        ))
+                    } else {
+                        Ok(i as usize)
+                    }
+                }
+                _ => Err(RedisError::new(
+                    RedisErrorKind::ProtocolError,
+                    "Invalid ZUNIONSTORE response. Expected integer.",
+                )),
+            },
+        ),
+    )
 }
 
-pub fn ttl<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Box<Future<Item=i64, Error=RedisError>> {
-  let key = key.into();
+pub fn ttl<K: Into<RedisKey>>(
+    inner: &Arc<RedisClientInner>,
+    key: K,
+) -> Box<Future<Item = i64, Error = RedisError>> {
+    let key = key.into();
 
-  Box::new(utils::request_response(inner, move || {
-    Ok((RedisCommandKind::Ttl, vec![key.into()]))
-  }).and_then(|frame| {
-    match protocol_utils::frame_to_single_result(frame)? {
-      RedisValue::Integer(i) => Ok(i),
-      _ => Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid TTL response. Expected integer."))
-    }
-  }))
+    Box::new(
+        utils::request_response(inner, move || Ok((RedisCommandKind::Ttl, vec![key.into()])))
+            .and_then(
+                |frame| match protocol_utils::frame_to_single_result(frame)? {
+                    RedisValue::Integer(i) => Ok(i),
+                    _ => Err(RedisError::new(
+                        RedisErrorKind::ProtocolError,
+                        "Invalid TTL response. Expected integer.",
+                    )),
+                },
+            ),
+    )
 }
 
-pub fn pttl<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Box<Future<Item=i64, Error=RedisError>> {
-  let key = key.into();
+pub fn pttl<K: Into<RedisKey>>(
+    inner: &Arc<RedisClientInner>,
+    key: K,
+) -> Box<Future<Item = i64, Error = RedisError>> {
+    let key = key.into();
 
-  Box::new(utils::request_response(inner, move || {
-    Ok((RedisCommandKind::Pttl, vec![key.into()]))
-  }).and_then(|frame| {
-    match protocol_utils::frame_to_single_result(frame)? {
-      RedisValue::Integer(i) => Ok(i),
-      _ => Err(RedisError::new(RedisErrorKind::ProtocolError, "Invalid PTTL response. Expected integer."))
-    }
-  }))
+    Box::new(
+        utils::request_response(inner, move || {
+            Ok((RedisCommandKind::Pttl, vec![key.into()]))
+        })
+        .and_then(
+            |frame| match protocol_utils::frame_to_single_result(frame)? {
+                RedisValue::Integer(i) => Ok(i),
+                _ => Err(RedisError::new(
+                    RedisErrorKind::ProtocolError,
+                    "Invalid PTTL response. Expected integer.",
+                )),
+            },
+        ),
+    )
 }
-
