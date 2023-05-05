@@ -1028,6 +1028,27 @@ pub fn rpush<K: Into<RedisKey>, V: Into<RedisValue>> (inner: &Arc<RedisClientInn
     }
   }))
 }
+
+pub fn rpoplpush<K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, source_key: K, dest_key: K) -> Box<Future<Item=Option<String>, Error=RedisError>> {
+  let source_key = source_key.into();
+  let dest_key = dest_key.into();
+
+  Box::new(utils::request_response(inner, move || {
+    let args: Vec<RedisValue> = vec![source_key.into(), dest_key.into()];
+
+    Ok((RedisCommandKind::Rpoplpush, args))
+  }).and_then(|frame| {
+    let resp = protocol_utils::frame_to_single_result(frame)?;
+
+    match resp {
+      RedisValue::String(resp) => Ok(Some(resp)),
+      _ => Err(RedisError::new(
+        RedisErrorKind::Unknown , "Invalid RPOPLPUSH response."
+      ))
+    }
+  }))
+}
+
 pub fn lpop<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Box<Future<Item=Option<RedisValue>, Error=RedisError>> {
   let key = key.into();
 
