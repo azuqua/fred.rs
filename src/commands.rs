@@ -1042,6 +1042,7 @@ pub fn rpoplpush<K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, source_key: 
 
     match resp {
       RedisValue::String(resp) => Ok(Some(resp)),
+      RedisValue::Null => Ok(None),
       _ => Err(RedisError::new(
         RedisErrorKind::Unknown , "Invalid RPOPLPUSH response."
       ))
