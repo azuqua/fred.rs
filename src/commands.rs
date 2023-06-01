@@ -1029,6 +1029,25 @@ pub fn lpop<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Box<Fut
   }))
 }
 
+pub fn ltrim<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, start: i64, stop: i64) -> Box<Future<Item=String, Error=RedisError>> {
+  let key = key.into();
+
+  Box::new(utils::request_response(inner, move || {
+    let args = vec![key.into(), start.into(), stop.into()];
+
+    Ok((RedisCommandKind::LTrim, args))
+  }).and_then(|frame| {
+    let resp = protocol_utils::frame_to_single_result(frame)?;
+
+    match resp {
+      RedisValue::String(resp) => Ok(resp),
+      _ => Err(RedisError::new(
+        RedisErrorKind::Unknown , "Invalid LTRIM response."
+      ))
+    }
+  }))
+}
+
 pub fn memoryusage<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K, samples: Option<i64>) -> Box<Future<Item=usize, Error=RedisError>> {
   let key = key.into();
 

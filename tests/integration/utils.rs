@@ -1,6 +1,7 @@
 
 use fred;
 
+use rand::distributions::Alphanumeric;
 use tokio_core::reactor::{
   Handle,
   Core,
@@ -158,7 +159,8 @@ pub fn setup_two_test_clients<F: FnOnce(RedisClient, RedisClient) -> TestFuture>
 
 pub fn random_string(len: usize) -> String {
   rand::thread_rng()
-    .gen_ascii_chars()
+    .sample_iter(Alphanumeric)
     .take(len)
+    .map(char::from)
     .collect()
 }

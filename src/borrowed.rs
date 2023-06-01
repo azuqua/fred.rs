@@ -139,6 +139,8 @@ pub trait RedisClientBorrowed {
 
   fn lpop<K: Into<RedisKey>>(&self, key: K) -> Box<Future<Item=Option<RedisValue>, Error=RedisError>>;
 
+  fn ltrim<K: Into<RedisKey>>(&self, key: K, start: i64, stop: i64) -> Box<Future<Item=String, Error=RedisError>>;
+
   fn memoryusage<K: Into<RedisKey>>(&self, key: K, samples: Option<i64>) -> Box<Future<Item=usize, Error=RedisError>>;
 
   fn sadd<K: Into<RedisKey>, V: Into<MultipleValues>>(&self, key: K, values: V) -> Box<Future<Item=usize, Error=RedisError>>;
@@ -594,6 +596,17 @@ impl RedisClientBorrowed for RedisClient {
   /// <https://redis.io/commands/lpop>
   fn lpop<K: Into<RedisKey>>(&self, key: K) -> Box<Future<Item=Option<RedisValue>, Error=RedisError>> {
     commands::lpop(&self.inner, key)
+  }
+
+  /// Trim an existing list so that it will contain only the specified range of elements specified.
+  /// Both `start` and `stop` are zero-based indexes, where 0 is the first element of the list (the
+  /// head), 1 the next element and so on.
+  /// 
+  /// Returns a simple string acknowledgement.
+  /// 
+  /// <https://redis.io/commands/ltrim/>
+  fn ltrim<K: Into<RedisKey>>(&self, key: K, start: i64, stop: i64) -> Box<Future<Item=String, Error=RedisError>> {
+    commands::ltrim(&self.inner, key, start, stop)
   }
 
   /// Report the number of bytes that a key and its value require to be stored in RAM.

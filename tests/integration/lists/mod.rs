@@ -67,3 +67,34 @@ pub fn should_lpush_and_lpop_to_list(client: RedisClient) -> Box<Future<Item=(),
   })
   .and_then(|_| Ok(())))
 }
+
+pub fn should_ltrim_list(client: RedisClient) -> Box<Future<Item=(), Error=RedisError>> {
+  Box::new(
+    client.del("foo")
+    .and_then(|(client, _)| {
+      stream::iter_ok(0..5).fold(client, move |client, num| 
+        client.lpush("foo", num.to_string()).and_then(move |(client, _)| Ok(client))
+      )
+    })
+    .and_then(|client: RedisClient| {
+      client.ltrim("foo", 1, -2).and_then(|(client, resp)| {
+        assert_eq!("OK", resp);
+        client.llen("foo")
+      })
+    })
+    .and_then(|(client, resp)| {
+      assert_eq!(3_usize, resp);
+      let expected_foo = ["3", "2", "1"];
+      stream::iter_ok(0_usize..resp).fold(client, move |client, i| {
+        client.lpop("foo").and_then(move |(client, val)| {
+          match val {
+            Some(RedisValue::String(s)) => assert_eq!(expected_foo[i], s),
+            _ => panic!("foo contains incorrect values after LTRIM.")
+          };
+          Ok(client)
+        })
+      })
+    })
+    .and_then(|_| Ok(()))
+  )
+}
