@@ -217,6 +217,14 @@ pub mod lists {
       lists_tests::should_lpush_and_lpop_to_list(client)
     });
   }
+
+  #[test]
+  fn it_should_ltrim_list() {
+    let config = RedisConfig::default_clustered();
+    utils::setup_test_client(config, TIMER.clone(),|client| {
+      lists_tests::should_ltrim_list(client)
+    });
+  }
 }
 
 pub mod sets {
