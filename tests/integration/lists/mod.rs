@@ -98,3 +98,151 @@ pub fn should_ltrim_list(client: RedisClient) -> Box<Future<Item=(), Error=Redis
     .and_then(|_| Ok(()))
   )
 }
+
+pub fn should_lmove_source_to_dest(client: RedisClient) -> Box<Future<Item=(), Error=RedisError>> {
+  let foo = "foo";
+  let bar = "bar";
+  Box::new(
+    client.del(vec![foo, bar])
+    .and_then(move |(client, _)| 
+    stream::iter_ok(0..10).fold(client, move |client, num| {
+      // Note it's 'l'push.
+      client.lpush(foo, num.to_string()).and_then(move |(client, len)| {
+        Ok(client)
+      })
+    }))
+    .and_then(move |client: RedisClient| {
+      client.lmove(foo, bar, LmoveWhere::Right, LmoveWhere::Left)
+    })
+    .and_then(move |(client, resp)| {
+      assert_eq!(resp, Some("0".to_string()));
+      client.lmove(foo, bar, LmoveWhere::Right, LmoveWhere::Left)
+    })
+    .and_then(move |(client, resp)| {
+      assert_eq!(resp, Some("1".to_string()));
+      client.lmove(foo, bar, LmoveWhere::Right, LmoveWhere::Right)
+    })
+    .and_then(move |(client, resp)| {
+      assert_eq!(resp, Some("2".to_string()));
+      client.lmove(foo, bar, LmoveWhere::Left, LmoveWhere::Left)
+    })
+    .and_then(move |(client, resp)| {
+      assert_eq!(resp, Some("9".to_string()));
+      client.lmove(foo, bar, LmoveWhere::Left, LmoveWhere::Right)
+    })
+    .and_then(move |(client, resp)| {
+      assert_eq!(resp, Some("8".to_string()));
+      client.llen(foo)
+    })
+    .and_then(move |(client, resp)| {
+      assert_eq!(resp, 5); 
+      let expected_foo = ["7", "6", "5", "4", "3"];
+      stream::iter_ok(0..resp).fold(client, move |client, i| {
+        client.lpop(foo).and_then(move |(client, val)| {
+          match val {
+            Some(RedisValue::String(val)) => assert_eq!(val.as_str(), expected_foo[i]),
+            _ => panic!("Found unexpected value in source after LMOVE.")
+          }
+          Ok(client)
+        })
+      })
+    })
+    .and_then(move |client| {
+      client.llen(bar)
+    })
+    .and_then(move |(client, resp)| {
+      assert_eq!(resp, 5); 
+      let expected_bar = ["9", "1", "0", "2", "8"];
+      stream::iter_ok(0..resp).fold(client, move |client, i| {
+        client.lpop(bar).and_then(move |(client, val)| {
+          match val {
+            Some(RedisValue::String(val)) => assert_eq!(val.as_str(), expected_bar[i]),
+            _ => panic!("Found unexpected value in destination after LMOVE.")
+          }
+          Ok(client)
+        })
+      })
+    })
+    .then(|_| future::ok(())))
+}
+
+pub fn should_lmove_and_get_nil(client: RedisClient) -> Box<Future<Item=(), Error=RedisError>> {
+  Box::new(
+    // Deleting foo, in case it already exists
+    client.del("foo")
+    .and_then(move |(client, _)| {
+      client.lmove("foo", "bar", LmoveWhere::Right, LmoveWhere::Left)
+    })
+    .and_then(move |(client, resp)| {
+      assert_eq!(resp, None);
+      future::ok(())
+    }))
+}
+
+pub fn should_rpoplpush_source_to_dest(client: RedisClient) -> Box<Future<Item=(), Error=RedisError>> {
+  let foo = "foo";
+  let bar = "bar";
+  Box::new(
+    client.del(vec![foo, bar])
+    .and_then(move |(client, _)| 
+    stream::iter_ok(0..5).fold(client, move |client, num| {
+      // Note it's 'l'push.
+      client.lpush(foo, num.to_string()).and_then(move |(client, len)| {
+        Ok(client)
+      })
+    }))
+    .and_then(move |client: RedisClient| {
+      client.rpoplpush(foo, bar)
+    })
+    .and_then(move |(client, resp)| {
+      assert_eq!(resp, Some("0".to_string()));
+      client.rpoplpush(foo, bar)
+    })
+    .and_then(move |(client, resp)| {
+      assert_eq!(resp, Some("1".to_string()));
+      client.llen(foo)
+    })
+    .and_then(move |(client, resp)| {
+      assert_eq!(resp, 3); 
+      let expected_foo = ["4", "3", "2"];
+      stream::iter_ok(0..resp).fold(client, move |client, i| {
+        client.lpop(foo).and_then(move |(client, val)| {
+          match val {
+            Some(RedisValue::String(val)) => assert_eq!(val.as_str(), expected_foo[i]),
+            _ => panic!("Found unexpected value in source after RPOPLPUSH.")
+          }
+          Ok(client)
+        })
+      })
+    })
+    .and_then(move |client| {
+      client.llen(bar)
+    })
+    .and_then(move |(client, resp)| {
+      assert_eq!(resp, 2); 
+      let expected_bar = ["1", "0"];
+      stream::iter_ok(0..resp).fold(client, move |client, i| {
+        client.lpop(bar).and_then(move |(client, val)| {
+          match val {
+            Some(RedisValue::String(val)) => assert_eq!(val.as_str(), expected_bar[i]),
+            _ => panic!("Found unexpected value in destination after RPOPLPUSH.")
+          }
+          Ok(client)
+        })
+      })
+    })
+    .then(|_| future::ok(())))
+}
+
+pub fn should_rpoplpush_to_get_nil(client: RedisClient) -> Box<Future<Item=(), Error=RedisError>> {
+  Box::new(
+    // Deleting foo, in case it already exists
+    client.del("foo")
+    .and_then(move |(client, _)| {
+      client.rpoplpush("foo", "bar")
+    })
+    .and_then(move |(client, resp)| {
+      assert_eq!(resp, None);
+      future::ok(())
+    }))
+}
