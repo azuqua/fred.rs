@@ -39,6 +39,14 @@ use crate::protocol::types::{RedisCommand, KeyScanInner, RedisCommandKind, Value
 #[doc(hidden)]
 pub static ASYNC: &'static str = "ASYNC";
 
+/// Directional arguments for the [lmove](https://redis.io/commands/lmove/) command.
+pub enum LmoveWhere {
+  /// Tail
+  Left,
+  /// Head
+  Right
+}
+
 /// Aggregate options for the [zinterstore](https://redis.io/commands/zinterstore) (and related) commands.
 pub enum AggregateOptions {
   Sum,
@@ -1147,5 +1155,14 @@ impl<T: Into<RedisValue>> From<Option<T>> for RedisValue {
 impl From<RedisKey> for RedisValue {
   fn from(d: RedisKey) -> RedisValue {
     RedisValue::String(d.into_string())
+  }
+}
+
+impl From<LmoveWhere> for RedisValue {
+  fn from(d: LmoveWhere) -> RedisValue {
+    match d {
+      LmoveWhere::Left => RedisValue::String(String::from("LEFT")),
+      LmoveWhere::Right => RedisValue::String(String::from("RIGHT")),
+    }
   }
 }

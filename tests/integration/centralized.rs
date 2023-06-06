@@ -228,6 +228,38 @@ pub mod lists {
       lists_tests::should_ltrim_list(client)
     });
   }
+
+  #[test]
+  fn it_should_lmove_source_to_dest() {
+    let config = RedisConfig::default();
+    utils::setup_test_client(config, TIMER.clone(),|client| {
+      lists_tests::should_lmove_source_to_dest(client)
+    });
+  }
+
+  #[test]
+  fn it_should_lmove_source_that_dne_to_get_nil() {
+    let config = RedisConfig::default();
+    utils::setup_test_client(config, TIMER.clone(),|client| {
+      lists_tests::should_lmove_and_get_nil(client)
+    });
+  }
+
+  #[test]
+  fn it_should_rpoplpush_source_to_dest() {
+    let config = RedisConfig::default();
+    utils::setup_test_client(config, TIMER.clone(),|client| {
+      lists_tests::should_rpoplpush_source_to_dest(client)
+    });
+  }
+
+  #[test]
+  fn it_should_rpoplpush_source_that_dne_to_get_nil() {
+    let config = RedisConfig::default();
+    utils::setup_test_client(config, TIMER.clone(),|client| {
+      lists_tests::should_rpoplpush_to_get_nil(client)
+    });
+  }
 }
 
 pub mod sets {

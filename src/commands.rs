@@ -1009,6 +1009,49 @@ pub fn lpush<K: Into<RedisKey>, V: Into<RedisValue>> (inner: &Arc<RedisClientInn
   }))
 }
 
+pub fn lmove<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, source_key: K, dest_key: K, wherefrom: LmoveWhere, whereto: LmoveWhere) -> Box<Future<Item=Option<String>, Error=RedisError>> {
+  let source_key = source_key.into();
+  let dest_key = dest_key.into();
+
+  Box::new(utils::request_response(inner, move || {
+    let args: Vec<RedisValue> = vec![source_key.into(), dest_key.into(), wherefrom.into(), whereto.into()];
+
+    Ok((RedisCommandKind::LMove, args))
+  }).and_then(|frame| {
+    let resp = protocol_utils::frame_to_single_result(frame)?;
+
+    match resp {
+      RedisValue::String(resp) => Ok(Some(resp)),
+      // If source_key DNE, we get nil
+      RedisValue::Null => Ok(None),
+      _ => Err(RedisError::new(
+        RedisErrorKind::Unknown , "Invalid LMOVE response."
+      ))
+    }
+  }))
+}
+
+pub fn rpoplpush<K: Into<RedisKey>> (inner: &Arc<RedisClientInner>, source_key: K, dest_key: K) -> Box<Future<Item=Option<String>, Error=RedisError>> {
+  let source_key = source_key.into();
+  let dest_key = dest_key.into();
+
+  Box::new(utils::request_response(inner, move || {
+    let args: Vec<RedisValue> = vec![source_key.into(), dest_key.into()];
+
+    Ok((RedisCommandKind::Rpoplpush, args))
+  }).and_then(|frame| {
+    let resp = protocol_utils::frame_to_single_result(frame)?;
+
+    match resp {
+      RedisValue::String(resp) => Ok(Some(resp)),
+      RedisValue::Null => Ok(None),
+      _ => Err(RedisError::new(
+        RedisErrorKind::Unknown , "Invalid RPOPLPUSH response."
+      ))
+    }
+  }))
+}
+
 pub fn lpop<K: Into<RedisKey>>(inner: &Arc<RedisClientInner>, key: K) -> Box<Future<Item=Option<RedisValue>, Error=RedisError>> {
   let key = key.into();
 

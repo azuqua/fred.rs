@@ -137,6 +137,10 @@ pub trait RedisClientBorrowed {
 
   fn lpush<K: Into<RedisKey>, V: Into<RedisValue>>(&self, key: K, value: V) -> Box<Future<Item=usize, Error=RedisError>>;
 
+  fn lmove<K: Into<RedisKey>>(&self, source_key: K, dest_key: K, wherefrom: LmoveWhere, whereto: LmoveWhere) -> Box<Future<Item=Option<String>, Error=RedisError>>;
+
+  fn rpoplpush<K: Into<RedisKey>>(&self, source_key: K, dest_key: K) -> Box<Future<Item=Option<String>, Error=RedisError>>;
+
   fn lpop<K: Into<RedisKey>>(&self, key: K) -> Box<Future<Item=Option<RedisValue>, Error=RedisError>>;
 
   fn ltrim<K: Into<RedisKey>>(&self, key: K, start: i64, stop: i64) -> Box<Future<Item=String, Error=RedisError>>;
@@ -589,6 +593,27 @@ impl RedisClientBorrowed for RedisClient {
   /// <https://redis.io/commands/lpush>
   fn lpush<K: Into<RedisKey>, V: Into<RedisValue>>(&self, key: K, value: V) -> Box<Future<Item=usize, Error=RedisError>> {
     commands::lpush(&self.inner, key, value)
+  }
+
+  /// Atomically returns and removes the first/last element (head/tail depending on the wherefrom
+  /// argument) of the list stored at source, and pushes the element at the first/last element 
+  /// (head/tail depending on the whereto argument) of the list stored at destination.
+  /// 
+  /// Returns the element being popped and pushed, if it exists.
+  /// 
+  /// <https://redis.io/commands/lmove/>
+  fn lmove<K: Into<RedisKey>>(&self, source_key: K, dest_key: K, wherefrom: LmoveWhere, whereto: LmoveWhere) -> Box<Future<Item=Option<String>, Error=RedisError>>{
+    commands::lmove(&self.inner, source_key, dest_key, wherefrom, whereto)
+  }
+
+  /// Atomically returns and removes the last element (tail) of the list stored at source, and pushes
+  /// the element at the first element (head) of the list stored at destination. 
+  ///
+  /// Returns the element being popped and pushed, if it exists.
+  /// 
+  /// <https://redis.io/commands/rpoplpush>
+  fn rpoplpush<K: Into<RedisKey>>(&self, source_key: K, dest_key: K) -> Box<Future<Item=Option<String>, Error=RedisError>> {
+    commands::rpoplpush(&self.inner, source_key, dest_key)
   }
 
   /// Removes and returns the first element of the list stored at key.
