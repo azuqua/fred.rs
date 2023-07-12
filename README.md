@@ -10,7 +10,6 @@ Fred
 ====
 
 [![LICENSE](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Build Status](https://travis-ci.org/azuqua/fred.rs.svg?branch=master)](https://travis-ci.org/azuqua/fred.rs)
 [![Crates.io](https://img.shields.io/crates/v/fred.svg)](https://crates.io/crates/fred)
 [![API docs](https://docs.rs/fred/badge.svg)](https://docs.rs/fred)
 
@@ -101,7 +100,7 @@ fn main() {
 }
 ```
 
-See [examples](https://github.com/azuqua/fred.rs/tree/master/examples) for more.
+See [examples](https://github.com/atko-flow/fred.rs/tree/master/examples) for more.
 
 ## Redis Cluster
 

@@ -5,13 +5,13 @@ authors = ["Alec Embke <aembke@gmail.com>"]
 edition = "2018"
 description = "A Redis client for Rust built on Futures and Tokio."
 readme = "README.md"
-repository = "https://github.com/azuqua/fred.rs"
-homepage = "https://github.com/azuqua/fred.rs"
+repository = "https://github.com/atko-flow/fred.rs"
+homepage = "https://github.com/atko-flow/fred.rs"
 keywords = ["redis", "futures", "async", "cluster", "tokio"]
 license = "MIT"
 
 [badges]
-travis-ci = { repository = "azuqua/fred.rs", branch = "master" }
+travis-ci = { repository = "atko-flow/fred.rs", branch = "master" }
 maintenance = { status = "actively-developed" }
 
 
