@@ -1,0 +1,14 @@
+version: 2.1
+
+orbs:
+  eng-services-platform-helpers: azuqua/general-platform-helpers@1.8
+
+workflows:
+  sast-scan:
+    jobs:
+      - eng-services-platform-helpers/job-semgrep-prepare:
+          name: prepare-semgrep
+      - eng-services-platform-helpers/job-semgrep-scan:
+          name: execute-semgrep
+          requires:
+            - prepare-semgrep
