@@ -1,13 +1,11 @@
-pub use redis_protocol::types::Frame;
-use redis_protocol::NULL;
+pub const NULL: &'static str = "$-1\r\n";
+
+use crate::error::{RedisError, RedisErrorKind};
+use crate::utils;
 use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::hash::{Hash, Hasher};
 use std::{cmp, mem};
-use crate::utils;
-
-#[derive(Debug)]
-pub struct RedisTypeError(pub String);
 
 /// Directional arguments for the [lmove](https://redis.io/commands/lmove/) command.
 pub enum LmoveWhere {
@@ -402,20 +400,22 @@ impl<'a> RedisValue {
     }
 
     /// Convert from a `u64` to the `i64` representation used by Redis. This can fail due to overflow so it is not implemented via the From trait.
-    pub fn from_u64(d: u64) -> Result<RedisValue, RedisTypeError> {
+    pub fn from_u64(d: u64) -> Result<RedisValue, RedisError> {
         if d >= (i64::max_value() as u64) {
-            return Err(RedisTypeError(
-                String::from("Unsigned integer too large."),
+            return Err(RedisError::new(
+                RedisErrorKind::Unknown,
+                "Unsigned integer too large.",
             ));
         }
 
         Ok((d as i64).into())
     }
 
-    pub fn from_usize(d: usize) -> Result<RedisValue, RedisTypeError> {
+    pub fn from_usize(d: usize) -> Result<RedisValue, RedisError> {
         if d >= (i64::max_value() as usize) {
-            return Err(RedisTypeError(
-                String::from("Unsigned integer too large."),
+            return Err(RedisError::new(
+                RedisErrorKind::Unknown,
+                "Unsigned integer too large.",
             ));
         }
 

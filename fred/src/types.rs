@@ -16,6 +16,7 @@ use std::borrow::Cow;
 use crate::error::*;
 
 use crate::{utils, RedisClient};
+pub use redis_protocol::types::Frame;
 
 use redis_protocol::types::*;
 use redis_protocol::NULL;
