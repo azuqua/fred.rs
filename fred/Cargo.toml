@@ -32,6 +32,7 @@ tokio-core = "0.1.17"
 tokio-proto = "0.1.1"
 tokio-io = "0.1.12"
 rand = "0.8.5"
+fred-types = { path = "../fred-types", version = "2.1.3"}
 
 [dev-dependencies]
 hyper = "0.11"

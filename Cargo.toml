@@ -1,2 +1,2 @@
 [workspace]
-members = ["fred"]
+members = ["fred", "fred-types"]
